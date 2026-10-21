@@ -25,9 +25,14 @@ publication of Linux-authored STEP files back to Vault, using a Windows adapter.
   portable API capture, and committed-file publication request preparation.
 - [x] Complete managed-environment tests (30 passed) and project CLI smoke check.
 - [x] Copy reviewed scaffold to local/shared clones and verify identical bytes.
-  Changes remain uncommitted; the original Windows report is preserved.
+  Initial tools commit `94427de` and project commit `fbe2873` are present in both
+  local/shared clones; the original Windows report is preserved.
 - [x] Resolve Pixi dependencies for linux-64 and win-64; add doctor and Windows capture tasks.
 - [x] Validate locked Pixi test/doctor tasks on Linux and synchronize the updated scaffold.
+- [x] Prepare the Windows takeover handoff in `windows/README.md`, covering locked
+  tests, real API qualification, an exact-version part/assembly export, and results
+  for Linux FreeCAD validation. The handoff/plan updates are uncommitted in both
+  tools clones. Windows owns the next integration phase in separate local checkouts.
 - [ ] Install the locked environment and run doctor/tests on Windows.
 - [ ] Capture actual served OpenAPI and successful STEP job details from Windows.
 - [ ] Resolve pilot assembly/dependencies and qualify exact-version STEP conversion.
