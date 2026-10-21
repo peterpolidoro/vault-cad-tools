@@ -1,4 +1,65 @@
-# Windows agent handoff — 2026-10-21
+# Windows side of vault-cad-tools
+
+## Latest Linux follow-up
+
+The Windows results have been reviewed. Read the new shared report before
+continuing; the remaining sections below preserve the earlier handoff/results:
+
+`/janelia/sciserv/polidorop/Repositories/vault-cad-exchange/evidence/2026-10-21-linux-validation-01/LINUX-RESULTS-2026-10-21.md`
+
+FreeCAD confirms 479 valid assembly solids and a matching panel. Only the panel
+is imported into the Linux project baseline. Resolve the native/STEP discrepancy
+per component using IsSolid, visibility, volume, and precise bounds: the current
+scripts count unfiltered SurfaceBodies. The Linux importer now retains receipt
+extensions (43 assembly dependency records); the suite has 34 passing tests.
+The acquisition script now refuses all existing destinations rather than trusting
+equal size. Validate that guard on Windows and use a fresh CacheRoot. The shared
+report supplies incremental patches on top of your prior patches and the exact
+remaining geometry/provenance checks. The Linux working copies hold the integrated
+changes; the shared Git clones have not been edited during this review.
+
+## Status (Windows, 2026-10-21)
+
+The handoff below was executed on the Windows workstation (Inventor 2025.3,
+Vault Client 2025, Vault Professional Server 30.4.28.0 at `svault5`). Results,
+evidence and hashes are in the shared exchange run directory
+`vault-cad-exchange/evidence/2026-10-21-windows-qualification-01/`
+(`WINDOWS-RESULTS-2026-10-21.md` there is the dated report). In short:
+
+- Locked Pixi environment installed per-user; `doctor` ready; all tests pass
+  (30 before, 33 after the API corrections below); project `status` correct.
+- Live API corrections: `POST /sessions/win-auth` works with the Windows
+  identity; basic `search-results` returns 403 for this account, so `search`
+  now queries `file-versions?q=`; `DELETE /sessions/{id}` returns 501 and is
+  tolerated; `uses` returns association records and paged in one page.
+- Pilot resolved: root `Free Standing Enclosure.iam` is file-version 991056
+  (master 988153, v5, Work in Progress) in folder 953863 whose real path is
+  `$/DATA/PROJECTS/_PROJECTS BY LAB/SCHULZE (LAB)/ENCLOSURE` (the configured
+  path lacked `/DATA`; corrected in the project checkout). 43 dependency
+  versions across four folders, none checked out, no library/Content Center
+  files; all 44 files mirrored locally with SHA-256s.
+- Export route: local hidden Inventor instance via `Export-InventorStep.ps1`
+  (Job Processor not used). Part and assembly STEP (AP214) produced with
+  receipts; both re-open in Inventor with matching extents and occurrence
+  counts (assembly: 14 top-level, 155 leaf occurrences; 503 native bodies vs
+  479 after re-import, flagged for FreeCAD review).
+- Import smoke test with the receipts passed in a disposable project copy,
+  including the repeated no-op import. The main project baseline is untouched.
+
+Scripts in this folder: `Export-Capabilities.ps1` (unauthenticated capture),
+`Set-VaultCadToken.ps1` (Windows-identity token into `VAULT_CAD_TOKEN`),
+`Get-VaultDependencySnapshot.ps1`, `Export-InventorStep.ps1`,
+`Inspect-StepInInventor.ps1`, `New-ExportReceipt.ps1`. See the tools README,
+section "Windows export route", for their contract. Call them with `&` from
+PowerShell; `powershell -File` flattens array parameters.
+
+Known gaps: no Job Processor runs on the workstation and the queue cannot be
+inspected for finished jobs, so built-in STEP job parameters remain unknown; the
+STEP translator's `Open` with a by-reference target fails from PowerShell, so
+re-import uses `Documents.Open` defaults; the Vault SDK is present only as the
+Explorer assemblies (`SDK\Setup.exe` not run), so no upload adapter exists yet.
+
+## Original handoff — 2026-10-21
 
 Please take the lead on Windows qualification and the first real Vault-to-STEP
 export. Peter asked for this handoff. Linux can resume with FreeCAD geometry

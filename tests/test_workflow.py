@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+import warnings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from vault_cad_tools.api import VaultClient, session
@@ -75,6 +76,22 @@ root_assembly = "$/Projects/Enclosure.iam"
 
 
 class ImportTests(ProjectFixture):
+    def test_retains_dependency_and_validation_evidence(self):
+        self.receipt.update({
+            "dependencies": [{"version_id": "202", "native_sha256": "a" * 64}],
+            "dependency_count": 1,
+            "validation": {"native_body_count": 503, "reimport_body_count": 479},
+            "output_bytes": len(STEP),
+        })
+        atomic_json(self.receipt_path, self.receipt)
+        self.import_payload()
+        saved = self.project().lock["references"]["references/part.step"]
+        for key in ("dependencies", "dependency_count", "validation", "output_bytes"):
+            self.assertEqual(saved[key], self.receipt[key])
+        before = (self.root / "vault-lock.json").read_bytes()
+        self.assertFalse(self.import_payload()["changed"])
+        self.assertEqual((self.root / "vault-lock.json").read_bytes(), before)
+
     def test_records_exact_provenance_and_is_idempotent(self):
         result = self.import_payload()
         self.assertTrue(result["changed"])
@@ -246,6 +263,7 @@ class RestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.requests = []
+        cls.delete_status = 204
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -277,7 +295,7 @@ class RestTests(unittest.TestCase):
 
             def do_DELETE(self):
                 cls.requests.append(("DELETE", self.path, self.headers.get("Authorization")))
-                self.respond(204)
+                self.respond(cls.delete_status)
 
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -308,6 +326,51 @@ class RestTests(unittest.TestCase):
                 raise RuntimeError("operation failed")
         self.assertEqual(self.requests[-1][:2], ("DELETE", "/api/sessions/session-1"))
         self.assertIsNone(client.token)
+
+    def test_unsupported_logout_is_silent(self):
+        # Vault 2025 returns 501 for DELETE /sessions/{id}; that is not a failure of our operation.
+        type(self).delete_status = 501
+        try:
+            client = VaultClient(self.base_url)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                with session(client, "Vault", "username", "password"):
+                    pass
+            self.assertEqual([str(item.message) for item in caught], [])
+            self.assertEqual(self.requests[-1][:2], ("DELETE", "/api/sessions/session-1"))
+            self.assertIsNone(client.token)
+        finally:
+            type(self).delete_status = 204
+
+    def test_http_error_carries_status(self):
+        with self.assertRaises(ExchangeError) as error:
+            VaultClient(self.base_url).json("fail")
+        self.assertEqual(error.exception.status, 401)
+
+    def test_search_uses_file_versions_endpoint(self):
+        from vault_cad_tools import cli
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "vault-project.toml").write_text(f'''schema_version = 1
+[project]
+name = "test"
+[vault]
+base_url = "{self.base_url}"
+name = "Test Vault"
+id = "28"
+root_assembly = "$/Projects/Enclosure.iam"
+''', encoding="utf-8")
+            atomic_json(root / "vault-lock.json", {"schema_version": 1, "references": {}, "publications": []})
+            with patch.dict(os.environ, {"VAULT_CAD_TOKEN": "external-token"}):
+                args = cli.parser().parse_args(["--project", str(root), "search", "Enclosure Frame", "--limit", "5"])
+                result = cli.execute(args)
+        self.assertEqual(result["pagination"]["cursorState"], "next")
+        method, path, auth = self.requests[-1]
+        self.assertEqual(method, "GET")
+        self.assertTrue(path.startswith("/api/vaults/28/file-versions?"), path)
+        self.assertIn("q=Enclosure+Frame", path)
+        self.assertIn("limit=5", path)
+        self.assertEqual(auth, "Bearer external-token")
 
     def test_external_token_session_is_not_deleted(self):
         client = VaultClient(self.base_url, "external-token")

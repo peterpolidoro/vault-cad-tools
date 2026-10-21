@@ -179,7 +179,10 @@ class Project:
         sha = digest(source)
         if sha != receipt.get("sha256"):
             raise ExchangeError("Export receipt checksum does not match the STEP file")
-        entry = {"sha256": sha, "source": meta, "exporter": exporter}
+        # Keep receipt extensions, including assembly dependencies and geometry
+        # observations. Dropping these loses the evidence for the frozen snapshot.
+        # Preserved observations are data, not a claim that geometry was validated.
+        entry = {key: value for key, value in receipt.items() if key != "schema_version"}
         with self.transaction():
             for name in self.lock["references"]:
                 if name.casefold() == relative.casefold() and name != relative:

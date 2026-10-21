@@ -1,7 +1,7 @@
 # Filesystem exchange protocol, draft v1
 
-This protocol is exercised locally. Live Autodesk conversion/publication and
-publication-result ingestion are not implemented yet. Request directories are
+This protocol is exercised locally and with Windows Inventor STEP exports.
+Vault publication and publication-result ingestion are not implemented yet. Request directories are
 data, not executable instructions. Use a separate checkout on each machine.
 
 ## Export receipt
@@ -28,12 +28,15 @@ data, not executable instructions. Use a separate checkout on each machine.
 ```
 
 Values above are placeholders explaining the schema, not test results. IDs are
-strings. Additional `source` and `exporter` fields are preserved, allowing job ID,
-dependency-version lists, export options, and validation records. An assembly
-receipt must eventually include its resolved dependency versions and component
+strings. All receipt fields except the envelope's `schema_version` are preserved
+in the reference lock entry, including top-level `dependencies`, `validation`,
+and additional `source`/`exporter` fields. An assembly
+receipt must include its resolved dependency versions and component
 states; the importer currently cannot verify dependency completeness itself.
 The Windows worker must establish the source/output relationship from actual
-job results and file associations, not just a filename search.
+job results and file associations or exact-version acquisition and local export
+records, not just a filename search. Preserving validation observations does not
+mean the importer verifies their geometry or their dependency completeness.
 
 `vault-lock.json` maps relative paths to checksums and this provenance. Reimports
 of the same bytes and metadata are no-ops. Locally edited managed references

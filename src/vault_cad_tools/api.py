@@ -42,8 +42,11 @@ class VaultClient:
             return self.opener.open(Request(url, data=data, headers=headers, method=method), timeout=self.timeout)
         except HTTPError as exc:
             # Do not echo response bodies; authentication errors may reflect inputs.
+            code = exc.code
             exc.close()
-            raise ExchangeError(f"Vault returned HTTP {exc.code} for {method} {path}") from None
+            error = ExchangeError(f"Vault returned HTTP {code} for {method} {path}")
+            error.status = code
+            raise error from None
         except (URLError, TimeoutError) as exc:
             raise ExchangeError(f"Cannot reach Vault: {exc}") from None
 
@@ -108,7 +111,11 @@ def session(client, vault_name, username=None, password=None):
     finally:
         try:
             client.json("sessions/" + component(result["id"]), method="DELETE")
-        except ExchangeError:
-            import warnings
-            warnings.warn("Could not close Vault session; it may remain active until timeout")
+        except ExchangeError as exc:
+            # Vault Professional Server 2025 (30.4) answers 501 Not Implemented to DELETE
+            # /sessions/{id} although the served OpenAPI description lists it; the session
+            # then expires server-side. Only unexpected failures deserve a warning.
+            if getattr(exc, "status", None) not in (405, 501):
+                import warnings
+                warnings.warn("Could not close Vault session; it may remain active until timeout")
         client.token = None

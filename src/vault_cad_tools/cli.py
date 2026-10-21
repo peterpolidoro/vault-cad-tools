@@ -20,7 +20,7 @@ def parser():
     sub.add_parser("status", help="Check managed reference hashes without contacting Vault")
     probe = sub.add_parser("probe", help="Save unauthenticated server info and installed OpenAPI description")
     probe.add_argument("--output", required=True)
-    search = sub.add_parser("search", help="Search one API page; raw pagination information is retained")
+    search = sub.add_parser("search", help="Search file versions by text, one API page; raw pagination information is retained")
     search.add_argument("text")
     search.add_argument("--limit", type=int, default=50)
     search.add_argument("--cursor")
@@ -88,7 +88,11 @@ def execute(args):
             query = {"q": args.text, "option[latestOnly]": "true", "limit": args.limit}
             if args.cursor:
                 query["cursorState"] = args.cursor
-            return client.json(prefix + "search-results", query=query)
+            # Verified on Vault 2025 (30.4): the basic search endpoint `search-results` answered
+            # HTTP 403 (Vault error 303, inadequate permissions) for an ordinary Active Directory
+            # account, while the file-versions text query returned the same files. Results are
+            # FileVersion objects with `id` (version), `file.id` (master) and `parentFolderId`.
+            return client.json(prefix + "file-versions", query=query)
         if args.command == "job":
             return client.json(prefix + "jobs/" + component(args.id))
         if args.command in ("file", "uses"):
