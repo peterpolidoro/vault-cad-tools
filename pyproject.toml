@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vault-cad-tools"
+version = "0.1.0"
+description = "Versioned STEP exchange between Autodesk Vault and Git CAD projects"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+vault-cad = "vault_cad_tools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
