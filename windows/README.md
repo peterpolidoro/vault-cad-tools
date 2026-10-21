@@ -1,6 +1,47 @@
 # Windows side of vault-cad-tools
 
-## Latest Windows results (2026-10-21, command-line native pilot)
+## Current result — pilot 02, Linux reviewed
+
+Evidence: `vault-cad-exchange/evidence/2026-10-21-windows-native-pilot-02/` and
+`2026-10-21-linux-native-review-02/`. Linux code base is now 498279f; the Windows
+submission was a full diff from 163ed4c containing already-committed work. Only
+new changes were integrated; do not replay the whole old patch on current main.
+
+- `Measure-PartBodies.ps1 -Part IPT[,IPT] -WorkspaceRoot MIRROR -OutputDirectory NEW`
+  measures bodies and sweeps mass-property accuracy without saving source parts.
+  VeryHigh measurements reduce both flagged differences to about 0.0022%. Some
+  body/overlap calls remain unavailable; an empty overlap list is not proof of no
+  interference. FreeCAD/native kernels still differ in one compound's volume.
+- `Export-PartAssets.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -OutputDirectory NEW
+  -Acquisition acquisition.json -Inventory dependency-inventory.json` exports part
+  assets and raw hierarchy/instance/BOM metadata. 37 part assets, 155 leaves and
+  17 groups including root passed Linux reconstruction. Two flexible groups need
+  instance-specific positions; definition-only walking misplaces 44 occurrences.
+  Unit counts are 21 inch, 15 mm and one cm. FreeCAD returns mm after STEP import.
+- `Invoke-NativeParameterPilot.ps1 -Parameters parameters.json -WorkspaceRoot NEW
+  -OutputDirectory NEW [-LinuxStep FILE -ExpectedLinuxStepSha256 SHA]` builds the
+  nominal AW2725Q envelope from six named dimensions, sketches and extrusion.
+  Native reopen/edit/restore/export checks passed (29); Linux validates its STEP.
+- `Test-ExportReceipt.ps1`: 11 cases pass, plus four real negative receipt cases.
+  Changed-input pilot refusal now precedes even output-directory creation.
+
+These are scoped pilots, not general production editors. Always use fresh output
+folders. The new per-part exporter records source/actual hashes but does not yet
+refuse every mismatch or bind intermediate assembly hashes as the strict monolithic
+exporter does. It assumes the qualified primary-state case; other states/adaptive
+geometry, inherited representation overrides, collisions and unknown units need
+explicit rejection/qualification. PID ownership and project-list cleanup also
+need hardening before concurrent production use. No Vault write or service mode
+is qualified. Fixture receipts with local source kind are not Vault receipts.
+
+Raw scene.json contains extended fields and nonportable IDs; its draft-1 label is
+not a claim that mechanical-docs accepts it. Preserve raw metadata, map IDs with a
+sidecar and apply the supplied proper basis rotation once at the root. Use distinct
+nodes for flexible assembly occurrences while sharing part geometry. Do not make
+new inch/mm copies just for the renderer: FreeCAD normalizes STEP to mm internally.
+
+
+## Earlier Windows results (2026-10-21, command-line native pilot)
 
 Evidence run: `vault-cad-exchange/evidence/2026-10-21-windows-native-pilot-01/`
 (report `WINDOWS-NATIVE-PILOT-2026-10-21.md`). Executed on tools `163ed4c` /
@@ -32,7 +73,7 @@ project `f11b2ae` in Peter's interactive desktop session; no service mode is cla
 
 The ByRef COM limitation is solved with `Import-InventorInterop.ps1` (C# helper).
 
-## Latest Linux review (2026-10-21, native pilot)
+## Earlier Linux review (2026-10-21, native pilot)
 
 Read `vault-cad-exchange/evidence/2026-10-21-linux-native-review-01/` and the newest
 coordination/to-windows message before continuing. The previous body-count gap is

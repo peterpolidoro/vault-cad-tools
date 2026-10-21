@@ -101,28 +101,31 @@ provides `IsSolid`/visibility-filtered counts. Exports made before the
 `-Acquisition` option carry no `native_inputs` record. All Windows automation ran
 in an interactive desktop session; unattended service mode is unqualified.
 
-## Validation and current handoff
+## Validation and current handoff — pilot 02
 
-34 portable Python tests pass in Guix and locked Windows Pixi. Windows completed
-23 native pilot checks and 19 rerun checks in a disposable logged-in-session
-workspace. Linux FreeCAD 1.1.3 confirms the exported two-panel geometry/placements.
-The fresh-cache guard is Windows-qualified. All 44 verified-export input records
-match acquisition/inventory; STEP DATA matches the first export byte for byte.
+Peter committed the prior Linux/Windows work as 498279f (project 43f99b8).
+34 portable tests pass in Guix and Windows Pixi. Windows passed 11 offline receipt
+cases, four real negative receipt cases, 19 repeated native-pilot checks and the
+changed-input refusal before any new directory/Inventor process. The native
+parameter fixture passed 29 checks and Linux FreeCAD validates its STEP.
 
-- [ ] Windows: execute the Linux receipt-join and changed-input guard changes,
-  including `windows/Test-ExportReceipt.ps1` (11 offline cases), a real strict
-  receipt and unchanged/changed-input pilot reruns. PowerShell is unavailable here.
-- [ ] Windows: resolve the two McMaster per-part volume differences with explicit
-  accuracy/override settings and per-body/local-frame geometry comparisons.
-- [ ] Windows: native named-parameter monitor fixture, saved dimension edit and
-  STEP export; manager requires design in Inventor, not just imported geometry.
-- [ ] Both: per-part/configuration assets and explicit parent-relative instance
-  manifest/BOM metadata for mechanical-docs. Geometry counts are not a BOM.
+- [x] Resolve earlier volume differences with explicit VeryHigh accuracy (~0.0022%).
+- [x] Per-part assets and raw instance/BOM metadata: 37 parts, 155 occurrences,
+  flexible instance placements preserved. Linux matches all 479 solid signatures
+  against the earlier acquisition-bound full export; accepted project reference.
+- [x] Native monitor parameter/sketch/extrusion creation, reopen/edit/restore/export.
+- [ ] Harden Export-PartAssets.ps1 before general reuse: bind all opened sources
+  including intermediate assemblies, fail on mismatch/unknown units/collisions,
+  validate actual model state/configuration, remove fixed project/vault metadata.
+- [ ] Harden instance ownership/project cleanup; scope existing scripts to the
+  qualified single-user interactive pilot until then.
+- [ ] Documentation adapter and FreeCAD-mm normalization fix. Source header units
+  are provenance; Part.read already returns mm. Keep raw snapshot fields and
+  instance nodes; scene keys/extra fields/basis need adapting to the strict loader.
+- [ ] Explicit Vault destination, SDK add-file adapter and dependency-aware native
+  check-in, verified re-acquisition and version/conflict/retry handling.
 
-Windows script updates and Linux follow-up are uncommitted in the Linux checkout;
-shared clones are unchanged. Raw results are in `2026-10-21-windows-native-pilot-01`
-and `2026-10-21-linux-native-review-01` under the shared exchange evidence directory.
-Full enclosure acceptance, service-mode execution, production editing, native
-parameter authoring and Vault publication are not claimed. The new comparison
-script is diagnostic (basename keys, body visibility, default mass properties);
-the pilot is a panel-specific fixture, not a general-purpose safe assembly editor.
+Code/results are uncommitted in the Linux CAD repositories; shared Git clones
+are unchanged by this review. Raw results live in 2026-10-21-windows-native-pilot-02
+and 2026-10-21-linux-native-review-02 under the shared exchange evidence directory.
+No Vault writes, production assembly edits or service-mode qualification occurred.

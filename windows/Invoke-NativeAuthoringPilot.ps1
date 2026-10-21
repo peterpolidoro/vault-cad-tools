@@ -44,16 +44,18 @@ if (-not (Test-Path -LiteralPath $StepInput)) { throw "STEP input not found: $St
 $StepInput = (Resolve-Path -LiteralPath $StepInput).Path
 $stepSha = (Get-FileHash -LiteralPath $StepInput -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($ExpectedStepSha256 -and ($stepSha -ne $ExpectedStepSha256.ToLowerInvariant())) { throw "STEP input hash $stepSha does not match expected $ExpectedStepSha256" }
+# Guard first, before anything is created: an existing workspace must belong to this STEP input.
+$statePath = Join-Path $WorkspaceRoot "pilot-state.json"
+$state = if (Test-Path -LiteralPath $statePath) { Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } else { $null }
+if ($state -and $state.step_input_sha256 -ne $stepSha) {
+    throw "Pilot workspace belongs to a different STEP input; use a fresh WorkspaceRoot"
+}
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot, "$WorkspaceRoot\parts", "$WorkspaceRoot\assemblies", $OutputDirectory | Out-Null
 $WorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $iptPath = Join-Path $WorkspaceRoot "parts\$PartName.ipt"
 $iamPath = Join-Path $WorkspaceRoot "assemblies\pilot.iam"
 $statePath = Join-Path $WorkspaceRoot "pilot-state.json"
-$state = if (Test-Path -LiteralPath $statePath) { Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } else { $null }
-if ($state -and $state.step_input_sha256 -ne $stepSha) {
-    throw "Pilot workspace belongs to a different STEP input; use a fresh WorkspaceRoot"
-}
 $stepOut = Join-Path $OutputDirectory "pilot-assembly.step"
 foreach ($p in @($stepOut, (Join-Path $OutputDirectory "placement-report.json"), (Join-Path $OutputDirectory "pilot-assembly.export.json"), (Join-Path $OutputDirectory "pilot-session.json"))) {
     if (Test-Path -LiteralPath $p) { throw "Refusing to overwrite existing output $p (use a fresh OutputDirectory)" }

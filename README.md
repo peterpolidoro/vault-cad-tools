@@ -1,19 +1,17 @@
 # vault-cad-tools
 
-Windows follow-up (2026-10-21, evidence run `2026-10-21-windows-native-pilot-01`):
-the native/STEP body-count difference is accounted for. Per-occurrence
-measurement with `IsSolid` and visibility shows 503 native solid bodies of which
-479 are visible; the STEP holds 479 visible solids. All 24 hidden bodies belong
-to `MCMASTER 47065T245.ipt` (4 solids per occurrence, 1 visible, 8 occurrences).
-Native/STEP Inventor extents agree closely. Two other parts still need targeted
-volume/surface checks (8.46% and 12.30% differences); counts do not prove geometric
-equivalence. The fresh-cache guard was validated with a same-size wrong file.
-A command-line native pilot (STEP -> IPT -> IAM with named occurrences -> move,
-constrain, export) passed 23 checks and is non-destructive on rerun. Exports can
-now be bound to acquisition hashes of every opened document. Linux confirmed
-identical STEP DATA between exports and the pilot placements in FreeCAD. All 34
-portable tests pass on both hosts. Additional Linux PowerShell receipt/state guards
-await Windows qualification. Details: `windows/README.md`.
+Pilot 02 (2026-10-21): 37 distinct STEP assets and 155 instance placements now
+reconstruct the enclosure's 479 solids in FreeCAD. Default-accuracy Inventor
+volume differences shrink to about 0.0022% at VeryHigh accuracy. Windows also
+proved native parameter-driven sketches/extrusion and a depth edit/restore cycle
+for the monitor fixture (29 checks). All 34 portable tests pass on both hosts;
+11 offline receipt cases and the changed-input guard passed on Windows.
+
+New scripts: `Export-PartAssets.ps1` (snapshot prototype), `Measure-PartBodies.ps1`
+(diagnostic), `Invoke-NativeParameterPilot.ps1` (nominal monitor fixture). The
+per-part exporter needs stricter input/state/collision checks before general
+reuse; its raw scene is not yet compatible with the mechanical-docs loader.
+See `windows/README.md`. No Vault write adapter or publication is implemented.
 
 Command-line tools for exchanging STEP files between Autodesk Vault and Git CAD
 projects. The same repository contains portable Python code and Windows helpers.
