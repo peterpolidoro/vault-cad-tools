@@ -33,9 +33,21 @@ param(
     # Single-user project template; Inventor's stock Default.ipj has no workspace entry, so the
     # workspace is the folder containing the copied .ipj (the DesignProjects COM collection on
     # Inventor 2025 exposes AddExisting but no AddNew).
-    [string]$TemplateProject = "$env:PUBLIC\Documents\Autodesk\Inventor 2025\Default.ipj"
+    [string]$TemplateProject = "$env:PUBLIC\Documents\Autodesk\Inventor 2025\Default.ipj",
+    # acquisition.json from Get-VaultDependencySnapshot.ps1: every document Inventor actually opens
+    # (root and all referenced documents) must be listed there and hash identically now, otherwise the
+    # export is refused. This binds the output to exact Vault versions rather than to file names.
+    [string]$Acquisition,
+    # Unresolved references normally refuse the export; pass this only for a deliberate partial export.
+    [switch]$AllowUnresolvedReferences
 )
 $ErrorActionPreference = "Stop"
+$acquisitionRecords = $null
+if ($Acquisition) {
+    if (-not (Test-Path -LiteralPath $Acquisition)) { throw "Acquisition record not found: $Acquisition" }
+    $acquisitionRecords = @{}
+    foreach ($a in (Get-Content -LiteralPath $Acquisition -Raw | ConvertFrom-Json).files) { $acquisitionRecords[([string]$a.local_path).ToLowerInvariant()] = $a }
+}
 
 $WorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 foreach ($d in $Document) { if (-not (Test-Path -LiteralPath $d)) { throw "Document not found: $d" } }
@@ -136,6 +148,20 @@ try {
             $meta.all_referenced_documents = $allDocs
             $meta.all_referenced_document_count = $allDocs.Count
             $meta.unresolved_references = $missing
+            if ($missing.Count -gt 0 -and -not $AllowUnresolvedReferences) { throw "Export refused: $($missing.Count) unresolved reference(s): $($missing -join '; ')" }
+            if ($acquisitionRecords -ne $null) {
+                $inputs = @(); $bad = 0
+                foreach ($p in (@($doc.FullFileName) + $allDocs)) {
+                    $rec = $acquisitionRecords[$p.ToLowerInvariant()]
+                    $cur = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $ok = [bool]($rec -and ([string]$rec.sha256 -eq $cur))
+                    if (-not $ok) { $bad++ }
+                    $inputs += [ordered]@{ path = $p; vault_path = $(if ($rec) { $rec.vault_path } else { $null }); version_id = $(if ($rec) { [string]$rec.version_id } else { $null }); master_id = $(if ($rec) { [string]$rec.master_id } else { $null })
+                        acquisition_sha256 = $(if ($rec) { $rec.sha256 } else { $null }); current_sha256 = $cur; verified = $ok }
+                }
+                $meta.native_inputs = $inputs; $meta.native_input_count = $inputs.Count; $meta.native_inputs_verified = ($bad -eq 0); $meta.acquisition_record = $Acquisition
+                if ($bad -gt 0) { throw "Export refused: $bad of $($inputs.Count) opened native document(s) are missing from or differ from $Acquisition" }
+            }
             $cd = $doc.ComponentDefinition
             try { $meta.model_state = $cd.ModelStates.ActiveModelState.Name; $meta.model_state_count = $cd.ModelStates.Count } catch { $meta.model_state = "not available"; $meta.model_state_count = $null }
             if ($meta.is_assembly) {

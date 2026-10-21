@@ -57,11 +57,25 @@ publication of Linux-authored STEP files back to Vault, using a Windows adapter.
   follow-up: `vault-cad-exchange/evidence/2026-10-21-linux-validation-01/`.
 - [x] Retain receipt extensions (dependencies/validation) in the lock; 34 Guix
   tests pass, and real assembly imports retain all 43 dependency records.
-- [ ] Windows: reconcile SurfaceBodies vs IsSolid/visibility per component and
-  compare precise native/STEP bounds; then accept or regenerate the assembly.
-- [ ] Windows: validate the new fresh-cache-only acquisition guard. Matching file
-  size no longer permits reusing an unverified local file. Also bind native hashes
-  to inputs actually opened by the exporter and reject unresolved/mismatched refs.
+- [x] Windows: reconcile SurfaceBodies vs IsSolid/visibility per component
+  (`Compare-NativeAndStepAssembly.ps1`, run `2026-10-21-windows-native-pilot-01`):
+  native 503 solid bodies, 479 visible; STEP 479; the 24 hidden bodies are all in
+  `MCMASTER 47065T245.ipt` (4 per occurrence, 1 visible, 8 occurrences). Extents
+  agree closely; face-evaluator bounds recorded in `comparison-tight/`. Linux
+  found +8.46%/+12.30% volume changes in two other parts; acceptance remains pending
+  targeted measurements rather than assuming no regeneration is needed.
+- [x] Windows: validated the fresh-cache-only guard (same-size wrong file for 991092
+  refused, exit 1, no record). `Export-InventorStep.ps1 -Acquisition` now binds every
+  opened document to its acquisition hash and refuses unresolved/mismatched inputs.
+  The actual `exports-verified/` records pass Linux cross-checks. Linux strengthened
+  `New-ExportReceipt.ps1 -RequireVerifiedInputs`; its new negative cases await Windows.
+- [x] Windows: command-line native pilot (`Invoke-NativeAuthoringPilot.ps1`): STEP ->
+  converted IPT, new IAM with named/grounded occurrences, explicit transforms, move,
+  flush constraint with incompatible-move reporting, STEP export, placement report;
+  23 checks, same-input fixture rerun without duplicates (19 checks). ByRef COM calls via the C# helper
+  `Import-InventorInterop.ps1`.
+- [ ] Both: design per-part STEP plus an explicit assembly instance/placement
+  manifest (placement-report.json is a first concrete sample of the needed fields).
 - [ ] Implement Windows SDK new-file upload, verified receipts, and retry idempotency
   (SDK assemblies 30.4.28.0 present in the Explorer folder; `SDK\Setup.exe` not run).
 - [ ] Complete FreeCAD/Inventor pilot and then add update/check-in conflict handling.
@@ -76,36 +90,39 @@ no integrated Windows authentication; the PowerShell helper supplies the token.
 No Vault writes have occurred. Publication commands only prepare/validate
 requests. Automatic export job submission, publication-result import, and LFS
 payload resolution remain future work. Search is deliberately one page with the
-returned cursor preserved. The STEP translator's `Open` with a by-reference
-target fails from PowerShell, so the re-import check relies on `Documents.Open`
-defaults. Export metadata counts come from an explicit occurrence-tree walk;
-`AllLeafOccurrences` is not enumerable from PowerShell. Historical Windows body
-counters use SurfaceBodies.Count without IsSolid filtering; their labels are not
-strict solid-count evidence. The receipt builder still needs stronger checks
-binding native input hashes to export-time data before general reuse.
+returned cursor preserved. ByRef COM calls (`CreateGeometryProxy`, translator
+`Open`) are made through the compiled C# helper; `Inspect-StepInInventor.ps1` still
+falls back to `Documents.Open` defaults. Export metadata counts come from an
+explicit occurrence-tree walk; `AllLeafOccurrences` is not enumerable from
+PowerShell. `SurfaceBody.Volume()` is not callable from PowerShell; volumes come
+from `MassProperties.Volume`. The first export run's `solid_body_count` /
+`leaf_body_count` fields are unfiltered SurfaceBodies counts; the comparison run
+provides `IsSolid`/visibility-filtered counts. Exports made before the
+`-Acquisition` option carry no `native_inputs` record. All Windows automation ran
+in an interactive desktop session; unattended service mode is unqualified.
 
-## Validation
+## Validation and current handoff
 
-The 30 offline regression tests pass in the managed Guix environment. They cover
-modified-reference preservation, rollback on manifest failure, source identity,
-portable path/symlink handling, payload integrity, committed-byte checks, REST
-query encoding, session cleanup, redirect refusal, and download failures. The
-project CLI smoke check resolves the configured root assembly and empty lock.
-Guix required an unsandboxed run to update its cached environment; no test used
-Vault credentials or made live server writes. The locked Linux Pixi environment
-also passes all 30 tests and doctor reports its Python/Git dependencies ready.
-An HTTPError response cleanup issue exposed there was fixed and revalidated.
-Pixi activation inside a pure Guix shell needs glibc detection tools, Bash, and
-coreutils alongside Pixi. On Windows (2026-10-21) the locked environment passed
-`doctor` and all 33 tests (three added: logout-501 tolerance, HTTP status on
-errors, `search` endpoint). Live Vault reads, a 44-file exact-version mirror, two
-Inventor STEP exports with receipts, their re-import in Inventor, and the import
-smoke test are recorded with hashes in the shared exchange run
-`2026-10-21-windows-qualification-01`. Linux now passes 34 tests and validates the
-panel and assembly STEP shapes in FreeCAD. The assembly discrepancy remains
-unresolved; human/design-intent review and reverse publication are outstanding.
-The PowerShell cache guard added on Linux awaits Windows execution. Both real
-imports are idempotent in a disposable project, including preservation of extra
-receipt evidence. Windows patches plus Linux fixes are uncommitted in the Linux
-checkouts; shared Git clones remain unchanged. Live checks must record real source
-and result IDs/checksums; API reachability is not proof of conversion/publication.
+34 portable Python tests pass in Guix and locked Windows Pixi. Windows completed
+23 native pilot checks and 19 rerun checks in a disposable logged-in-session
+workspace. Linux FreeCAD 1.1.3 confirms the exported two-panel geometry/placements.
+The fresh-cache guard is Windows-qualified. All 44 verified-export input records
+match acquisition/inventory; STEP DATA matches the first export byte for byte.
+
+- [ ] Windows: execute the Linux receipt-join and changed-input guard changes,
+  including `windows/Test-ExportReceipt.ps1` (11 offline cases), a real strict
+  receipt and unchanged/changed-input pilot reruns. PowerShell is unavailable here.
+- [ ] Windows: resolve the two McMaster per-part volume differences with explicit
+  accuracy/override settings and per-body/local-frame geometry comparisons.
+- [ ] Windows: native named-parameter monitor fixture, saved dimension edit and
+  STEP export; manager requires design in Inventor, not just imported geometry.
+- [ ] Both: per-part/configuration assets and explicit parent-relative instance
+  manifest/BOM metadata for mechanical-docs. Geometry counts are not a BOM.
+
+Windows script updates and Linux follow-up are uncommitted in the Linux checkout;
+shared clones are unchanged. Raw results are in `2026-10-21-windows-native-pilot-01`
+and `2026-10-21-linux-native-review-01` under the shared exchange evidence directory.
+Full enclosure acceptance, service-mode execution, production editing, native
+parameter authoring and Vault publication are not claimed. The new comparison
+script is diagnostic (basename keys, body visibility, default mass properties);
+the pilot is a panel-specific fixture, not a general-purpose safe assembly editor.

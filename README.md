@@ -1,13 +1,19 @@
 # vault-cad-tools
 
-Linux follow-up (2026-10-21): the reviewed Windows changes pass 34 tests in Guix.
-FreeCAD reads the panel as one valid solid and the assembly as 479 valid solids.
-The assembly is pending native/STEP completeness and precise-bounds comparison;
-the Windows counters used unfiltered `SurfaceBodies.Count`. See `windows/README.md`
-for the next checks. Imports now preserve dependency and validation receipt fields.
-Use a fresh cache for Windows acquisition: matching file size is not proof of a
-Vault version, and existing destinations are now rejected. This new cache guard
-still needs Windows validation.
+Windows follow-up (2026-10-21, evidence run `2026-10-21-windows-native-pilot-01`):
+the native/STEP body-count difference is accounted for. Per-occurrence
+measurement with `IsSolid` and visibility shows 503 native solid bodies of which
+479 are visible; the STEP holds 479 visible solids. All 24 hidden bodies belong
+to `MCMASTER 47065T245.ipt` (4 solids per occurrence, 1 visible, 8 occurrences).
+Native/STEP Inventor extents agree closely. Two other parts still need targeted
+volume/surface checks (8.46% and 12.30% differences); counts do not prove geometric
+equivalence. The fresh-cache guard was validated with a same-size wrong file.
+A command-line native pilot (STEP -> IPT -> IAM with named occurrences -> move,
+constrain, export) passed 23 checks and is non-destructive on rerun. Exports can
+now be bound to acquisition hashes of every opened document. Linux confirmed
+identical STEP DATA between exports and the pilot placements in FreeCAD. All 34
+portable tests pass on both hosts. Additional Linux PowerShell receipt/state guards
+await Windows qualification. Details: `windows/README.md`.
 
 Command-line tools for exchanging STEP files between Autodesk Vault and Git CAD
 projects. The same repository contains portable Python code and Windows helpers.
@@ -130,11 +136,38 @@ run on a machine with Inventor 2025 installed and Vault access:
    (occurrences, bodies, extent) for comparison with the export metadata.
 4. `New-ExportReceipt.ps1 -Metadata ... -Inventory ... -Acquisition ... -VaultPath '$/...'`
    joins those records into the `docs/exchange-protocol.md` receipt, re-hashing
-   the STEP file and embedding the dependency inventory for assemblies.
+   the STEP file and embedding the dependency inventory for assemblies. With
+   `-RequireVerifiedInputs` it refuses metadata that was not bound to acquisition.
+
+Binding exports to exact versions: `Export-InventorStep.ps1 -Acquisition acquisition.json`
+re-hashes the root and every document Inventor actually opened, requires each to be
+listed in the acquisition record with the same SHA-256, refuses unresolved references
+(unless `-AllowUnresolvedReferences`), and records `native_inputs` in the metadata;
+the receipt then carries `native_inputs_verified` and `acquired_but_not_opened`.
+
+Measurement and native authoring (added for the command-line pilot):
+
+5. `Compare-NativeAndStepAssembly.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Step FILE -OutputDirectory OUT [-TightBounds]`
+   measures both sides per leaf occurrence and per distinct document
+   (SurfaceBodies, `IsSolid` solids, visible solids, `MassProperties.Volume`,
+   RangeBox, optional face-evaluator tight bounds) and writes `comparison.json`
+   listing the documents whose counts differ.
+6. `Invoke-NativeAuthoringPilot.ps1 -StepInput FILE -WorkspaceRoot NEW -OutputDirectory OUT`
+   imports a STEP as a converted part, saves it as an IPT, builds a new IAM with
+   two named occurrences (one grounded), moves one, adds a named flush constraint,
+   reports an incompatible move as not achieved, exports STEP and writes a
+   placement report. Reruns reuse the IPT (by hash), occurrences (by name) and the
+   constraint (by name) instead of duplicating them; outputs are never overwritten.
+   This is a fixed two-panel fixture (47 × 1/8 × 47 inches), not a general assembly
+   editor. Use a dedicated disposable workspace; changed STEP inputs are refused.
+7. `Import-InventorInterop.ps1` (dot-sourced) compiles a two-method C# helper
+   against `Autodesk.Inventor.Interop.dll` for the ByRef COM calls PowerShell cannot
+   make (`CreateGeometryProxy`, translator `Open`). No extra packages are needed.
 
 Run them with `&` from PowerShell (not `powershell -File`, which flattens array
-parameters). Evidence from the pilot run lives in the shared exchange area under
-`vault-cad-exchange/evidence/2026-10-21-windows-qualification-01/`.
+parameters). Evidence lives in the shared exchange area under
+`vault-cad-exchange/evidence/2026-10-21-windows-qualification-01/` (first export)
+and `.../2026-10-21-windows-native-pilot-01/` (comparison, native pilot, verified export).
 
 ## Import a Windows-generated STEP
 
@@ -170,5 +203,5 @@ implementing an uploader or processing any real request.
 The first supported release will be established by one real part/assembly export
 and one new-file publication verified in FreeCAD and Inventor. The export half
 exists as evidence (pilot part and assembly with receipts, re-opened in Inventor);
-FreeCAD review and the publication half are still open, so the end-to-end
+targeted enclosure checks and the publication half are still open, so the end-to-end
 milestone is not claimed.

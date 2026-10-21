@@ -1,22 +1,76 @@
 # Windows side of vault-cad-tools
 
-## Latest Linux follow-up
+## Latest Windows results (2026-10-21, command-line native pilot)
 
-The Windows results have been reviewed. Read the new shared report before
-continuing; the remaining sections below preserve the earlier handoff/results:
+Evidence run: `vault-cad-exchange/evidence/2026-10-21-windows-native-pilot-01/`
+(report `WINDOWS-NATIVE-PILOT-2026-10-21.md`). Executed on tools `163ed4c` /
+project `f11b2ae` in Peter's interactive desktop session; no service mode is claimed.
 
-`/janelia/sciserv/polidorop/Repositories/vault-cad-exchange/evidence/2026-10-21-linux-validation-01/LINUX-RESULTS-2026-10-21.md`
+- 34 tests pass on Windows. The fresh-cache guard rejected a same-size wrong file
+  for version 991092 (exit 1, no acquisition record, planted file untouched).
+- `Compare-NativeAndStepAssembly.ps1`: native 155 leaves / 503 solid bodies /
+  479 visible; STEP 155 / 479 / 479. The only differing document is
+  `MCMASTER 47065T245.ipt` (4 `IsSolid` bodies per occurrence, 1 visible, 8
+  occurrences = 24). Extents agree closely. Total volume differs by 12.8 cm³;
+  hidden bodies and other per-component differences partly offset each other.
+- `Invoke-NativeAuthoringPilot.ps1`: STEP -> converted IPT (no reference), saved,
+  reopened (1 solid, 47 x 0.125 x 47 in, 4291.6 cm^3); new IAM with PANEL_A
+  (grounded) and PANEL_B placed by explicit matrices; unconstrained move persists
+  across reopen; flush constraint on XZ planes with 1 in offset; an incompatible
+  move is reported as not achieved with the constraint retained; compatible move
+  persists; assembly STEP exported with a placement report. 23 checks passed; a
+  rerun on the same workspace passed 19 checks with IPT, occurrences and constraint
+  reused, never duplicated. IPT bytes unchanged throughout.
+- `Export-InventorStep.ps1 -Acquisition` re-exported the enclosure with all 44
+  opened documents hash-verified against `acquisition.json`; the receipt records
+  `native_inputs_verified: true` (`exports-verified/`).
+- Vault SDK inventory (`sdk-inventory/`): VDF `IFileManager.AddFile/CheckinFile/
+  AcquireFiles/UndoCheckoutFile` and web-service `DocumentService.AddUploadedFile/
+  CheckinUploadedFile/CheckoutFile` are present (30.4.28.0). The Inventor Vault
+  add-in is installed and active but its automation type library is not registered
+  for IDispatch enumeration. No upload adapter exists yet.
 
-FreeCAD confirms 479 valid assembly solids and a matching panel. Only the panel
-is imported into the Linux project baseline. Resolve the native/STEP discrepancy
-per component using IsSolid, visibility, volume, and precise bounds: the current
-scripts count unfiltered SurfaceBodies. The Linux importer now retains receipt
-extensions (43 assembly dependency records); the suite has 34 passing tests.
-The acquisition script now refuses all existing destinations rather than trusting
-equal size. Validate that guard on Windows and use a fresh CacheRoot. The shared
-report supplies incremental patches on top of your prior patches and the exact
-remaining geometry/provenance checks. The Linux working copies hold the integrated
-changes; the shared Git clones have not been edited during this review.
+The ByRef COM limitation is solved with `Import-InventorInterop.ps1` (C# helper).
+
+## Latest Linux review (2026-10-21, native pilot)
+
+Read `vault-cad-exchange/evidence/2026-10-21-linux-native-review-01/` and the newest
+coordination/to-windows message before continuing. The previous body-count gap is
+accounted for, and all 44 export input records match acquisition/inventory. The
+verified export has exactly the same STEP DATA section as the previously validated
+file. FreeCAD 1.1.3 confirms two valid pilot panels at the reported placements.
+The 34 portable tests pass in Guix.
+
+Full enclosure acceptance remains pending specific per-part checks: native/STEP
+mass-property volumes differ by +12.30% for MCMASTER 5537T429_T-Slotted Framing and
++8.46% for MCMASTER 5537T293_T-Slotted Framing. Determine the cause with explicit
+accuracy/override settings and per-body comparisons. Do not assert all volume
+changes come from hidden bodies, or that equal counts prove surface equivalence.
+
+Linux additionally tightened New-ExportReceipt.ps1 to verify the acquisition/
+inventory/opened-input join, reject empty/false verification and incomplete strict
+exports. Invoke-NativeAuthoringPilot.ps1 now refuses a changed STEP input in an
+existing workspace and validates file-name arguments. These edits have not run
+on Windows yet. First run PowerShell parser checks, then:
+
+```powershell
+& .\windows\Test-ExportReceipt.ps1
+```
+
+The 11 offline receipt cases need no Autodesk or server access. Also compose a
+fresh strict receipt from the real verified export, and check the pilot unchanged-
+input rerun and changed-input refusal in a disposable workspace. PowerShell is
+not installed in the Linux review environment; Python tests do not cover it.
+
+Compare-NativeAndStepAssembly.ps1 is diagnostic: basename grouping, body-level
+visibility, caught measurement failures, default mass-property accuracy and
+conservative bounds limit its conclusions. Use distinct source/configuration keys
+and inherited occurrence state for the forthcoming manifest. The pilot is a fixed
+panel fixture and may mutate its own test IAM on rerun; never point it at design
+work. COM-instance/project cleanup should be hardened before general reuse.
+
+Per-part export and the native parameter-driven monitor fixture can proceed
+without a publication destination. No Vault write is requested or implemented.
 
 ## Status (Windows, 2026-10-21)
 
