@@ -175,10 +175,22 @@ parameter fixture passed 29 checks and Linux FreeCAD validates its STEP.
 - [ ] Documentation adapter and FreeCAD-mm normalization fix. Source header units
   are provenance; Part.read already returns mm. Keep raw snapshot fields and
   instance nodes; scene keys/extra fields/basis need adapting to the strict loader.
-- [ ] Explicit Vault destination chosen by Peter, then a qualified LIVE pilot of the
-  add route (Windows-auth connection, `AddFile` with returned ids, re-download
-  verification, timeout-to-ambiguous handling); dependency-aware native check-in,
-  verified re-acquisition and version/conflict handling remain later work.
+- [x] First live add qualified (run `2026-10-22-windows-vault-pilot-01`, Peter's
+  destination `$/DATA/PROJECTS/_PROJECTS BY LAB/SCHULZE (LAB)/ENCLOSURE`, request
+  e1caf6c0): M1/M2/M3/L2/L4/L6/P3 fixed with tests first; three journaled attempts
+  (license error 319 unlicensed; Vault error 155 on raw `UploadFilePart`, reconciled;
+  `FileManager.AddFile` succeeded, version 994252); `record-publish` verified 10/10
+  checks; journal host-local (P1). Named-user license via the Identity Manager token.
+- [ ] Remaining cleanups from the Linux review: L1 (refuse-not-coerce, schema checks,
+  no output overwrite in `bom_audit.py`), L3 (group-level `suppressed` and root
+  fields in `assemblies[]`; validator enforcing `suppressed`/`mirrored`), L5
+  (server/vault defaults from project config; no workstation name in tests), P4
+  (proxy opt-out for the bearer token in PowerShell).
+- [ ] Next milestone (proposal only, no edits yet): place the monitor model in a
+  disposable copy of the root assembly (STEP -> native IPT via the qualified
+  converter, constrained, exported for Linux check), then the native update/check-in
+  adapter with expected-version checks and dependency handling; production edits
+  and native check-ins stay unauthorized until that route is reviewed.
 
 - [x] Linux (2026-10-22T16:54:49Z): Windows full patch `dd415d54...` integrated UNCOMMITTED on
   0705b40 in this worktree; 60 portable tests pass in Guix; independent static review
@@ -204,6 +216,20 @@ parameter fixture passed 29 checks and Linux FreeCAD validates its STEP.
   `svault5`/vault 28 defaults belong to project config; no workstation name in tests;
   delete the run-created `.ipj` on Stop; `includeHidden` in `files_in_folder`;
   proxy opt-out in `Discover-VaultAssociations.ps1`.
+
+- [x] FIRST LIVE VAULT ADD (2026-10-22T18:23:24Z): request e1caf6c0 -> `AW2725Q-nominal-envelope.step`,
+  master 994251 / version 994252 in `$/DATA/PROJECTS/_PROJECTS BY LAB/SCHULZE (LAB)/ENCLOSURE`
+  (folder 953863); Windows `record-publish` 10/10 checks; Linux re-check and
+  `import-publish-result` (new) recorded it in the project lock. Windows patch 8ae939da
+  (M1/M2/M3, L2/L4/L6, P2/P3, gated live executor) integrated uncommitted here; 76 tests.
+  Protocol facts: Vault 2025 writes need the Autodesk ID named-user token of the
+  Identity Manager user (error 319 otherwise); raw SOAP `UploadFilePart` fails with 155,
+  `Connection.FileManager.AddFile` is the route; REST folder contents omit hidden files, the
+  SDK listing with includeHidden is the collision check; journal lives on the executor host.
+- [ ] Windows: monitor placement pilot in a disposable copy (two envelopes from version
+  994252 on the lower platform), export for Linux review; then a DESIGN DOCUMENT for the
+  native update/check-in adapter (expected version ids, dependencies, journal model, dry run)
+  before any production check-out/check-in. Cleanups L1, L3, L5, P4.
 
 Code/results are uncommitted in the Linux CAD repositories; shared Git clones
 are unchanged by this review. Raw results live in 2026-10-21-windows-native-pilot-02

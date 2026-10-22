@@ -186,6 +186,19 @@ Case "S16 shutdown with a null project manager and a pre-existing, already activ
     Assert ($r.Observed.preexisting_entry_still_registered -eq $false -and -not $r.Succeeded -and ($r.FailedRequired -contains "preexisting_entry_still_registered")) "state: $($r | ConvertTo-Json -Compress -Depth 4)"
     Remove-Item $f -Force
 }
+Case "S18 shutdown removes the project FILE this run created (and only then); a pre-existing file is kept" {
+    $app = New-MockInventor; $created = Join-Path ([IO.Path]::GetTempPath()) ("vault-cad-mock-" + [Guid]::NewGuid() + ".ipj"); $template = [IO.Path]::GetTempFileName()
+    $p = Use-TemporaryProject $app $created $template
+    Assert ($p.CreatedFile -and (Test-Path -LiteralPath $created)) "file not created from template"
+    $s = [pscustomobject]@{ App = $app; Pid = 3000; PreExistingPids = @(1000); Releaser = $releaser }
+    $r = Stop-IsolatedInventor $s $p -ProcessAlive { $false } -ProcessLister { @(1000) } -WaitSeconds 1
+    Assert ($r.Succeeded -and $r.Observed.created_file_removed -eq $true -and -not (Test-Path -LiteralPath $created)) "created file not removed: $($r | ConvertTo-Json -Compress -Depth 4)"
+    Assert (@($r.Required) -contains "created_file_removed") "removal not required"
+    $existing = [IO.Path]::GetTempFileName(); $app2 = New-MockInventor; $p2 = Use-TemporaryProject $app2 $existing
+    $r2 = Stop-IsolatedInventor ([pscustomobject]@{ App = $app2; Pid = 3000; PreExistingPids = @(1000); Releaser = $releaser }) $p2 -ProcessAlive { $false } -ProcessLister { @(1000) } -WaitSeconds 1
+    Assert ($r2.Succeeded -and $null -eq $r2.Observed.created_file_removed -and (Test-Path -LiteralPath $existing)) "pre-existing file touched: $($r2.Observed | ConvertTo-Json -Compress)"
+    Remove-Item $existing, $template -Force
+}
 Case "S17 shutdown with a null project manager and NO project handed over: no project observation required, Succeeded" {
     $app = New-MockInventor; $app.DesignProjectManager = $null; $s = [pscustomobject]@{ App = $app; Pid = 3000; PreExistingPids = @(1000); Releaser = $releaser }
     $r = Stop-IsolatedInventor $s $null -ProcessAlive { $false } -ProcessLister { @(1000) } -WaitSeconds 1

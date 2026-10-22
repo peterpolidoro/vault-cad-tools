@@ -108,7 +108,7 @@ def body_names_informative(names):
     return [n for n in names or [] if n and not re.fullmatch(r"(?i)(solid|body|surface)\d*", str(n).strip())]
 
 
-def joint_coverage(joints, groups, root_summary, exported_part_documents, drawings_available):
+def joint_coverage(joints, groups, root_summary, exported_part_documents, drawings_available, drawings_checked=False):
     by_id = {g["group_id"]: g for g in groups}
     coverage = {}
     for joint in joints or []:
@@ -142,8 +142,11 @@ def joint_coverage(joints, groups, root_summary, exported_part_documents, drawin
             category, basis = "e", "compound (multi-body) parts are present but their bodies are unnamed and no vendor kit data is in the model; whether hardware is supplied in the kit is undecidable from CAD"
         else:
             category, basis = "d", "no row, virtual component, compound part or drawing parts list in any native source inspected"
-        if not drawings_available and category in ("d", "e"):
-            basis += "; no drawing or presentation is associated with any version of the acquired files, so category b cannot apply"
+        if category in ("d", "e"):
+            if drawings_checked and not drawings_available:
+                basis += "; no drawing or presentation is associated with any version of the acquired files, so category b cannot apply"
+            elif not drawings_checked:
+                basis += "; drawings not checked (no complete all-versions discovery supplied), so category b stays possible"
         coverage[joint.get("id")] = {
             "supplementary_item_id": joint.get("supplementary_item_id"), "category": category, "basis": basis,
             "groups_named": group_ids, "groups_found": [g["group_id"] for g in found], "groups_not_in_audit": missing,
@@ -246,14 +249,20 @@ def drawings_json(discovery_dir):
         for a in f.get("attachments") or []:
             attachment_kinds[a.get("kind")] = attachment_kinds.get(a.get("kind"), 0) + 1
     drawings = [e for e in external if e.get("kind") in ("drawing", "presentation")]
-    return {"available": True, "method": "Vault REST GET only: file-versions/{id}/parents and /uses for every acquired version (exact associations), "
-                                          "plus parents of every other version of each acquired master (files/{master}/versions)",
-            "status": receipt.get("status"), "acquired_versions": len(per_file), "counts": receipt.get("counts"),
+    # M3: "no drawing on any version" may only be claimed from a COMPLETE discovery that checked every version.
+    complete = receipt.get("status") == "complete" and bool(receipt.get("all_versions_pass"))
+    return {"available": True, "complete_all_versions": complete,
+            "method": "Vault REST GET only: file-versions/{id}/parents and /uses for every acquired version (exact associations), "
+                      "plus parents of every other version of each acquired master (files/{master}/versions)",
+            "status": receipt.get("status"), "all_versions_pass": receipt.get("all_versions_pass"), "acquired_versions": len(per_file), "counts": receipt.get("counts"),
             "drawings_or_presentations_on_acquired_versions": drawings, "drawings_or_presentations_on_other_versions": other,
             "attachment_kinds": attachment_kinds,
             "external_parent_assemblies": [{"name": e.get("name"), "version": e.get("version"), "folder": e.get("folder_path"), "version_id": e.get("version_id")} for e in external if e.get("kind") == "assembly"],
             "parts_lists_read": [] if not drawings and not other else "not read: see report",
-            "note": "no drawing exists, so no parts list or balloon could be read" if not drawings and not other else None}
+            "note": ("no drawing or presentation exists on any version of the acquired masters, so no parts list or balloon could be read"
+                     if complete and not drawings and not other else
+                     ("drawings not checked completely: discovery receipt is not complete with an all-versions pass; category b stays possible"
+                      if not complete else None))}
 
 
 def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_dir=None):
@@ -281,7 +290,8 @@ def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_
                              for d in r.get("component_definitions") or [] if d.get("document")}
     drawings = drawings_json(discovery_dir)
     drawings_available = bool((drawings.get("drawings_or_presentations_on_acquired_versions") or drawings.get("drawings_or_presentations_on_other_versions")))
-    coverage = joint_coverage(joints, groups, root_summary, exported_part_documents, drawings_available)
+    drawings_checked = bool(drawings.get("complete_all_versions"))
+    coverage = joint_coverage(joints, groups, root_summary, exported_part_documents, drawings_available, drawings_checked)
     pairs = coincident_occurrences(snapshot, occurrences)
     coincident = coincident_report(pairs, occurrences, rows, discovery_dir)
     virtual_and_excluded = {
@@ -331,6 +341,7 @@ def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_
                "exported_parts_not_in_native_parts_only_view": sorted(exported_part_documents - native_part_documents),
                "groups": groups, "joint_coverage_categories": {k: v["category"] for k, v in coverage.items()},
                "coincident_pairs": len(coincident), "virtual_components": len(virtuals), "drawings_available": drawings_available,
+               "drawings_checked_all_versions": drawings_checked,
                "caveats": ["CAD instance counts and native BOM quantities are not purchase quantities or stock.",
                            "hardware_named is a name-based identification of modeled rows, not a specification.",
                            "Absence of a row proves only that CAD does not model the item; kit contents must be checked physically or against vendor documents."]}

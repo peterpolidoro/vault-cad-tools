@@ -171,11 +171,12 @@ try {
     Write-Output "Shutdown: pid $($shutdown.Pid) exited=$($shutdown.Exited) succeeded=$($shutdown.Succeeded)"
 }
 # ---- post-run integrity: every acquired file must still hash as acquired ----
-$changed = @(); $checked = 0
-foreach ($a in $acqJson.files) { if (Test-Path -LiteralPath $a.local_path) { $checked++; if ((Sha $a.local_path) -ne [string]$a.sha256) { $changed += $a.local_path } } }
-$postCheck = [ordered]@{ files_checked = $checked; files_changed = $changed; inputs_unchanged_after_run = ($changed.Count -eq 0 -and $checked -gt 0) }
-if (-not $postCheck.inputs_unchanged_after_run) { $errors += "post-run hash check failed: $($changed -join '; ')" }
-Write-Output "Post-run hash check: $checked files, changed: $($changed.Count)"
+$changed = @(); $missing = @(); $checked = 0
+foreach ($a in $acqJson.files) { if (Test-Path -LiteralPath $a.local_path) { $checked++; if ((Sha $a.local_path) -ne [string]$a.sha256) { $changed += $a.local_path } } else { $missing += $a.local_path } }
+# A missing input is a failure too (L4): every acquired file must still be present and unchanged.
+$postCheck = [ordered]@{ files_checked = $checked; files_changed = $changed; files_missing = $missing; inputs_unchanged_after_run = ($changed.Count -eq 0 -and $missing.Count -eq 0 -and $checked -gt 0) }
+if (-not $postCheck.inputs_unchanged_after_run) { $errors += "post-run hash check failed: changed=$($changed -join '; ') missing=$($missing -join '; ')" }
+Write-Output "Post-run hash check: $checked files, changed: $($changed.Count), missing: $($missing.Count)"
 
 $status = $(if ($errors.Count -eq 0 -and $shutdown.Succeeded -and $rows.Count -gt 0) { "complete" } else { "FAILED" })
 # -InputObject keeps empty and single-element lists as JSON arrays (piping would drop the array or write nothing).

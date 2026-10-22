@@ -247,13 +247,18 @@ Measurement and native authoring (added for the command-line pilot):
 14. `Publish-StepToVault.ps1 -Plan plans/UUID.json -OutputDirectory NEW -DryRun`
     re-verifies the payload named by a plan from `vault-cad plan-publish`, resolves
     the eleven SDK members of the add route by reflection against the installed Vault
-    Client 2025 assemblies (Windows-auth `WinAuthCredentials`/`WebServiceManager`/
-    `Connection`, `GetFolderByPath`, `GetLatestFilesByFolderId`,
-    `IFileManager.AddFile`, `UploadFilePart`, `AddUploadedFile`) without opening a
-    connection or reading a credential, and writes `dry-run.json` with the call
-    sequence and argument values it would use. Without `-DryRun` it refuses before
-    touching anything: no live destination is authorized and the add route has no
-    qualified pilot.
+    Client 2025 assemblies without opening a connection or reading a credential, and
+    writes `dry-run.json` with the call sequence it would use. With `-Live -RequestId
+    UUID -ExpectedFolder '$/...' -ExpectedFolderId N -ExpectedPayloadSha256 SHA -Journal
+    FILE` it performs exactly one add: every gate must match the plan and the journal
+    entry must be `planned`; it signs in with Windows authentication plus the Autodesk
+    ID token of the user signed in to the Identity Manager (named-user license; the
+    token stays in memory), re-checks folder id and name through the SDK, journals
+    `uploading` via the CLI, adds the file through `Connection.FileManager.AddFile`
+    (`-Route Vdf`, default) and journals `uploaded` with the returned ids and an
+    `execution.json`, or `ambiguous` on any exception (no retry). Without either
+    switch it refuses before touching anything. First verified live add: 2026-10-22
+    (`evidence/2026-10-22-windows-vault-pilot-01/`).
 15. `Audit-NativeBom.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -OutputDirectory NEW -Acquisition ... -Inventory ...`
     is the READ-ONLY native bill-of-materials audit: it binds every opened document to
     the acquisition record, records every row of the model-data, structured (all
@@ -338,10 +343,29 @@ SDK calls; the same id with a different fingerprint is refused as an identity
 conflict, and an `uploading`/`ambiguous` journal state blocks every retry until
 `reconcile-publish` has inspected the destination (identical bytes recover the
 request with its Vault ids; different bytes record a collision; no file needs an
-explicit `--acknowledge-no-file`). `record-publish` re-downloads the reported
-version, compares size and SHA-256 and writes `results/UUID.json`. None of these
-commands uploads; `tests/test_publication.py` covers them (21 cases with fake
-catalogs and a local HTTP stub), and the Windows dry-run executor is item 14 above.
+explicit `--acknowledge-no-file`). The journal follows an explicit transition table
+(`mark-uploading`, `mark-uploaded`, `mark-ambiguous`, `mark-failed` are the executor's
+moves) and lives on the executing host. `record-publish` accepts only an `uploaded`
+request, confirms through the catalog that the version sits in the destination folder
+under the destination name, re-downloads it and compares size, SHA-256 and CRC32 with
+the payload and the executor's server values, then writes `results/UUID.json` with
+every check. None of these commands uploads; `tests/test_publication.py` covers them
+(31 cases with fake catalogs and a local HTTP stub), and the Windows executor is item
+14 above.
+
+After Windows has verified an add, Linux records it in the project lock:
+
+```sh
+python3 run.py --project ../free-standing-tank-enclosure import-publish-result /path/to/vault-cad-exchange/results/REQUEST_ID.json
+```
+
+`import-publish-result` re-checks the result against its request directory (fingerprint,
+payload and re-download hashes, destination, vault ids, provenance, every verification
+check, typed execution record) and against the project's Git history (the committed blob
+at the provenance commit must hash to the payload) before appending a `publications`
+record; it never reads the executor journal. Identical re-imports are no-ops; conflicting
+ones are refused. First qualified live add: 2026-10-22, request `e1caf6c0-...`, Vault
+version 994252 (`vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/`).
 
 These commands **do not upload**. They package and validate a committed file for
 the forthcoming Windows uploader. Existing destination names must cause failure;

@@ -60,9 +60,25 @@ def parser():
     record.add_argument("--workdir", required=True)
     record.add_argument("--exchange")
     record.add_argument("--execution", help="JSON file with what the executor observed (executed_at, executed_by_host, comment_sent, folder_id, server_version_number, server_file_size, server_checksum)")
+    for name, text in (("mark-uploading", "Executor: journal planned -> uploading immediately BEFORE the mutating SDK call"),
+                       ("mark-uploaded", "Executor: journal uploading -> uploaded with the returned ids and the execution record"),
+                       ("mark-ambiguous", "Executor: journal uploading -> ambiguous after a timeout, exception or lost response"),
+                       ("mark-failed", "Executor: journal uploading -> failed for a definite pre-upload failure")):
+        mark = sub.add_parser(name, help=text)
+        mark.add_argument("directory")
+        mark.add_argument("--journal", required=True)
+        if name == "mark-uploaded":
+            mark.add_argument("--master-id", required=True)
+            mark.add_argument("--version-id", required=True)
+            mark.add_argument("--execution", help="JSON file with the executor's observations")
+        if name in ("mark-ambiguous", "mark-failed"):
+            mark.add_argument("--reason", required=True)
     snapshot = sub.add_parser("catalog-snapshot", help="Save a READ-ONLY catalog snapshot (vault identity, folders, files) for offline planning")
     snapshot.add_argument("--output", required=True)
     snapshot.add_argument("--folder", action="append", required=True, help="Vault folder path ($/...), repeatable")
+    ingest = sub.add_parser("import-publish-result", help="Record a verified results/UUID.json in the project lock after re-checking it against its request (never reads the journal)")
+    ingest.add_argument("result", help="results/UUID.json at the exchange root")
+    ingest.add_argument("--exchange", help="Exchange root (default: inferred from the result path)")
     bom = sub.add_parser("bom-audit-summary", help="Join a native BOM audit, exporter snapshot and Vault discovery into reviewable facts (offline)")
     bom.add_argument("--audit", required=True, help="Directory written by windows/Audit-NativeBom.ps1")
     bom.add_argument("--snapshot", required=True, help="native-snapshot.json from Export-PartAssets.ps1")
@@ -73,6 +89,30 @@ def parser():
 
 
 PUBLICATION_COMMANDS = ("plan-publish", "reconcile-publish", "record-publish")
+JOURNAL_COMMANDS = ("mark-uploading", "mark-uploaded", "mark-ambiguous", "mark-failed")
+
+
+def run_journal(args):
+    """Journal transitions driven by the executor; no catalog, no network, no project."""
+    from .exchange import verify_request as _verify
+    from .project import read_json
+    from .publication import Journal, fingerprint, mark_ambiguous, mark_failed, mark_uploaded, mark_uploading
+    request = _verify(args.directory)
+    journal = Journal(args.journal)
+    entry = journal.entry(request["request_id"])
+    if entry is None or entry.get("fingerprint") != fingerprint(request):
+        raise ExchangeError(f"Request {request['request_id']} is not journaled with this fingerprint; plan it first")
+    rid = request["request_id"]
+    if args.command == "mark-uploading":
+        entry = mark_uploading(journal, rid)
+    elif args.command == "mark-uploaded":
+        execution = read_json(args.execution) if args.execution else None
+        entry = mark_uploaded(journal, rid, {"master_id": args.master_id, "version_id": args.version_id}, execution=execution)
+    elif args.command == "mark-ambiguous":
+        entry = mark_ambiguous(journal, rid, args.reason)
+    else:
+        entry = mark_failed(journal, rid, args.reason)
+    return {"request_id": rid, "state": entry["state"], "journal": str(journal.path)}
 
 
 def run_publication(args, catalog):
@@ -96,6 +136,8 @@ def execute(args):
     if args.command == "verify-request":
         request = verify_request(args.directory)
         return {"request_id": request["request_id"], "status": "valid_not_uploaded"}
+    if args.command in JOURNAL_COMMANDS:
+        return run_journal(args)
     if args.command in PUBLICATION_COMMANDS and args.catalog:
         from .publication import StaticCatalog
         from .project import read_json
@@ -109,6 +151,9 @@ def execute(args):
     project = Project(args.project)
     if args.command == "status":
         return project.status()
+    if args.command == "import-publish-result":
+        from .publication import import_publication_result
+        return import_publication_result(project, args.result, exchange=args.exchange)
     if args.command == "import-step":
         return project.import_step(args.source, args.relative, args.receipt)
     if args.command == "prepare-publish":

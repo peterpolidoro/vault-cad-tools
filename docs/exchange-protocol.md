@@ -1,7 +1,7 @@
 # Filesystem exchange protocol, draft v1
 
 This protocol is exercised locally and with Windows Inventor STEP exports.
-Vault publication and publication-result ingestion are not implemented yet. Request directories are
+Vault publication (one gated add, qualified 2026-10-22) and publication-result ingestion are implemented; updates/check-ins are not. Request directories are
 data, not executable instructions. Use a separate checkout on each machine.
 
 ## Export receipt
@@ -105,10 +105,53 @@ The Linux side ingests only `verified` results, recomputes the fingerprint from 
 request directory and never reads the journal. Keep the journal and the verify and
 reconcile work directories per exchange root, not per evidence run.
 
-The live write (`windows/Publish-StepToVault.ps1` without `-DryRun`) is refused until
-an explicit, user-selected destination and a qualified pilot exist; in `-DryRun` mode
-the script re-verifies the payload and resolves every planned SDK member by reflection
-against the installed Vault client assemblies without opening a connection.
+Journal transitions are an explicit table: `planned -> uploading | refused | planned`;
+`uploading -> uploaded | ambiguous | failed`; `ambiguous -> uploaded | refused |
+planned` (reconcile only); `uploaded -> verified | failed` (record-publish only);
+`refused -> planned`; `verified` and `failed` are terminal (manual review). The
+executor drives the journal through `vault-cad mark-uploading`, `mark-uploaded
+--master-id --version-id --execution FILE`, `mark-ambiguous --reason` and
+`mark-failed --reason`; `record-publish` refuses unless the state is `uploaded`.
+The journal lives on the executing host only (`%LOCALAPPDATA%\vault-cad-tools\journals\<exchange>\`
+on Windows); the Linux side never writes it and ingests `results/` only.
+
+`record-publish` writes `verified` only when the destination folder resolves (and
+equals the executor's folder id), the catalog lists the reported version in that
+folder under the destination name (case-insensitive, hidden included), the
+re-downloaded bytes match the payload's size and SHA-256, and the executor's server
+size and CRC32 checksum match the download (Vault's `Cksum` is zlib CRC32). Every
+check is recorded in `results/UUID.json` under `checks`.
+
+The live write is `windows/Publish-StepToVault.ps1 -Live`, gated to one request id,
+destination folder and folder id, payload hash and a `planned` journal entry with the
+plan's fingerprint; it signs in with Windows authentication carrying the named-user
+license as the Autodesk ID token of the user signed in to the Identity Manager
+(Vault 2025 answers license error 319 to an unlicensed read/write sign-in), checks the
+folder id and the name again through the SDK, journals `uploading`, adds the file
+through `Connection.FileManager.AddFile` (the raw `UploadFilePart` pair answered Vault
+error 155) and journals `uploaded` with the returned ids, or `ambiguous` on any
+exception. First verified pilot: 2026-10-22, request e1caf6c0, version 994252.
+`-DryRun` re-verifies the payload and resolves every planned SDK member by reflection
+without opening a connection.
+
+## Publication result ingestion (implemented 2026-10-22)
+
+`vault-cad --project DIR import-publish-result results/UUID.json [--exchange ROOT]` is the only
+Linux step that touches the project lock. It accepts a result only when: schema 1,
+operation `add_step_file`, status `verified`; the request directory `requests/UUID`
+exists and re-verifies (payload re-hashed); the fingerprint recomputed from that request
+equals the result's; payload and re-download hashes/sizes equal the request; destination
+(folder, name, if_exists), vault id/name and provenance equal the request; the folder id
+and the Vault master/version ids are present; every verification check is true (none
+false, the six listing/byte checks present); the execution record is typed and names the
+executing host and time; and the blob at `provenance.git_commit:project_path` in the
+project's Git history hashes to the payload. It then appends one record to
+`vault-lock.json` `publications` (request id, path, hash, size, commit, Vault ids and
+version, destination with folder id, execution host/time/comment, verified time,
+fingerprint, result file hash, whether the working-tree file still matches) under the
+project operation lock. Re-importing an identical result is a no-op; a different result
+under the same request id, or the same Vault version under another request, is refused.
+The journal is never read.
 
 ## Publication result (original plan)
 

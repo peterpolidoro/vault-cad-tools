@@ -101,7 +101,7 @@ class BomAuditTests(unittest.TestCase):
         (self.discovery / "raw").mkdir(parents=True)
         atomic_json(self.discovery / "drawings-and-attachments.json", [{"name": "TANK.ipt", "version_id": "1", "parents": [], "drawings": [], "attachments": [{"kind": "visualization"}]}])
         atomic_json(self.discovery / "external-parents.json", [{"name": "OTHER ASSY.iam", "kind": "assembly", "version": 2, "folder_path": "$/X", "version_id": "9"}])
-        atomic_json(self.discovery / "discovery-receipt.json", {"status": "complete", "counts": {"drawings_or_presentations": 0}})
+        atomic_json(self.discovery / "discovery-receipt.json", {"status": "complete", "all_versions_pass": True, "counts": {"drawings_or_presentations": 0}})
         atomic_json(self.discovery / "drawings-on-other-versions.json", [])
         atomic_json(self.discovery / "raw" / "master-m-TANK.ipt-versions.json", [{"id": "1", "version": 1, "createDate": "2023-01-01", "lastModifiedDate": "2023-01-01", "createUserName": "A", "state": "WIP"}])
         self.out = self.base / "out"
@@ -142,6 +142,23 @@ class BomAuditTests(unittest.TestCase):
         drawings = json.loads((self.out / "drawings.json").read_text(encoding="utf-8"))
         self.assertEqual(drawings["drawings_or_presentations_on_acquired_versions"], [])
         self.assertEqual(drawings["attachment_kinds"], {"visualization": 1})
+
+    def test_drawing_claim_requires_complete_all_versions_discovery(self):
+        # no discovery at all
+        summary = summarize(self.audit, self.snapshot, self.out, joints_path=self.joints)
+        self.assertFalse(summary["drawings_checked_all_versions"])
+        coverage = json.loads((self.out / "joint-coverage.json").read_text(encoding="utf-8"))["joints"]
+        self.assertIn("drawings not checked", coverage["bare_group"]["basis"])
+        self.assertNotIn("category b cannot apply", coverage["bare_group"]["basis"])
+        # discovery without the all-versions pass
+        atomic_json(self.discovery / "discovery-receipt.json", {"status": "complete", "all_versions_pass": False, "counts": {}})
+        out2 = self.base / "out2"
+        summarize(self.audit, self.snapshot, out2, joints_path=self.joints, discovery_dir=self.discovery)
+        drawings = json.loads((out2 / "drawings.json").read_text(encoding="utf-8"))
+        self.assertFalse(drawings["complete_all_versions"])
+        self.assertIn("drawings not checked completely", drawings["note"])
+        coverage = json.loads((out2 / "joint-coverage.json").read_text(encoding="utf-8"))["joints"]
+        self.assertIn("category b stays possible", coverage["bare_group"]["basis"])
 
     def test_incomplete_or_unverified_audit_is_refused(self):
         atomic_json(self.audit / "audit-receipt.json", dict(self.receipt, status="FAILED"))

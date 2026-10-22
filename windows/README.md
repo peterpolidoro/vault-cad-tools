@@ -1,6 +1,33 @@
 # Windows side of vault-cad-tools
 
-## Current result — read-only native BOM, kit and drawing audit (2026-10-22)
+## Current result — first verified live Vault add (2026-10-22)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/` (report
+`REPORT.md`). Authorized by Peter for exactly one file: request
+`e1caf6c0-5802-49a2-9bc8-831912ddf81c`, `AW2725Q-nominal-envelope.step` (7189 bytes,
+SHA-256 `f7edc118...62ad3`) into `$/DATA/PROJECTS/_PROJECTS BY LAB/SCHULZE (LAB)/ENCLOSURE`
+(folder 953863). Base: tools `99050de`, project `4690c43`.
+
+- Gating first: M1 (`record_result` confirms the version through the catalog and
+  compares size, SHA-256 and CRC32 with the download and the executor's server
+  values), M2 (journal transition table; `record_result`/`mark_ambiguous` cannot settle
+  from `planned`/`uploading`/`ambiguous`), M3, L2, L4, L6, P3 and the payload-path
+  check of P2 implemented; 69 Python tests, 24 session mocks, hygiene over 24 scripts.
+- Three live attempts, journaled: (1) unlicensed read/write sign-in refused by the
+  server with license error 319 before any upload (journal stayed `planned`); (2)
+  named-user sign-in and both pre-checks passed, the raw `FilestoreService.UploadFilePart`
+  answered Vault error 155, journal `ambiguous`, reconcile found no file, acknowledged
+  back to `planned`; (3) `Connection.FileManager.AddFile` succeeded: version 994252,
+  master 994251, v1, 7189 bytes, CRC32 682328604, comment carries the Git commit.
+- `record-publish` verified all ten checks; `results/e1caf6c0-...json` at the exchange
+  root; journal `verified` with the full history.
+- Licensing: Vault 2025 needs a named-user license for any write; the SDK takes it as
+  the Autodesk ID token of the user signed in to the Identity Manager (static
+  `AutodeskAccount.GetOAuthToken()`, no dialog, token never written).
+- Read-only drawing check: no IDW/DWG/IPN in the ENCLOSURE or 2W.353 folders and none
+  associated with `SLLB Enclosure.iam` v3 or `2W.353 TOP ASSY.iam` v3.
+
+## Earlier result — read-only native BOM, kit and drawing audit (2026-10-22)
 
 Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-native-bom-audit-01/` (report
 `REPORT.md`; deliverables `bom-rows.csv/json`, `virtual-and-excluded.json`, `drawings.json`,

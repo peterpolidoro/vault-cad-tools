@@ -165,6 +165,13 @@ function Stop-IsolatedInventor {
         $observed.added_entry_removed = $(if (-not $Project.AddedEntry) { $null } elseif ($dpm) { try { $null -eq (Find-ProjectEntry $dpm $Project.ProjectFile) } catch { $notes += "entry removal check: $($_.Exception.Message)"; $false } } else { $false })
         if ($Project.EntryPreExisted) { $required.preexisting_entry_still_registered = $true }
         $observed.preexisting_entry_still_registered = $(if (-not $Project.EntryPreExisted) { $null } elseif ($dpm) { try { $null -ne (Find-ProjectEntry $dpm $Project.ProjectFile) } catch { $notes += "pre-existing entry check: $($_.Exception.Message)"; $false } } else { $false })
+        # L6: a project FILE this run created is removed again (after the entry), and its removal is required.
+        $attempted.remove_created_file = [bool]$Project.CreatedFile
+        if ($Project.CreatedFile) {
+            $required.created_file_removed = $true
+            try { if (Test-Path -LiteralPath $Project.ProjectFile) { Remove-Item -LiteralPath $Project.ProjectFile -Force } } catch { $notes += "created file removal: $($_.Exception.Message)" }
+        }
+        $observed.created_file_removed = $(if (-not $Project.CreatedFile) { $null } else { -not (Test-Path -LiteralPath $Project.ProjectFile) })
     }
     $attempted.quit = $true
     try { $app.Quit() } catch { $notes += "quit: $($_.Exception.Message)" }
