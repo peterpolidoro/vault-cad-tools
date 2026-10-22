@@ -40,7 +40,43 @@ def parser():
     publish.add_argument("--exchange", required=True)
     verify = sub.add_parser("verify-request", help="Validate a publication request without uploading")
     verify.add_argument("directory")
+    plan = sub.add_parser("plan-publish", help="Dry-run plan for add_step_file: vault/folder/collision checks, journal; no upload")
+    plan.add_argument("directory")
+    plan.add_argument("--journal", required=True, help="Publication journal JSON (created if absent)")
+    plan.add_argument("--catalog", help="Offline catalog snapshot JSON; without it the Vault REST API is read (GET only)")
+    plan.add_argument("--exchange", help="Exchange root when the request is not under <exchange>/requests/")
+    reconcile = sub.add_parser("reconcile-publish", help="Resolve an ambiguous upload by READ-ONLY inspection of the destination")
+    reconcile.add_argument("directory")
+    reconcile.add_argument("--journal", required=True)
+    reconcile.add_argument("--catalog")
+    reconcile.add_argument("--workdir", required=True)
+    reconcile.add_argument("--acknowledge-no-file", action="store_true", help="Operator confirms nothing was created; permits one retry")
+    record = sub.add_parser("record-publish", help="Verify a reported upload by exact-byte re-download and write results/<id>.json")
+    record.add_argument("directory")
+    record.add_argument("--journal", required=True)
+    record.add_argument("--catalog")
+    record.add_argument("--master-id", required=True)
+    record.add_argument("--version-id", required=True)
+    record.add_argument("--workdir", required=True)
+    record.add_argument("--exchange")
+    snapshot = sub.add_parser("catalog-snapshot", help="Save a READ-ONLY catalog snapshot (vault identity, folders, files) for offline planning")
+    snapshot.add_argument("--output", required=True)
+    snapshot.add_argument("--folder", action="append", required=True, help="Vault folder path ($/...), repeatable")
     return p
+
+
+PUBLICATION_COMMANDS = ("plan-publish", "reconcile-publish", "record-publish")
+
+
+def run_publication(args, catalog):
+    from .publication import Journal, plan_publication, reconcile_publication, record_result
+    journal = Journal(args.journal)
+    if args.command == "plan-publish":
+        return plan_publication(args.directory, catalog, journal, exchange=args.exchange)
+    if args.command == "reconcile-publish":
+        return reconcile_publication(args.directory, catalog, journal, args.workdir, acknowledge_no_file=args.acknowledge_no_file)
+    return record_result(args.directory, catalog, journal, {"master_id": args.master_id, "version_id": args.version_id},
+                         args.workdir, exchange=args.exchange)
 
 
 def execute(args):
@@ -49,6 +85,10 @@ def execute(args):
     if args.command == "verify-request":
         request = verify_request(args.directory)
         return {"request_id": request["request_id"], "status": "valid_not_uploaded"}
+    if args.command in PUBLICATION_COMMANDS and args.catalog:
+        from .publication import StaticCatalog
+        from .project import read_json
+        return run_publication(args, StaticCatalog(read_json(args.catalog)))
     project = Project(args.project)
     if args.command == "status":
         return project.status()
@@ -103,6 +143,17 @@ def execute(args):
         if args.command == "download":
             client.download(prefix + "file-versions/" + component(args.version_id) + "/content", args.output)
             return {"output": args.output, "version_id": args.version_id, "sha256": digest(args.output)}
+        if args.command in PUBLICATION_COMMANDS or args.command == "catalog-snapshot":
+            # READ-ONLY: folder walk, folder contents and file-version downloads. No upload exists in this API version.
+            from .publication import RestCatalog, write_catalog_snapshot
+            catalog = RestCatalog(client, project.vault["id"])
+            if args.command == "catalog-snapshot":
+                output = Path(args.output)
+                if output.exists():
+                    raise ExchangeError("Choose a new snapshot output path")
+                snapshot = write_catalog_snapshot(output, catalog, args.folder)
+                return {"output": str(output), "folders": len(snapshot["folders"]), "missing_folders": snapshot["missing_folders"]}
+            return run_publication(args, catalog)
     raise ExchangeError("Unknown command")
 
 
