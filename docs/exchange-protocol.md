@@ -66,7 +66,51 @@ not evidence that no file was created. Do not automatically retry an ambiguous
 mutation. Updates/check-ins need a separate operation with an expected existing
 file-version ID; they are not supported by v1.
 
-## Publication result (planned)
+## Publication plan, journal and reconcile (implemented offline, 2026-10-22)
+
+`vault-cad plan-publish REQUEST_DIR --journal FILE [--catalog SNAPSHOT]` re-runs the
+request verification, then checks the destination through a READ-ONLY catalog: the
+offline snapshot written by `catalog-snapshot`, or the Vault REST API (GET only). It
+refuses a vault id/name mismatch, a destination folder that does not exist (folders
+are never created implicitly), and any file in that folder whose name matches
+case-insensitively (`if_exists: fail`). The accepted plan is written atomically to
+`plans/UUID.json` and lists the exact SDK calls an executor would make, in order:
+Windows-authenticated `WebServiceManager`/`Connection`, `GetFolderByPath`,
+`GetLatestFilesByFolderId`, `IFileManager.AddFile(... FileClassification.None, hidden
+false, payload stream)`, journal update, exact-byte re-download. A plan is not an
+execution: `dry_run` is always true.
+
+The journal (`--journal`) maps each request id to the fingerprint of what would be
+published where (operation, vault, folder, name, payload hash and size), a state
+(`planned`, `uploading`, `ambiguous`, `uploaded`, `verified`, `failed`, `refused`),
+attempts, notes and returned Vault ids. The same request id with a different
+fingerprint is an identity conflict and is refused. An executor must record
+`uploading` before the mutating call and `ambiguous` on a timeout or lost response;
+both states block planning and uploading until `reconcile-publish` has inspected the
+destination: a file with the requested name and identical bytes recovers the request
+as `uploaded` with its ids, different bytes record a collision, and no file leaves the
+request ambiguous unless the operator passes `--acknowledge-no-file`.
+
+## Publication result (planned; verification implemented)
+
+`vault-cad record-publish REQUEST_DIR --journal FILE --master-id M --version-id V
+--workdir DIR [--execution FILE]` re-downloads version V, compares size and SHA-256
+with the payload, writes `results/UUID.json` atomically with `status: verified` or
+`mismatch`, and sets the journal to `verified` or `failed`. It never touches the
+project lock. The result carries the request `fingerprint`, `destination.folder_id`
+and an `execution` block recorded verbatim from the executor (`executed_at`,
+`executed_by_host`, `comment_sent`, `server_version_number`, `server_file_size`,
+`server_checksum`) separate from `verified_at`; unknown execution fields are refused.
+The Linux side ingests only `verified` results, recomputes the fingerprint from the
+request directory and never reads the journal. Keep the journal and the verify and
+reconcile work directories per exchange root, not per evidence run.
+
+The live write (`windows/Publish-StepToVault.ps1` without `-DryRun`) is refused until
+an explicit, user-selected destination and a qualified pilot exist; in `-DryRun` mode
+the script re-verifies the payload and resolves every planned SDK member by reflection
+against the installed Vault client assemblies without opening a connection.
+
+## Publication result (original plan)
 
 Write `results/UUID.json` atomically with request ID, operation status, payload
 SHA-256, destination, and actual Vault master/version IDs. Record the Git commit

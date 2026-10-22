@@ -1,6 +1,171 @@
 # Windows side of vault-cad-tools
 
-## Current result — pilot 02, Linux reviewed
+## Current result — read-only native BOM, kit and drawing audit (2026-10-22)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-native-bom-audit-01/` (report
+`REPORT.md`; deliverables `bom-rows.csv/json`, `virtual-and-excluded.json`, `drawings.json`,
+`kit-boundaries.json`, `coincident-tank.json`, `joint-coverage.json`). Requested by
+`to-windows/20261022T161838Z-linux-bom-audit-go-ahead-and-patch-answers.md`; read-only,
+no Vault write, nothing saved, accepted baseline untouched.
+
+- `Audit-NativeBom.ps1` on the acquired root 991056 (44 documents bound): 7 assembly
+  documents, all three BOM views already enabled as stored (nothing enabled in
+  memory), 202 rows recorded, 171 instances, 0 suppressed / excluded / reference /
+  virtual components, 37 parts all with Normal BOM structure (none Purchased), 8
+  compound (multi-body) parts whose bodies are unnamed (`Solid1..n`); custom
+  iProperties recorded (McMaster origin fields on the purchased models). All 44
+  inputs hash as acquired after the run.
+- `Discover-VaultAssociations.ps1 -AllVersions` (GET only, 188 requests): no drawing
+  or presentation is associated with any of the 44 acquired versions nor with any of
+  the 15 other versions of their masters; the only attachments are the 44 hidden
+  design-visualization DWFs; 16 other assemblies across labs reuse these parts.
+- Joint coverage (`vault-cad bom-audit-summary`): 7 joints have hardware-named rows in
+  their groups (washers, shoulder screws, all exported; whether they belong to the
+  joint is not decidable), 2 joints have nothing in any native source (handle to
+  panel, top panel), 7 are unknown because the groups' only candidates are compound
+  purchased models with unnamed bodies (casters, toggle clamps, 47065T245 with three
+  hidden bodies). No native BOM row exists that was not exported.
+- Coincident tank: root `SHULZE 2W.353 TANK:1` and `TANK SUPPORT FRAME:1/SHULZE 2W.353
+  TANK:1` differ by 6.4e-13 mm; both Normal, visible, enabled, not Reference, three
+  constraints each; the parts-only view counts three tanks (the third in `TANK SUPPORT
+  FRAME:2`). Unresolved by CAD alone: no native flag marks either as reference-only.
+
+## Earlier result — restart work plan: lifecycle, harness and null-guard fixes; Vault publication dry run (2026-10-22)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-review-fixes-vault-dryrun-01/`
+(report `WINDOWS-REVIEW-FIXES-VAULT-DRYRUN-2026-10-22.md`, patch
+`patches/vault-cad-tools-restart-fixes-and-publication-dryrun.patch` against `0705b40`,
+superseding the hardening-02 patch). Work plan answered:
+`to-windows/20261022T131939Z-linux-windows-restart-and-work-plan.md`; review
+`2026-10-22-linux-restart-review-01/REVIEW.md`. The uncommitted hardening-02 work was
+verified byte-identical to its recorded patch before anything changed.
+
+- Review item 1, unknown cleanup observations: `Stop-IsolatedInventor` now lists the
+  observations it REQUIRES (documents closed, PID exited, no unexpected process, plus
+  previous project active / added entry removed / pre-existing entry still registered
+  whenever those actions applied); each must be observed `true`, a null or unreadable
+  project manager records them as `false`, and `null` is reserved for actions that
+  never applied. Mock cases S14-S17.
+- Review item 2, rollback: `Use-TemporaryProject` tracks whether activation was
+  attempted and, on any failure after it, re-activates the previous project FIRST,
+  observes the active project, then removes only the entry/file it created. New mocks
+  change state before throwing (S6b), return without changing it (S6c), and protect a
+  pre-existing entry (S6d); S6e refuses a null project manager before any mutation.
+- Review item 3, harness ownership: `Invoke-ExporterGuardChecks.ps1` records whether
+  the entry and the `.ipj` existed before its setup instance, cleans up in `finally`,
+  removes only what setup created, and counts setup and cleanup shutdowns in the
+  verdict. Run A (entry absent, 6/6): setup added it, cleanup removed it. Run B
+  (`-FixtureOnly`, entry registered beforehand by a separate owned instance, 4/4):
+  setup added nothing, exporter and cleanup preserved it, the external cleanup removed
+  it; the persisted list ended as `Default`, `Inventor Electrical Project` both times.
+- Review item 4, guard values: `Require` validates the RAW result before any cast
+  (null, collections, wrong type, empty strings are refusals) and the exporter is
+  restricted to primary model states. No false refusal: strict run complete, 37 parts /
+  155 occurrences, 44 documents bound, units 21 in / 15 mm / 1 cm, all 37 DATA
+  sections identical to the accepted baseline (header timestamp differs).
+- Tree connectivity: `Snapshot-Validation.ps1` walks every group's ancestors to `root`
+  and flags cycles, self-parents and occurrences hanging on disconnected groups (two
+  new self-test cases).
+- Vault publication, offline: `src/vault_cad_tools/publication.py` (fingerprint,
+  journal with retry blocking, plan, reconcile, exact-byte result verification,
+  static and REST read-only catalogs), CLI `plan-publish`, `reconcile-publish`,
+  `record-publish`, `catalog-snapshot`, 21 tests; `Publish-StepToVault.ps1 -DryRun`
+  resolved 11 of 11 SDK members and refused live mode before creating anything. Live
+  READ-ONLY probes: the ENCLOSURE folder resolved to id 953863 (31 files, no STEP), a
+  synthetic request planned `planned_not_executed`; two requests targeting the
+  existing `panel-spacer.stp` (exact and case-variant name) were refused with the
+  collision journaled; no session token reached any written file.
+- SDK discovery: no SDK folder is installed; the Vault Client 2025 Explorer assemblies
+  (30.4.28) provide the route `WinAuthCredentials -> WebServiceManager -> Connection ->
+  IFileManager.AddFile` (SOAP `UploadFilePart` + `AddUploadedFile`); REST 2.0.16 is
+  read-only for files. Still needing a live pilot with a user-selected destination:
+  the Windows-auth connection, `AddFile` and its returned ids, re-download of the new
+  version and the timeout-to-ambiguous path.
+- Offline suites: hygiene 22 scripts, session mocks 23, unit fixtures 10, validator
+  11, receipt 11, Python 55.
+- Not changed: older scripts still use the process-list heuristic; no Vault write;
+  accepted geometry untouched.
+
+## Earlier result — Linux review R1-R6 corrected (2026-10-21)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-21-windows-exporter-hardening-02/`
+(report `WINDOWS-EXPORTER-HARDENING-02-2026-10-21.md`, patch
+`patches/vault-cad-tools-exporter-review-fixes.patch` against `0705b40`). Review
+being answered: `2026-10-21-linux-exporter-review-01/REVIEW.md`.
+
+- R1 inventory output: `inventory-raw.json` is an object again (37 items / 155
+  CAD instances strict, 1 / 2 fixture); the output variable no longer shares a name
+  with the `-Inventory` parameter. `Snapshot-Validation.ps1` validates scene,
+  inventory, snapshot and receipt before a run may be `complete`; its self-test
+  rejects scalar, truncated, duplicate, missing, miscounted and stock-claiming
+  manifests. `Test-ScriptHygiene.ps1` flags parameter/variable case clashes.
+- R2 ownership: an unproven or pre-existing COM owner is only released; the mock
+  cases assert that nothing is called on the instance. A start failure after proven
+  ownership quits the owned instance before rethrowing.
+- R3 lifecycle: `Use-TemporaryProject` rolls back a registration whose activation
+  fails; `Stop-IsolatedInventor` reports attempted vs observed outcomes (project
+  list and active project re-read, PID exit awaited) and `Succeeded` is false on a
+  removal, quit or close failure or a PID that never exits. Both the exporter and
+  `Measure-PartBodies.ps1` set `FAILED` / exit 1 unless the shutdown was observed;
+  receipts and `measure-session.json` carry attempted/observed.
+- R4 guards: every required guard query goes through `Require`, which refuses the
+  configuration on any API error. Added: nested iAssembly factories, assembly
+  occurrence model state vs its definition, assembly occurrence LOD and positional
+  representation, root LOD and positional representation must be master-like.
+  Still not exercised by fixtures: the snapshot and the two-panel fixture contain
+  no factory, adaptive, substitute, mirrored or non-master configurations.
+- R5 units: `Step-Units.ps1` validates every `GLOBAL_UNIT_ASSIGNED_CONTEXT`
+  (resolvable references, exactly one recognized length unit) and requires all
+  contexts to agree; 10 text fixtures. Unit rejection necessarily happens after the
+  translator has written the file: the run is `FAILED` and the partial asset must
+  not be consumed.
+- R6 harness: `Invoke-ExporterGuardChecks.ps1` judges each case from the exit code
+  (captured immediately), receipt, asset count, output validation and process list.
+  6 of 6 passed: non-empty output directory and strict mode without records refused
+  before Inventor starts; tampered intermediate hash (`CASTER ASSEMBLY.iam`) gives
+  exit 1, `FAILED`, zero assets, shutdown observed (28.5 s); strict run complete
+  with 37 parts / 155 occurrences and hashes verified (124.9 s, owned PID 90240,
+  interactive PID 69232 untouched); fixture complete; pre-registered project entry
+  preserved and previous project restored, cleanup left `Default` and
+  `Inventor Electrical Project`.
+- Geometry: all 37 strict assets have DATA sections byte-identical to the accepted
+  hardening-01 assets (only the STEP header timestamp differs). The accepted
+  baseline is not replaced by this run.
+- Offline suites: hygiene over 21 scripts, 15 session mock cases, 10 unit fixtures,
+  9 validator cases, 11 receipt cases, 34 Python tests.
+- Not changed: the older scripts still use the process-list heuristic; migration is
+  gated on integration of this patch.
+
+## Earlier result — snapshot exporter hardened, first pass (2026-10-21)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-21-windows-exporter-hardening-01/`
+(report `WINDOWS-EXPORTER-HARDENING-2026-10-21.md`). Base tools `0705b40`. The
+Linux review of this run requested the corrections above; its `inventory-raw.json`
+files are the string artefact described in R1.
+
+- New `Inventor-Session.ps1`: instance ownership by `MainFrameHWND` → PID (refuses a
+  pre-existing process), project entry handling that removes only what the run added,
+  shutdown that waits for the PID, and `Confirm-AcquiredInputs` for strict binding.
+- `Export-PartAssets.ps1` is strict by default: 44 opened documents (7 assemblies, 37
+  parts) bound before any asset is written. Refused in qualification: non-empty output
+  directory (0.5 s, no Inventor), missing records in strict mode, and an acquisition
+  record with a tampered intermediate-assembly hash (run stopped after binding, zero
+  assets written, `FAILED` receipt, PID exited, project restored). Positive strict run:
+  37 parts, 155 occurrences, asset units 21 in / 15 mm / 1 cm, receipt `complete`.
+- Pre-registered project entry: with `vault-cad-exporter.ipj` registered beforehand,
+  the exporter reports `entry_pre_existed: true`, does not remove it, and re-activates
+  the previous project; a separate cleanup removed the test entry. Peter's list is
+  unchanged (`Default`, `Inventor Electrical Project`).
+- `Measure-PartBodies.ps1` reports coverage explicitly: for `MCMASTER 5537T429`, 10 of
+  11 body volumes measured and 55 of 55 overlap pairs unmeasurable, so the overlap
+  conclusion is UNKNOWN; the VeryHigh mass-property agreement (0.002 %) stands.
+- Hardcoded vault/project identities removed from the exporter; Vault ids come from
+  the inventory record. Tests: 34/34 Python, 11/11 offline receipt cases.
+- Not changed: the older scripts (`Export-InventorStep`, `Inspect-StepInInventor`,
+  `Compare-NativeAndStepAssembly`, the two pilots) still use the process-list
+  heuristic; moving them to the session module is a follow-up.
+
+## Earlier result — pilot 02, Linux reviewed
 
 Evidence: `vault-cad-exchange/evidence/2026-10-21-windows-native-pilot-02/` and
 `2026-10-21-linux-native-review-02/`. Linux code base is now 498279f; the Windows
