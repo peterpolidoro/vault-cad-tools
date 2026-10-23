@@ -160,6 +160,31 @@ class BomAuditTests(unittest.TestCase):
         coverage = json.loads((out2 / "joint-coverage.json").read_text(encoding="utf-8"))["joints"]
         self.assertIn("category b stays possible", coverage["bare_group"]["basis"])
 
+    def test_refuses_coercion_bad_schema_and_overwrite(self):
+        rows = json.loads((self.audit / "bom-rows.json").read_text(encoding="utf-8"))
+        rows[1]["item_quantity"] = "2 in"
+        atomic_json(self.audit / "bom-rows.json", rows)
+        with self.assertRaisesRegex(ExchangeError, "not an integer count"):
+            summarize(self.audit, self.snapshot, self.out, joints_path=self.joints)
+        rows[1]["item_quantity"] = 2
+        rows[1]["view"] = "Weird"
+        atomic_json(self.audit / "bom-rows.json", rows)
+        with self.assertRaisesRegex(ExchangeError, "unknown view"):
+            summarize(self.audit, self.snapshot, self.base / "out-b", joints_path=self.joints)
+        rows[1]["view"] = "Structured"
+        atomic_json(self.audit / "bom-rows.json", rows)
+        atomic_json(self.audit / "virtual-components.json", {"not": "a list"})
+        with self.assertRaisesRegex(ExchangeError, "not a JSON list"):
+            summarize(self.audit, self.snapshot, self.base / "out-c", joints_path=self.joints)
+        atomic_json(self.audit / "virtual-components.json", [])
+        atomic_json(self.joints, {"joints": [{"id": "x", "scope": "existing", "parent_group_ids": "GROUP:1"}]})
+        with self.assertRaisesRegex(ExchangeError, "list of strings"):
+            summarize(self.audit, self.snapshot, self.base / "out-d", joints_path=self.joints)
+        atomic_json(self.joints, {"joints": []})
+        summarize(self.audit, self.snapshot, self.base / "out-e", joints_path=self.joints)
+        with self.assertRaisesRegex(ExchangeError, "never overwritten"):
+            summarize(self.audit, self.snapshot, self.base / "out-e", joints_path=self.joints)
+
     def test_incomplete_or_unverified_audit_is_refused(self):
         atomic_json(self.audit / "audit-receipt.json", dict(self.receipt, status="FAILED"))
         with self.assertRaisesRegex(ExchangeError, "incomplete"):

@@ -22,12 +22,15 @@ discovery-receipt.json (counts, GET count, status).
 param(
     [Parameter(Mandatory = $true)][string]$Inventory,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$BaseUri = "http://svault5/AutodeskDM/Services/api/vault/v2/",
-    [string]$VaultId = "28",
+    [Parameter(Mandatory = $true)][string]$BaseUri,
+    [Parameter(Mandatory = $true)][string]$VaultId,
     [int]$PageLimit = 100,
     [switch]$AllVersions
 )
 $ErrorActionPreference = "Stop"
+# Server and vault come from the project configuration (vault-project.toml [vault] base_url / id), never from defaults (L5).
+# The bearer token must not travel through an ambient HTTP proxy: disable proxies for this process (P4).
+[System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy
 if (-not $env:VAULT_CAD_TOKEN) { throw "VAULT_CAD_TOKEN is not set; dot-source windows\Set-VaultCadToken.ps1 first" }
 if (-not (Test-Path -LiteralPath $Inventory)) { throw "Inventory record not found: $Inventory" }
 $inv = Get-Content -LiteralPath $Inventory -Raw | ConvertFrom-Json

@@ -1,6 +1,79 @@
 # Windows side of vault-cad-tools
 
-## Current result — first verified live Vault add (2026-10-22)
+## Operating preconditions for live Vault writes
+
+- A valid Autodesk ID sign-in in the Autodesk Identity Manager on the executing
+  workstation: Vault 2025 grants read/write client sessions a named-user license only,
+  which the SDK takes as that account's token (`AutodeskAccount.GetOAuthToken()`, no
+  dialog, token kept in memory). Without it the read/write sign-in fails with
+  `VaultLicenseException` 319; read-only sessions need no license.
+- Windows authentication to the Vault server with an account mapped in the vault
+  (`Set-VaultCadToken.ps1` and the REST read path use the same identity).
+- Add files through `Connection.FileManager.AddFile` (`-Route Vdf`); the raw
+  `FilestoreService.UploadFilePart` + `AddUploadedFile` pair answered Vault error 155 on
+  this server and stays available only for diagnosis (`-Route Soap`).
+- Git: the shared clones under `U:\Repositories\github\` are the only remote used on
+  this machine (`shared`); Peter pushes to GitHub and fast-forwards them.
+
+## Current result — monitor placement pilot in a disposable copy; adapter design document; dialog watchdog (2026-10-22/23)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-placement-pilot-01/` (report
+`REPORT.md`). Requested by `to-windows/20261022T182324Z-linux-pilot-ingested-and-placement-route-confirmed.md`;
+scope reduced by `to-windows/20261022T185545Z-linux-priority-change-phase-1-build.md`
+(finish only what was in progress in the copy, record it, stop). Base: tools `b84e944`,
+project `b19018f`. No Vault write, no production save, check-out or check-in; the mirror
+root hash is unchanged.
+
+- Acquisition: the published envelope was re-downloaded read-only from Vault version
+  994252 and bound by hash (`f7edc118...62ad3`, 7189 bytes); a disposable copy of the
+  acquired tree under the project checkout's `.cache/placement-pilot-01/` verified 44/44
+  files against `acquisition.json` before anything was opened.
+- `Invoke-MonitorPlacementPilot.ps1`: STEP -> `MONITOR\AW2725Q-nominal-envelope.ipt`
+  (1 solid body; local extents X 609.51, Y 355.97, Z 72.63 mm; thinnest axis Z taken as
+  the screen normal, longest X). Rotation local X -> world X, local Z -> world +Y, local
+  Y -> world -Z (det +1). Two grounded occurrences in the root copy: centres
+  (597.0, 620.5, -418.9) and (597.0, 620.5, -774.9) mm, each resting on Y 584.16, world
+  boxes X[292.2, 901.8] Y[584.2, 656.8] Z[-596.9, -240.9] and Z[-952.9, -596.9]. Saved
+  only the root copy (`Save2(SaveDependents=false)`, 14 -> 16 occurrences); reopened: both
+  found, transforms identical. Integrity: mirror root unchanged; in the copy only the root
+  IAM changed and `OldVersions\Free Standing Enclosure.0009.iam` plus the new IPT appeared.
+- Height note for Linux: the accepted snapshot puts the lower platform top
+  (`TANK SUPPORT FRAME:2/TANK SUPPORT PLATFORM:1`) at native Y 501.6 mm; 584.16 mm is the
+  top of the lower tank resting on it. Placed as instructed, not iterated.
+- Hang found and fixed in the tooling: `Save2` blocked for 19 h behind a modal iLogic
+  error form ("RunExternalRule: Cannot find an external rule file named: Part Number
+  Cleaner", a Before-Save event trigger of the production assembly) with a disabled
+  `AIP Migration Errors` dialog queued behind it; `SilentOperation` does not cover add-in
+  forms. Closing the form from outside let the run finish correctly (save, persistence
+  check, shutdown, project entry removed, previous project restored). `Inventor-Session.ps1`
+  now has a dialog watchdog thread (`Start-DialogWatchdog`/`Stop-DialogWatchdog`): it
+  records every dialog-like window of the owned pid and dismisses only single-acknowledgement
+  dialogs (OK/Close/Continue), never a choice; used by the pilot and `Export-PartAssets.ps1`
+  (`dialogs.log`, receipt field `dialogs`). Decision tests S19-S28 (mocks) and
+  `Test-DialogWatchdog.ps1` (child MessageBox processes: an OK-only box is dismissed, a
+  Yes/No box is left alone, the scan is scoped to one pid).
+- Export of the copy for the Linux geometry check (`export/placement-pilot-01/`,
+  `Export-PartAssets.ps1 -AllowUnboundInputs` because the copy's paths differ from the
+  acquisition's mirror paths): receipt `complete`; 38 distinct parts, 16 groups, 157 leaf
+  occurrences (37/155 before the placement: one new part, two new occurrences), 0 suppressed,
+  range check over 157 leaves with max deviation 0.0197 cm, clean shutdown.
+  `Test-SnapshotOutputs -ExpectParts 38 -ExpectOccurrences 157 -VerifyHashes` passes
+  (`export/validation-placement-pilot-01.log`); the two envelope occurrences are in
+  `native-snapshot.json` with world transforms identical to the placement receipt;
+  `export/export-input-crosscheck.json` binds the 45 opened documents to the acquisition
+  record (43 unchanged children match by SHA-256, the root copy differs as expected, the
+  IPT is new). Watchdog during that export: one hidden `AIP Migration Errors` dialog
+  (#32770, enabled, application not modal) recorded and left alone, nothing dismissed.
+  A second, identical export after the hidden-dialog fix (`export/placement-pilot-02/`, receipt `complete`, 38 parts / 157 leaf occurrences) recorded the same hidden dialog as action `leave` ("hidden window while the application main frame is enabled (no modal loop); not blocking, nothing sent"; main frame enabled: True) over 90 polls, 0 dismissed.
+- Design document `docs/native-checkin-adapter-design.md` (no implementation): request
+  v2 `update_native_assembly`, preconditions including expected version ids and the
+  iLogic/dialog hygiene, the add / check-out / associate / check-in / verify sequence with
+  journal states, failure handling, open questions (including iLogic on save),
+  qualification on a disposable assembly first.
+- Cleanups L1, L3, L5, P4 and hygiene check 4 (one variable spelled with different casing
+  in one scope) are in the same patch; `README.md` and `docs/` updated.
+
+## Earlier result — first verified live Vault add (2026-10-22)
 
 Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/` (report
 `REPORT.md`). Authorized by Peter for exactly one file: request

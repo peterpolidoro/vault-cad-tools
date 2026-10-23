@@ -5,6 +5,56 @@
 Support versioned Vault-to-STEP imports into project Git repositories and
 publication of Linux-authored STEP files back to Vault, using a Windows adapter.
 
+## Target workflow (Peter, 2026-10-23)
+
+Give an agent a Vault location; it mirrors every file of that project at exact
+versions, converts them to STEP with metadata into a Git repository, and generates
+the project documentation that lives in that repository and is served as GitHub
+Pages. When Vault changes, synchronise the new Vault state into the repository
+(STEP, metadata, documentation). When a user or agent adds or modifies STEP files
+or the assembly in the repository, update Vault with Inventor files so both stay in
+step. Status against that target:
+
+- Vault -> repository: works as separately qualified Windows scripts for one root
+  assembly (`Get-VaultDependencySnapshot.ps1`, `Export-PartAssets.ps1`,
+  `import-step` with provenance in `vault-lock.json`), driven by hand-relayed
+  messages; no single `sync` command, no folder-level discovery of root files,
+  no change detection against the lock, no incremental re-export.
+- Repository -> documentation -> Pages: works for the enclosure through
+  project-specific scripts (`assembly/prepare_documentation.py`,
+  `publish_manual.py`) and the mechanical-docs pipeline; the generic adapter from
+  the raw snapshot to the documentation loader is still a project script.
+- Repository -> Vault: one new-file add qualified (request e1caf6c0); no update or
+  check-in of existing files, no expected-version conflict handling, no native
+  placement of a repository STEP into the Vault assembly outside a disposable copy.
+  STEP into Inventor yields non-parametric bodies, so the design must keep Vault
+  natives authoritative for existing parts and let the repository own new parts,
+  placements and documentation.
+- Orchestration: three agents and an operator relay; nothing runs unattended.
+
+Directives (Peter, 2026-10-23):
+
+- Inventor natives in Vault stay intact and authoritative while they match their
+  STEP exports; the sync keeps a per-file state (`in_sync`, `vault_newer`,
+  `repo_newer`, `both_changed`, `new_in_repo`, `new_in_vault`, `unknown`) from the
+  Vault version id, the native hash, the exported STEP hash and the repository STEP
+  hash, and never touches a native that is in sync or newer in Vault.
+- Pushing STEP into Vault never converts it into a non-parametric body: STEP is
+  stored as STEP; placing repository STEP into a native assembly must keep the STEP
+  as the referenced source (route to be qualified, disposable copy first).
+- Topology: by default the Linux agent (Guix-managed dependencies: FreeCAD,
+  Blender, Typst, MkDocs, Python) controls the whole workflow and a Windows agent
+  or script, reached through a shared directory on the Windows machine, performs
+  only the Vault and Inventor interactions under the Windows user's authorization
+  (validated request files in, verified result files out). A Windows-only loop
+  (one agent, a Git repository on the Windows machine that Peter pushes to GitHub)
+  is an option only if every tool of the workflow is installable through Pixi on
+  Windows; the Windows commands are written so that either arrangement can call
+  them.
+- Priority: the enclosure manual and its Pages site first (2026-10-23); the
+  synchronisation is built gradually over days, design document before code, live
+  Vault writes only on explicit request.
+
 ## Architecture decisions
 
 - One tool repository for Linux and Windows; one separate repository per project.
@@ -181,16 +231,38 @@ parameter fixture passed 29 checks and Linux FreeCAD validates its STEP.
   (license error 319 unlicensed; Vault error 155 on raw `UploadFilePart`, reconciled;
   `FileManager.AddFile` succeeded, version 994252); `record-publish` verified 10/10
   checks; journal host-local (P1). Named-user license via the Identity Manager token.
-- [ ] Remaining cleanups from the Linux review: L1 (refuse-not-coerce, schema checks,
+- [x] Remaining cleanups from the Linux review (done 2026-10-22, details below): L1 (refuse-not-coerce, schema checks,
   no output overwrite in `bom_audit.py`), L3 (group-level `suppressed` and root
   fields in `assemblies[]`; validator enforcing `suppressed`/`mirrored`), L5
   (server/vault defaults from project config; no workstation name in tests), P4
   (proxy opt-out for the bearer token in PowerShell).
-- [ ] Next milestone (proposal only, no edits yet): place the monitor model in a
-  disposable copy of the root assembly (STEP -> native IPT via the qualified
-  converter, constrained, exported for Linux check), then the native update/check-in
-  adapter with expected-version checks and dependency handling; production edits
-  and native check-ins stay unauthorized until that route is reviewed.
+- [x] Placement pilot (run `2026-10-22-windows-placement-pilot-01`, route confirmed by
+  Linux): envelope acquired read-only from Vault version 994252 by hash; disposable
+  copy of the acquired tree hash-verified (44/44); `Invoke-MonitorPlacementPilot.ps1`
+  imports the STEP to IPT, reports its axes, places two grounded occurrences by computed
+  transform on the instructed layout, saves only the root copy, proves persistence and
+  re-hashes everything. The run stalled 19 h inside `Save2` behind a modal iLogic error
+  form (the production assembly's Before-Save trigger runs the external rule `Part
+  Number Cleaner`, absent here) with an `AIP Migration Errors` dialog queued behind it;
+  once the form was closed from outside the run completed (persistence proven, clean
+  shutdown, project entry removed). Dialog watchdog added to `Inventor-Session.ps1`
+  (records every dialog of the owned pid, dismisses single-acknowledgement dialogs
+  only; S19-S28 and `Test-DialogWatchdog.ps1`), used by the pilot and the exporter.
+  Exported for the Linux geometry check. Priority change (Linux 2026-10-22T18:55Z,
+  phase-1 build first): no further placement iteration. Note: the accepted
+  snapshot puts the lower platform top at native Y 501.6 mm; the instructed 584.16 mm
+  is the top of the lower tank resting on it (reported, placed as instructed).
+- [x] Native update/check-in adapter: DESIGN DOCUMENT only
+  (`docs/native-checkin-adapter-design.md`): operation, preconditions (expected
+  version ids, no check-outs, permissions), sequence (add parts, check out, declare
+  associations, check in, verify), failure handling, open questions, qualification
+  plan on a disposable assembly first. No implementation, no production write.
+- [x] Cleanups L1 (refuse-not-coerce, schema checks, no overwrite), L3 (explicit
+  suppressed/mirrored on groups and root fields; validator enforces them), L5
+  (server/vault from project config; no workstation name in tests), P4 (proxy opt-out)
+  and the hygiene check for same-name-different-case variables in one scope.
+- [ ] Native update/check-in adapter implementation and its disposable live pilot: only
+  after Linux and Peter review the design document and authorize a destination.
 
 - [x] Linux (2026-10-22T16:54:49Z): Windows full patch `dd415d54...` integrated UNCOMMITTED on
   0705b40 in this worktree; 60 portable tests pass in Guix; independent static review

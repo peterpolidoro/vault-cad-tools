@@ -229,3 +229,207 @@ function Confirm-AcquiredInputs {
     }
     return ,$inputs
 }
+
+# ---------------------------------------------------------------------------------------------------------
+# Dialog watchdog (added 2026-10-23). The placement pilot stood still for 19 hours inside Document.Save2 on
+# an owned, invisible Inventor instance: a "Before Save" iLogic event-driven rule of the production assembly
+# referenced an external rule ("Part Number Cleaner") that does not exist on this workstation; the iLogic
+# add-in showed a modal WinForms error window (one visible OK button) and, behind it, a disabled
+# "AIP Migration Errors" dialog. Application.SilentOperation does not cover add-in forms. The watchdog runs
+# on a second thread (a runspace in this process; the COM call blocks only the calling thread), records
+# EVERY dialog-like top-level window of the owned pid (never of any other process) and dismisses ONLY a
+# window whose visible, enabled answer buttons are exactly one acknowledgement (OK / Close / Continue). A
+# window offering any choice (Yes/No, Save/Don't Save, Retry/Cancel, OK+Cancel) is recorded and left alone,
+# so an unattended run can never answer a question; a disabled window (another modal above it) is recorded
+# as blocked and re-examined once it becomes enabled. Inventor's own dialogs are HIDDEN while the application
+# is invisible and their children inherit that, so for a hidden window the buttons are judged by Enabled only
+# and the window is dismissed only while the main frame is disabled (a modal loop is running); a hidden dialog
+# of an application whose main frame is enabled is not blocking anything and is only recorded.
+# ---------------------------------------------------------------------------------------------------------
+$InventorSessionModulePath = $PSCommandPath
+if (-not ('VaultCad.Win32Windows' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+namespace VaultCad {
+    public class WindowInfo {
+        public long Handle; public string ClassName; public string Text; public bool Visible; public bool Enabled; public int ControlId;
+        public List<WindowInfo> Children = new List<WindowInfo>();
+    }
+    public static class Win32Windows {
+        public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr hWnd, EnumProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
+        [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr hWnd);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+        [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+        [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hWnd);
+        const uint SMTO_ABORTIFHUNG = 0x0002;
+        public static bool SendTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint timeoutMs) { IntPtr r; return SendMessageTimeout(hWnd, msg, wParam, lParam, SMTO_ABORTIFHUNG, timeoutMs, out r) != IntPtr.Zero; }
+        static string TextOf(IntPtr h) {
+            var sb = new StringBuilder(4096);
+            GetWindowText(h, sb, sb.Capacity);
+            if (sb.Length == 0) { IntPtr r; SendMessageTimeout(h, 0x000D, (IntPtr)sb.Capacity, sb, SMTO_ABORTIFHUNG, 300, out r); }
+            return sb.ToString();
+        }
+        static WindowInfo Describe(IntPtr h) {
+            var c = new StringBuilder(256); GetClassName(h, c, c.Capacity);
+            return new WindowInfo { Handle = h.ToInt64(), ClassName = c.ToString(), Text = TextOf(h), Visible = IsWindowVisible(h), Enabled = IsWindowEnabled(h), ControlId = GetDlgCtrlID(h) };
+        }
+        public static List<WindowInfo> TopLevelWindows(int pid, bool withChildren) {
+            var list = new List<WindowInfo>();
+            EnumWindows((h, l) => {
+                uint p; GetWindowThreadProcessId(h, out p);
+                if ((int)p == pid) {
+                    var w = Describe(h);
+                    if (withChildren) { EnumChildWindows(h, (ch, l2) => { w.Children.Add(Describe(ch)); return true; }, IntPtr.Zero); }
+                    list.Add(w);
+                }
+                return true;
+            }, IntPtr.Zero);
+            return list;
+        }
+    }
+}
+"@
+}
+try { Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction Stop } catch { }
+
+$DialogAcknowledgeLabels = @("OK", "Close", "Continue")
+$DialogChoiceLabels = @("Yes", "No", "Cancel", "Retry", "Try Again", "Abort", "Ignore", "Save", "Don't Save", "Do not save", "Skip", "Skip All", "Accept", "Reject", "Apply", "Overwrite", "Replace", "Keep", "Update", "Open", "Delete", "Help", "Details", "Show Details", "More Info", "Yes to All", "No to All")
+$DialogWatchdogPolicy = "records every dialog-like top-level window of the owned Inventor pid; dismisses only a window whose visible, enabled answer buttons are exactly one acknowledgement (OK/Close/Continue); any window offering a choice is left alone; a disabled window is recorded as blocked"
+
+function Get-DialogLabel($Control) { (((([string]$Control.Text) -replace '&', '') -replace '\.\.\.$', '') -replace '\s+', ' ').Trim() }
+
+function Resolve-DialogAction {
+    <# Pure decision (offline-testable; see Test-InventorSession.ps1 S19-S28). Returns Action dismiss | leave | blocked,
+       the Control to use for a dismissal, the answer Labels found and a Reason. -MainFrameEnabled is the owner
+       application's main frame state at the same instant ($null when unknown): a hidden window is dismissed only
+       while that frame is disabled, i.e. a modal loop is actually blocking the application. #>
+    param([Parameter(Mandatory = $true)]$Window, [Nullable[bool]]$MainFrameEnabled = $null)
+    $windowVisible = [bool]$Window.Visible
+    $controls = @()
+    foreach ($child in @($Window.Children)) {
+        # children of a hidden window are hidden too (inherited), so visibility is informative only for visible windows
+        if (-not $child.Enabled) { continue }
+        if ($windowVisible -and -not $child.Visible) { continue }
+        $label = Get-DialogLabel $child
+        if (-not $label) { continue }
+        if ($DialogAcknowledgeLabels -contains $label) { $controls += [pscustomobject]@{ Handle = [int64]$child.Handle; Label = $label; ControlId = [int]$child.ControlId; Kind = "acknowledge" } }
+        elseif ($DialogChoiceLabels -contains $label) { $controls += [pscustomobject]@{ Handle = [int64]$child.Handle; Label = $label; ControlId = [int]$child.ControlId; Kind = "choice" } }
+    }
+    $labels = @($controls | ForEach-Object { $_.Label })
+    if (-not $Window.Enabled) { return [pscustomobject]@{ Action = "blocked"; Control = $null; Labels = $labels; Reason = "window disabled (another modal window is above it); nothing sent, re-examined when enabled" } }
+    if (-not $windowVisible) {
+        if ($null -eq $MainFrameEnabled) { return [pscustomobject]@{ Action = "leave"; Control = $null; Labels = $labels; Reason = "hidden window and the application modal state is unknown (no main frame handle); nothing sent" } }
+        if ($MainFrameEnabled) { return [pscustomobject]@{ Action = "leave"; Control = $null; Labels = $labels; Reason = "hidden window while the application main frame is enabled (no modal loop); not blocking, nothing sent" } }
+    }
+    $choices = @($controls | Where-Object { $_.Kind -eq "choice" }); $acks = @($controls | Where-Object { $_.Kind -eq "acknowledge" })
+    if ($choices.Count -gt 0) { return [pscustomobject]@{ Action = "leave"; Control = $null; Labels = $labels; Reason = "offers a choice ($($labels -join '/')); never answered automatically" } }
+    if ($acks.Count -eq 1) { return [pscustomobject]@{ Action = "dismiss"; Control = $acks[0]; Labels = $labels; Reason = "single acknowledgement button '$($acks[0].Label)'" } }
+    if ($acks.Count -eq 0) { return [pscustomobject]@{ Action = "leave"; Control = $null; Labels = $labels; Reason = "no acknowledgement button" } }
+    return [pscustomobject]@{ Action = "leave"; Control = $null; Labels = $labels; Reason = "several acknowledgement buttons ($($labels -join '/'))" }
+}
+
+function Get-OwnedDialogWindows {
+    <# Dialog-like top-level windows of ONE process: visible windows and #32770 dialogs (even invisible, as Inventor's
+       were while the application itself was invisible), excluding the main frame and windows with neither a title
+       nor an answer button. #>
+    param([Parameter(Mandatory = $true)][int]$OwnerPid, [long]$MainFrameHandle = 0)
+    $found = @()
+    foreach ($window in [VaultCad.Win32Windows]::TopLevelWindows($OwnerPid, $true)) {
+        if ($window.Handle -eq $MainFrameHandle) { continue }
+        if (-not $window.Visible -and $window.ClassName -ne '#32770') { continue }
+        $hasAnswer = $false
+        foreach ($child in $window.Children) { $label = Get-DialogLabel $child; if ($label -and (($DialogAcknowledgeLabels -contains $label) -or ($DialogChoiceLabels -contains $label))) { $hasAnswer = $true; break } }
+        if ([string]::IsNullOrWhiteSpace($window.Text) -and -not $hasAnswer) { continue }
+        $found += $window
+    }
+    return $found   # bare: callers use @(...) or foreach; a comma-wrapped empty array would reach them as ONE empty item
+}
+
+function Invoke-DialogDismissal {
+    <# Tries, in order and only until the window is gone: BM_CLICK to the button, UIA Invoke on it, WM_COMMAND
+       BN_CLICKED to the window, UIA WindowPattern.Close, WM_CLOSE. Each step waits and re-checks; everything is recorded. #>
+    param([Parameter(Mandatory = $true)]$Window, [Parameter(Mandatory = $true)]$Control, [int]$WaitMilliseconds = 1500)
+    $hwnd = [IntPtr][int64]$Window.Handle; $ctl = [IntPtr][int64]$Control.Handle; $wasVisible = [bool]$Window.Visible
+    $gone = { (-not [VaultCad.Win32Windows]::IsWindow($hwnd)) -or ($wasVisible -and -not [VaultCad.Win32Windows]::IsWindowVisible($hwnd)) }
+    $attempts = @(
+        @{ name = "BM_CLICK to '$($Control.Label)'"; act = { [void][VaultCad.Win32Windows]::SendTimeout($ctl, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 1000) } },
+        @{ name = "UIA InvokePattern on '$($Control.Label)'"; act = { $el = [System.Windows.Automation.AutomationElement]::FromHandle($ctl); $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } },
+        @{ name = "WM_COMMAND BN_CLICKED id $($Control.ControlId)"; act = { [void][VaultCad.Win32Windows]::PostMessage($hwnd, 0x0111, [IntPtr]([int64]$Control.ControlId), $ctl) } },
+        @{ name = "UIA WindowPattern.Close"; act = { $el = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd); $el.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } },
+        @{ name = "WM_CLOSE"; act = { [void][VaultCad.Win32Windows]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) } }
+    )
+    $steps = @()
+    foreach ($attempt in $attempts) {
+        if (& $gone) { break }
+        $err = $null; try { & $attempt.act } catch { $err = $_.Exception.Message }
+        Start-Sleep -Milliseconds $WaitMilliseconds
+        $steps += [ordered]@{ step = $attempt.name; error = $err; window_gone_after = [bool](& $gone) }
+    }
+    [pscustomobject]@{ Dismissed = [bool](& $gone); Steps = $steps }
+}
+
+function Start-DialogWatchdog {
+    param([Parameter(Mandatory = $true)][int]$OwnerPid, [long]$MainFrameHandle = 0, [string]$LogPath, [int]$IntervalMilliseconds = 1000)
+    $state = [hashtable]::Synchronized(@{ Stop = $false; Polls = 0; StartedAt = [DateTime]::UtcNow.ToString("o")
+        Events = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList)); Errors = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList)) })
+    $runspace = [runspacefactory]::CreateRunspace()
+    $runspace.ApartmentState = [System.Threading.ApartmentState]::MTA
+    $runspace.ThreadOptions = [System.Management.Automation.Runspaces.PSThreadOptions]::UseNewThread
+    $runspace.Open()
+    $worker = [powershell]::Create(); $worker.Runspace = $runspace
+    [void]$worker.AddScript({
+        param($state, $modulePath, $ownerPid, $mainFrame, $logPath, $interval)
+        . $modulePath
+        $seen = @{}
+        while (-not $state.Stop) {
+            $state.Polls = [int]$state.Polls + 1
+            try {
+                $frameEnabled = $null; if ($mainFrame) { $frameEnabled = [bool][VaultCad.Win32Windows]::IsWindowEnabled([IntPtr][int64]$mainFrame) }
+                foreach ($window in (Get-OwnedDialogWindows -OwnerPid $ownerPid -MainFrameHandle $mainFrame)) {
+                    $key = "$($window.Handle)|$($window.Text)|$($window.Enabled)|$($window.Visible)|$frameEnabled"
+                    if ($seen.ContainsKey($key)) { continue }
+                    $seen[$key] = $true
+                    $decision = Resolve-DialogAction -Window $window -MainFrameEnabled $frameEnabled
+                    $event = [ordered]@{ seen_at = [DateTime]::UtcNow.ToString("o"); handle = $window.Handle; class = $window.ClassName; title = $window.Text; visible = $window.Visible; enabled = $window.Enabled; main_frame_enabled = $frameEnabled
+                        texts = @($window.Children | Where-Object { ($_.Visible -or -not $window.Visible) -and -not [string]::IsNullOrWhiteSpace($_.Text) } | ForEach-Object { $_.Text } | Select-Object -Unique)
+                        answer_controls = @($decision.Labels); action = $decision.Action; reason = $decision.Reason; dismissed = $null; dismissal = @() }
+                    if ($decision.Action -eq "dismiss") { $outcome = Invoke-DialogDismissal -Window $window -Control $decision.Control; $event.dismissed = $outcome.Dismissed; $event.dismissal = @($outcome.Steps) }
+                    [void]$state.Events.Add($event)
+                    if ($logPath) { Add-Content -LiteralPath $logPath -Value (ConvertTo-Json -InputObject $event -Compress -Depth 5) }
+                }
+            } catch { [void]$state.Errors.Add("$([DateTime]::UtcNow.ToString('o')) $($_.Exception.Message)") }
+            Start-Sleep -Milliseconds $interval
+        }
+    }).AddArgument($state).AddArgument($InventorSessionModulePath).AddArgument($OwnerPid).AddArgument($MainFrameHandle).AddArgument($LogPath).AddArgument($IntervalMilliseconds)
+    $handle = $worker.BeginInvoke()
+    [pscustomobject]@{ State = $state; Worker = $worker; Runspace = $runspace; Handle = $handle; OwnerPid = $OwnerPid; IntervalMilliseconds = $IntervalMilliseconds; LogPath = $LogPath; Policy = $DialogWatchdogPolicy }
+}
+
+function Stop-DialogWatchdog {
+    param([Parameter(Mandatory = $true)]$Watchdog, [int]$WaitSeconds = 15)
+    $problems = @(); $remaining = @()
+    try { foreach ($window in @(Get-OwnedDialogWindows -OwnerPid $Watchdog.OwnerPid)) { $remaining += [ordered]@{ handle = $window.Handle; class = $window.ClassName; title = $window.Text; enabled = $window.Enabled; visible = $window.Visible } } } catch { $problems += "final window scan: $($_.Exception.Message)" }
+    $Watchdog.State.Stop = $true
+    try {
+        if (-not $Watchdog.Handle.AsyncWaitHandle.WaitOne($WaitSeconds * 1000)) { $problems += "watchdog thread did not stop within $WaitSeconds s; stopped forcibly"; $Watchdog.Worker.Stop() }
+        try { [void]$Watchdog.Worker.EndInvoke($Watchdog.Handle) } catch { $problems += "watchdog thread: $($_.Exception.Message)" }
+    } finally {
+        try { $Watchdog.Worker.Dispose() } catch { }
+        try { $Watchdog.Runspace.Close(); $Watchdog.Runspace.Dispose() } catch { }
+    }
+    $events = @($Watchdog.State.Events)
+    [pscustomobject]@{ Policy = $Watchdog.Policy; OwnerPid = $Watchdog.OwnerPid; StartedAt = $Watchdog.State.StartedAt; StoppedAt = [DateTime]::UtcNow.ToString("o"); Polls = [int]$Watchdog.State.Polls
+        Events = $events; Errors = @(@($Watchdog.State.Errors) + $problems); Remaining = $remaining
+        Dismissed = @($events | Where-Object { $_.dismissed -eq $true }).Count; Left = @($events | Where-Object { $_.action -ne "dismiss" }).Count }
+}

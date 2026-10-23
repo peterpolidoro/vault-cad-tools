@@ -60,7 +60,7 @@ function Test-SnapshotOutputs {
         $last = $m[3]; if ([double]$last[0] -ne 0 -or [double]$last[1] -ne 0 -or [double]$last[2] -ne 0 -or [double]$last[3] -ne 1) { return "$what transform last row is not [0,0,0,1]" }
         return $null
     }
-    foreach ($g in $scene.assemblies) { $e = Test-Matrix $g.transform "assembly '$($g.id)'"; if ($e) { $failures += $e } }
+    foreach ($g in $scene.assemblies) { $e = Test-Matrix $g.transform "assembly '$($g.id)'"; if ($e) { $failures += $e }; foreach ($k in "suppressed", "mirrored") { if (-not ($g.PSObject.Properties.Name -contains $k)) { $failures += "assembly '$($g.id)' lacks explicit '$k'" } } }
     $occPerPart = @{}; $occIds = @{}
     foreach ($o in $scene.occurrences) {
         $id = [string]$o.id; if (-not $id) { $failures += "occurrence without id"; continue }
@@ -68,6 +68,8 @@ function Test-SnapshotOutputs {
         if (-not $partIds.ContainsKey([string]$o.part_id)) { $failures += "occurrence '$id' references unknown part '$($o.part_id)'" }
         if (-not $groupIds.ContainsKey([string]$o.parent_id)) { $failures += "occurrence '$id' references unknown parent '$($o.parent_id)'" } elseif (-not $reachesRoot[[string]$o.parent_id]) { $failures += "occurrence '$id' hangs on group '$($o.parent_id)' that does not reach 'root'" }
         $e = Test-Matrix $o.transform "occurrence '$id'"; if ($e) { $failures += $e }
+        # The scene contract keeps suppressed/mirrored EXPLICIT on every occurrence (the accepted baseline has them as false).
+        foreach ($flag in "suppressed", "mirrored") { if (-not ($o.PSObject.Properties.Name -contains $flag)) { $failures += "occurrence '$id' lacks explicit '$flag'" } }
         $k = [string]$o.part_id; if (-not $occPerPart.ContainsKey($k)) { $occPerPart[$k] = 0 }; $occPerPart[$k]++
     }
     $invIds = @{}; $sumInstances = 0

@@ -204,6 +204,52 @@ Case "S17 shutdown with a null project manager and NO project handed over: no pr
     $r = Stop-IsolatedInventor $s $null -ProcessAlive { $false } -ProcessLister { @(1000) } -WaitSeconds 1
     Assert ($r.Succeeded -and (@($r.Required) -notcontains "previous_project_active") -and (@($r.Required) -join ',') -eq "documents_closed,process_exited,no_unexpected_inventor_processes") "state: $($r | ConvertTo-Json -Compress -Depth 4)"
 }
+# ---- dialog watchdog decision (pure; the Win32/UIA side is exercised by Test-DialogWatchdog.ps1 with child MessageBox processes) ----
+function New-MockWindow([string]$class, [string]$title, [bool]$enabled, [bool]$visible, $children) { [pscustomobject]@{ Handle = 1000; ClassName = $class; Text = $title; Visible = $visible; Enabled = $enabled; Children = @($children) } }
+function New-MockControl([string]$text, [bool]$visible, [bool]$enabled, [int]$id) { [pscustomobject]@{ Handle = 2000 + $id; ClassName = "Button"; Text = $text; Visible = $visible; Enabled = $enabled; ControlId = $id } }
+Case "S19 dialog decision: iLogic error form, one visible OK, hidden Apply/Extra/Second/Cancel -> dismiss via OK" {
+    $window = New-MockWindow "WindowsForms10.Window.8.app.0" "iLogic Event-Driven Rule" $true $true @((New-MockControl "RunExternalRule: Cannot find an external rule file named: `"Part Number Cleaner`"" $true $true 5), (New-MockControl "OK" $true $true 1), (New-MockControl "Apply" $false $true 2), (New-MockControl "Extra" $false $true 3), (New-MockControl "Second" $false $true 4), (New-MockControl "Cancel" $false $true 6))
+    $decision = Resolve-DialogAction $window
+    Assert ($decision.Action -eq "dismiss" -and $decision.Control.Label -eq "OK" -and $decision.Control.ControlId -eq 1 -and (@($decision.Labels) -join ',') -eq "OK") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S20 dialog decision: hidden #32770 'AIP Migration Errors' (hidden OK and Static, as observed) while the main frame is DISABLED (modal loop) -> dismiss via OK" {
+    $window = New-MockWindow "#32770" "AIP Migration Errors" $true $false @((New-MockControl "OK" $false $true 1), (New-MockControl "The following AIP files experienced problems during migration" $false $true 1001), (New-MockControl "" $false $true 1002))
+    $decision = Resolve-DialogAction -Window $window -MainFrameEnabled $false
+    Assert ($decision.Action -eq "dismiss" -and $decision.Control.ControlId -eq 1 -and $decision.Control.Label -eq "OK") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S21 dialog decision: Yes/No question -> leave, no control chosen" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "Autodesk Inventor Professional" $true $true @((New-MockControl "&Yes" $true $true 6), (New-MockControl "&No" $true $true 7), (New-MockControl "Save changes?" $true $true 1001)))
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'choice' -and (@($decision.Labels) -join ',') -eq "Yes,No") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S22 dialog decision: Save / Don't Save / Cancel -> leave" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "Autodesk Inventor Professional" $true $true @((New-MockControl "&Save" $true $true 1), (New-MockControl "Do&n't Save" $true $true 2), (New-MockControl "Cancel" $true $true 3)))
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and (@($decision.Labels) -join ',') -eq "Save,Don't Save,Cancel") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S23 dialog decision: OK + Cancel is a choice -> leave" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "Resolve Link" $true $true @((New-MockControl "OK" $true $true 1), (New-MockControl "Cancel" $true $true 2)))
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'choice') "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S24 dialog decision: disabled window (another modal above it) with a single OK -> blocked, nothing chosen" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "AIP Migration Errors" $false $false @((New-MockControl "OK" $true $true 1)))
+    Assert ($decision.Action -eq "blocked" -and $null -eq $decision.Control -and (@($decision.Labels) -join ',') -eq "OK") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S25 dialog decision: no answer button at all (tool window) -> leave" {
+    $decision = Resolve-DialogAction (New-MockWindow "WindowsForms10.Window.0.app.0" "" $true $true @((New-MockControl "some label" $true $true 9)))
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'no acknowledgement') "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S26 dialog decision: hidden or disabled buttons do not count; two visible acknowledgements -> leave" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "Info" $true $true @((New-MockControl "OK" $true $true 1), (New-MockControl "Close" $true $true 2), (New-MockControl "Yes" $false $true 3), (New-MockControl "No" $true $false 4)))
+    Assert ($decision.Action -eq "leave" -and $decision.Reason -match 'several' -and (@($decision.Labels) -join ',') -eq "OK,Close") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S27 dialog decision: the same hidden dialog while the main frame is ENABLED (no modal loop, as seen during the export) -> leave" {
+    $window = New-MockWindow "#32770" "AIP Migration Errors" $true $false @((New-MockControl "OK" $false $true 1))
+    $decision = Resolve-DialogAction -Window $window -MainFrameEnabled $true
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'enabled' -and (@($decision.Labels) -join ',') -eq "OK") "decision: $($decision | ConvertTo-Json -Compress)"
+}
+Case "S28 dialog decision: hidden dialog with unknown modal state (no main frame handle) -> leave" {
+    $decision = Resolve-DialogAction (New-MockWindow "#32770" "AIP Migration Errors" $true $false @((New-MockControl "OK" $false $true 1)))
+    Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'unknown') "decision: $($decision | ConvertTo-Json -Compress)"
+}
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
 Write-Output "$passed passed, $failed failed"
 if ($env:VAULT_CAD_TEST_JSON) { $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:VAULT_CAD_TEST_JSON -Encoding UTF8 }

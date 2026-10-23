@@ -183,7 +183,13 @@ Measurement and native authoring (added for the command-line pilot):
    observed. `Confirm-AcquiredInputs` binds the root and every referenced document
    to acquisition/inventory records (hash, master id, Vault path; duplicates and
    unresolved references rejected). All collaborators (COM factory, process list,
-   owner resolver, releaser, liveness) are injectable for offline tests. Used by
+   owner resolver, releaser, liveness) are injectable for offline tests.
+   `Start-DialogWatchdog`/`Stop-DialogWatchdog` run a watchdog thread over the owned
+   pid's dialog-like windows: every one is recorded (`dialogs.log`, receipt field
+   `dialogs`), only a window whose visible, enabled buttons are exactly one
+   acknowledgement (OK/Close/Continue) is dismissed, a choice is never answered
+   (added after a Before-Save iLogic error form of the production assembly blocked
+   `Save2` for 19 hours; `SilentOperation` does not cover add-in forms). Used by
    `Export-PartAssets.ps1` and `Measure-PartBodies.ps1`; the older scripts still
    use the process-list heuristic. `Step-Units.ps1` (`Get-StepLengthUnit`) and
    `Snapshot-Validation.ps1` (`Test-SnapshotOutputs`) are the other shared modules.
@@ -217,13 +223,18 @@ Measurement and native authoring (added for the command-line pilot):
     authors a native part from named user parameters, saves, reopens, edits and
     restores a parameter, exports STEP and cross-checks an external STEP. Fixture only.
 12. Offline tests (no Inventor): `Test-ExportReceipt.ps1` (11 receipt provenance
-    cases), `Test-InventorSession.ps1` (23 mock lifecycle cases: unproven or
+    cases), `Test-InventorSession.ps1` (34 mock cases: unproven or
     pre-existing owner never mutated, start failure after proven ownership quits the
     owned instance, activation that throws before or AFTER changing the active
     project restores the previous project first and removes only the added entry,
     pre-existing entries survive rollback, a null or unreadable project manager makes
     every required cleanup observation false rather than null, removal/quit/close
-    failures and a PID that never exits reported as not succeeded),
+    failures and a PID that never exits reported as not succeeded; dialog decisions
+    S19-S28: a single visible OK is dismissed, Yes/No, Save/Don't Save and OK+Cancel
+    are left alone, a disabled window is blocked, hidden buttons do not count, a hidden dialog is dismissed only while the application main frame is disabled by a modal loop),
+    `Test-DialogWatchdog.ps1` (live but without Inventor: child powershell
+    MessageBoxes; an OK-only box is dismissed so the child exits by itself, a Yes/No
+    box is recorded and left alone, the window scan is scoped to one pid),
     `Test-StepLengthUnit.ps1` (10 STEP text
     fixtures: mm, cm, metre, inch, unknown, missing, mixed, unresolved, two length
     units, literal-dollar regex), `Test-SnapshotOutputs.ps1 -SelfTest` (11 manifest
@@ -231,7 +242,8 @@ Measurement and native authoring (added for the command-line pilot):
     a parent cycle and a self-parented group, both with their hanging occurrences)
     and `-Directory DIR -ExpectParts N -ExpectOccurrences M -VerifyHashes` on a real
     run, `Test-ScriptHygiene.ps1` (AST: parse errors, variables that differ from a
-    parameter only by case, functions shadowed by built-ins).
+    parameter only by case, functions shadowed by built-ins, one variable spelled
+    with different casing in the same scope).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
     runs the exporter for real and judges each case mechanically from the exit code
     (captured immediately), the receipt, the asset count, the output validation and
@@ -278,6 +290,19 @@ Measurement and native authoring (added for the command-line pilot):
     (folder path, version, referenced model versions) and, with `-AllVersions`, checks
     every other version of each acquired master for drawing associations. Nothing is
     downloaded and the token is never written.
+
+17. `Invoke-MonitorPlacementPilot.ps1 -StepInput COPY\incoming\X.step -ExpectedStepSha256 SHA -WorkspaceRoot COPY\workspace -RootAssembly 'DATA\...\Root.iam' -MirrorRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW [-CenterXmm -CenterZmm -RestYmm]`
+    is a placement PILOT in a disposable copy of the acquired tree (never the mirror,
+    never production): it imports a hash-bound STEP envelope to a native IPT, reports the
+    envelope's own axes (longest and thinnest extents), builds a proper rotation that
+    maps the long axis to X and the thin axis to +Y, places one grounded occurrence per
+    requested centre resting on the requested height, saves ONLY the root copy
+    (`Save2(SaveDependents=false)`), reopens it to prove persistence, and re-hashes every
+    copied file and the mirror root. `placement-receipt.json` carries the transforms in
+    cm and mm, the world boxes and the hash evidence; `dialogs.log` and the receipt's
+    `dialogs` field record every dialog the watchdog saw. Supports, mates and acrylic are
+    not invented. The native update/check-in adapter is a design document only:
+    `docs/native-checkin-adapter-design.md`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,

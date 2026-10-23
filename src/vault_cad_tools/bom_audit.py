@@ -13,7 +13,6 @@ Joint coverage categories follow the coordinator's list:
   d   absent from every native source inspected (no row, no virtual component, no compound part, no drawing)
   e   unknown: compound parts present whose bodies are unnamed, or groups not found in the audit
 """
-import csv
 import json
 import shutil
 from pathlib import Path
@@ -23,16 +22,32 @@ from .project import ExchangeError, atomic_json, now, read_json
 HARDWARE_WORDS = ("screw", "bolt", "nut", "washer", "rivet", "fastener", "insert", "stud", "t-nut", "tnut",
                   "retaining ring", "shcs", "bhcs", "fhcs", "set screw", "threaded rod", "anchor", "pin ")
 SUMMARY_SCHEMA = 1
+OUTPUT_FILES = ("bom-rows.json", "bom-rows.csv", "virtual-and-excluded.json", "kit-boundaries.json", "drawings.json",
+                "coincident-tank.json", "joint-coverage.json", "bom-audit-summary.json")
 
 
-def _load(directory, name, required=True):
+def _load(directory, name, required=True, kind=list):
+    """Read one audit output and refuse anything that is not the expected JSON shape (L1: no coercion)."""
     path = Path(directory) / name
     if not path.exists():
         if required:
             raise ExchangeError(f"Audit output missing: {path}")
         return None
     data = read_json(path)
-    return data if data is not None else []
+    if data is None:
+        data = [] if kind is list else {}
+    if not isinstance(data, kind):
+        raise ExchangeError(f"Audit output {name} is not a JSON {kind.__name__}")
+    if kind is list and any(not isinstance(item, dict) for item in data):
+        raise ExchangeError(f"Audit output {name} contains a non-object entry")
+    return data
+
+
+def _count(value, what):
+    """An integer count as recorded by the audit; None, strings such as '2 in' and booleans are refused."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ExchangeError(f"{what} is not an integer count: {value!r}")
+    return value
 
 
 def hardware_named(*texts):
@@ -61,7 +76,7 @@ def document_summaries(rows, parts):
                                                 "reference_rows": 0, "phantom_rows": 0, "purchased_rows": 0,
                                                 "hardware_named_rows": [], "compound_parts": [], "components": []})
         doc["rows"] += 1
-        doc["item_quantity_sum"] += int(row.get("item_quantity") or 0)
+        doc["item_quantity_sum"] += _count(row.get("item_quantity"), f"{row['document']} item {row.get('item_number')!r} item_quantity")
         structure = (row.get("bom_structure") or {}).get("name") or ""
         doc["virtual_rows"] += 1 if row.get("is_virtual") else 0
         doc["reference_rows"] += 1 if structure == "Reference" else 0
@@ -75,7 +90,7 @@ def document_summaries(rows, parts):
         if entry["hardware_named"]:
             doc["hardware_named_rows"].append(entry)
         part = parts_by_doc.get(component_doc)
-        if part and (part.get("multi_body") or int(part.get("solid_bodies") or 0) > 1):
+        if part and (part.get("multi_body") or _count(part.get("solid_bodies"), f"{component_doc} solid_bodies") > 1):
             doc["compound_parts"].append({"component": component_doc, "solid_bodies": part.get("solid_bodies"),
                                           "hidden_solid_bodies": part.get("hidden_solid_bodies"), "visible_solid_bodies": part.get("visible_solid_bodies"),
                                           "bom_structure": (part.get("bom_structure") or {}).get("name"),
@@ -109,12 +124,16 @@ def body_names_informative(names):
 
 
 def joint_coverage(joints, groups, root_summary, exported_part_documents, drawings_available, drawings_checked=False):
+    if joints is not None and (not isinstance(joints, list) or any(not isinstance(j, dict) or not j.get("id") for j in joints)):
+        raise ExchangeError("joint-audit.json must hold a list of joint objects with an id")
     by_id = {g["group_id"]: g for g in groups}
     coverage = {}
     for joint in joints or []:
         if joint.get("scope") not in (None, "existing"):
             continue
-        group_ids = list(joint.get("parent_group_ids") or [])
+        group_ids = joint.get("parent_group_ids") or []
+        if not isinstance(group_ids, list) or any(not isinstance(g, str) for g in group_ids):
+            raise ExchangeError(f"joint {joint.get('id')}: parent_group_ids must be a list of strings")
         found = [by_id[g] for g in group_ids if g in by_id]
         root_named = any(g in ("root", "ROOT") for g in group_ids)
         missing = [g for g in group_ids if g not in by_id and g not in ("root", "ROOT")]
@@ -160,7 +179,13 @@ def joint_coverage(joints, groups, root_summary, exported_part_documents, drawin
 
 
 def _to_matrix(value):
-    return [[float(x) for x in r] for r in value]
+    try:
+        matrix = [[float(x) for x in r] for r in value]
+    except (TypeError, ValueError):
+        raise ExchangeError("occurrence transform_world_cm is not a numeric matrix") from None
+    if len(matrix) != 4 or any(len(r) != 4 for r in matrix):
+        raise ExchangeError("occurrence transform_world_cm is not 4x4")
+    return matrix
 
 
 def coincident_occurrences(snapshot, occurrences, tolerance_mm=1e-6, rotation_tolerance=1e-9):
@@ -242,7 +267,7 @@ def drawings_json(discovery_dir):
         return {"available": False, "note": "no Vault association discovery supplied"}
     per_file = _load(discovery_dir, "drawings-and-attachments.json")
     external = _load(discovery_dir, "external-parents.json")
-    receipt = _load(discovery_dir, "discovery-receipt.json", required=False) or {}
+    receipt = _load(discovery_dir, "discovery-receipt.json", required=False, kind=dict) or {}
     other = _load(discovery_dir, "drawings-on-other-versions.json", required=False) or []
     attachment_kinds = {}
     for f in per_file:
@@ -267,7 +292,11 @@ def drawings_json(discovery_dir):
 
 def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_dir=None):
     audit_dir = Path(audit_dir)
-    receipt = _load(audit_dir, "audit-receipt.json")
+    output_dir = Path(output_dir)
+    existing = [name for name in OUTPUT_FILES if (output_dir / name).exists()]
+    if existing:
+        raise ExchangeError(f"Output directory already holds {', '.join(existing)}; choose a new one (outputs are never overwritten)")
+    receipt = _load(audit_dir, "audit-receipt.json", kind=dict)
     if receipt.get("status") != "complete":
         raise ExchangeError(f"Audit receipt status is {receipt.get('status')!r}; refusing to summarize an incomplete audit")
     if not (receipt.get("post_run_integrity") or {}).get("inputs_unchanged_after_run"):
@@ -277,7 +306,15 @@ def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_
     parts = _load(audit_dir, "purchased-parts-bodies.json")
     virtuals = _load(audit_dir, "virtual-components.json")
     views = _load(audit_dir, "bom-views.json")
+    for row in rows:
+        if not row.get("document") or row.get("view") not in ("ModelData", "Structured", "PartsOnly"):
+            raise ExchangeError(f"bom-rows.json: row without document or with unknown view: {row.get('document')!r} / {row.get('view')!r}")
+    for occ in occurrences:
+        if not occ.get("id"):
+            raise ExchangeError("occurrence-bom-flags.json: occurrence without id")
     snapshot = read_json(snapshot_path)
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("occurrences"), list) or not isinstance(snapshot.get("parts"), list):
+        raise ExchangeError("native-snapshot.json must be an object with occurrences and parts lists")
     joints_doc = read_json(joints_path) if joints_path else None
     joints = (joints_doc or {}).get("joints") if isinstance(joints_doc, dict) else joints_doc
     docs = document_summaries(rows, parts)
@@ -316,14 +353,13 @@ def summarize(audit_dir, snapshot_path, output_dir, joints_path=None, discovery_
                      "bom_structure_purchased_or_inseparable": p.get("bom_structure_purchased_or_inseparable"),
                      "solid_bodies": p.get("solid_bodies"), "visible_solid_bodies": p.get("visible_solid_bodies"), "hidden_solid_bodies": p.get("hidden_solid_bodies"),
                      "body_names": names, "named_bodies": informative,
-                     "embedded_hardware_modeled": ("unknown: compound geometry with unnamed bodies; vendor kit contents are not in the model data" if (p.get("multi_body") or int(p.get("solid_bodies") or 0) > 1) and not informative
+                     "embedded_hardware_modeled": ("unknown: compound geometry with unnamed bodies; vendor kit contents are not in the model data" if (p.get("multi_body") or _count(p.get("solid_bodies"), f"{p.get('document')} solid_bodies") > 1) and not informative
                                                    else ("named bodies present: " + ", ".join(informative) if informative else "single body: no embedded hardware modeled")),
                      "quantity": p.get("quantity")})
-    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in ("bom-rows.json", "bom-rows.csv"):
         src = audit_dir / name
-        if src.exists() and not (output_dir / name).exists():
+        if src.exists():
             shutil.copyfile(src, output_dir / name)
     atomic_json(output_dir / "virtual-and-excluded.json", virtual_and_excluded)
     atomic_json(output_dir / "kit-boundaries.json", {"schema_version": SUMMARY_SCHEMA, "generated_at": now(), "parts": kits,

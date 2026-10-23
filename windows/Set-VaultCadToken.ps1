@@ -29,6 +29,8 @@ $endpoint = [Uri]$BaseUri
 if (-not $endpoint.IsAbsoluteUri -or $endpoint.Scheme -notin @("http", "https") -or $endpoint.UserInfo -or $endpoint.Query -or $endpoint.Fragment) {
     throw "BaseUri must be an HTTP(S) URL without credentials, query, or fragment."
 }
+# Windows credentials and the returned token must not travel through an ambient HTTP proxy (P4).
+[System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy
 $body = @{ input = @{ vault = $VaultName; appCode = $AppCode } } | ConvertTo-Json -Depth 3
 $session = Invoke-RestMethod -Uri ($BaseUri.TrimEnd('/') + '/sessions/win-auth') -Method Post -ContentType 'application/json' `
     -Body $body -UseDefaultCredentials -MaximumRedirection 0 -TimeoutSec 30
