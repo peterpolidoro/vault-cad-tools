@@ -339,5 +339,11 @@ No Vault writes, production assembly edits or service-mode qualification occurre
   optionally confirm the glTF translator. Linux: `materials_manifest.py` exists in the
   enclosure project (37 rows: 14 unknown, 23 cad_claimed); documentation adapter to read
   `materials.json` for appearances; lock to record the metadata hash.
-- [ ] Peter: Guix packages for OCP (pinned to the OCCT Guix ships), CadQuery and
-  build123d, submitted upstream; until then a Pixi environment for authored parts.
+- [ ] Peter, future work (deferred 2026-10-23, no date; Peter has no time for it now): Guix
+  packages for build123d and CadQuery, submitted upstream. Both are Apache-2.0. Order of
+  work: `OCP` first (pybind11 bindings generated against a pinned OpenCASCADE; must build
+  against the `opencascade-occt` Guix ships, 7.9.3 today, or carry its own), then
+  `build123d` (lighter dependency tree: OCP plus pure-Python geometry helpers), then
+  `cadquery` (OCP plus VTK through its wheels). Until then authored parts use FreeCAD
+  scripting from Guix (`freecad` 1.1.3), and a Pixi environment on Windows if a part
+  must be built there. No agent starts this packaging on its own.
