@@ -261,8 +261,21 @@ parameter fixture passed 29 checks and Linux FreeCAD validates its STEP.
   suppressed/mirrored on groups and root fields; validator enforces them), L5
   (server/vault from project config; no workstation name in tests), P4 (proxy opt-out)
   and the hygiene check for same-name-different-case variables in one scope.
-- [ ] Native update/check-in adapter implementation and its disposable live pilot: only
-  after Linux and Peter review the design document and authorize a destination.
+- [x] Design document revision 2 (2026-10-23, Peter's directives via Linux 141829Z/142722Z):
+  synchronisation design (sync states from Vault version id / acquired native hash /
+  exported STEP hash / repository STEP hash; natives never written in `in_sync` or
+  `vault_newer`; folder discovery, closure, incremental export; metadata contract; protocol
+  v2 request kinds; qualification plan; native check-in condensed as the deferred route).
+  Evidence `2026-10-23-windows-sync-design-01`: reference-model probe in the disposable copy
+  (STEP kept as referenced source through `ImportedComponents`, wrapper IPT lists the STEP in
+  its file descriptors only), REST capability probe (65-path OpenAPI document, inline
+  properties, no file writes), Pixi win-64 survey (FreeCAD/Typst/Poppler/mkdocs-material yes;
+  bpy only for Python 3.13/3.11), W1 `complete_with_dialogs`.
+- [ ] After review: read-only `discover_folder` + sync-state computation against ENCLOSURE;
+  incremental export dry run; `update_step_file` plan; then the disposable live pilot of the
+  reference assembly (wrapper IPT + new IAM, adds only) with Peter's authorization.
+- [ ] Native update/check-in of a production assembly: deferred until the sync model exists
+  and Peter asks for it.
 
 - [x] Linux (2026-10-22T16:54:49Z): Windows full patch `dd415d54...` integrated UNCOMMITTED on
   0705b40 in this worktree; 60 portable tests pass in Guix; independent static review
@@ -307,3 +320,8 @@ Code/results are uncommitted in the Linux CAD repositories; shared Git clones
 are unchanged by this review. Raw results live in 2026-10-21-windows-native-pilot-02
 and 2026-10-21-linux-native-review-02 under the shared exchange evidence directory.
 No Vault writes, production assembly edits or service-mode qualification occurred.
+
+- [ ] Linux (2026-10-23): `vault-cad sync-status` (lock + Windows `discovery.json` -> per-file states of the design's
+  section 2, written to `sync-status.json`, never into the lock), after Windows delivers qualification step 1; then the
+  generic snapshot-to-documentation adapter against the `metadata.json` sample (design section 4). Design revision 2
+  accepted with findings R1-R4 (`vault-cad-exchange/evidence/2026-10-23-linux-sync-design-review-01/`).

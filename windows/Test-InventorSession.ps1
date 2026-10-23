@@ -250,6 +250,19 @@ Case "S28 dialog decision: hidden dialog with unknown modal state (no main frame
     $decision = Resolve-DialogAction (New-MockWindow "#32770" "AIP Migration Errors" $true $false @((New-MockControl "OK" $false $true 1)))
     Assert ($decision.Action -eq "leave" -and $null -eq $decision.Control -and $decision.Reason -match 'unknown') "decision: $($decision | ConvertTo-Json -Compress)"
 }
+# ---- W1: run status with dialogs ----
+Case "S29 run status: a dismissed dialog turns 'complete' into 'complete_with_dialogs'" {
+    $d = [pscustomobject]@{ Dismissed = 1; Left = 0; Events = @(1) }
+    Assert ((Resolve-RunStatus -Status "complete" -Dialogs $d) -eq "complete_with_dialogs") "status not escalated"
+}
+Case "S30 run status: dialogs only recorded (left alone) keep 'complete'; no watchdog keeps 'complete'" {
+    $d = [pscustomobject]@{ Dismissed = 0; Left = 2; Events = @(1, 2) }
+    Assert ((Resolve-RunStatus -Status "complete" -Dialogs $d) -eq "complete" -and (Resolve-RunStatus -Status "complete" -Dialogs $null) -eq "complete") "status changed although nothing was dismissed"
+}
+Case "S31 run status: FAILED stays FAILED whatever the watchdog did" {
+    $d = [pscustomobject]@{ Dismissed = 3; Left = 0; Events = @(1, 2, 3) }
+    Assert ((Resolve-RunStatus -Status "FAILED" -Dialogs $d) -eq "FAILED") "FAILED was altered"
+}
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
 Write-Output "$passed passed, $failed failed"
 if ($env:VAULT_CAD_TEST_JSON) { $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:VAULT_CAD_TEST_JSON -Encoding UTF8 }

@@ -164,3 +164,7 @@ in the project lock. Merely preparing a request must never add a publication ent
 Credentials and session tokens remain on the executing host. Use per-request
 evidence and bounded error messages without secrets. Keep code/long-term plans
 in Git; keep host-specific handoffs and raw probe output in the exchange area.
+
+## Run status and dialogs (W1, 2026-10-23)
+
+Windows receipts (`export-receipt.json`, `placement-receipt.json`, `reference-model-probe.json`) end with `status` `complete`, `complete_with_dialogs` or `FAILED`. `complete_with_dialogs` means the owned Inventor instance raised a dialog that the dialog watchdog dismissed (only single-acknowledgement dialogs are ever dismissed; a choice is never answered); the receipt's `dialogs` field lists every dialog seen, what was sent and whether the window went away. A reader must inspect that field before accepting such a run. Dialogs that were only recorded (left alone) keep `complete`. `Test-SnapshotOutputs.ps1` reports a contradiction when a `complete*` receipt fails validation.

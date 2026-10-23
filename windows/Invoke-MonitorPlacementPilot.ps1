@@ -186,7 +186,7 @@ $receipt.session = [ordered]@{ pid = $session.Pid; ownership = $session.Ownershi
 $receipt.dialogs = $(if ($dialogs) { [ordered]@{ policy = $dialogs.Policy; log = "dialogs.log"; polls = $dialogs.Polls; seen = $dialogs.Events.Count; dismissed = $dialogs.Dismissed; left_alone = $dialogs.Left; events = @($dialogs.Events); errors = @($dialogs.Errors); remaining_at_stop = @($dialogs.Remaining) } } else { $null })
 $receipt.project = $(if ($project) { [ordered]@{ file = $project.ProjectFile; entry_pre_existed = $project.EntryPreExisted; entry_added_by_run = $project.AddedEntry; created_file = $project.CreatedFile; entry_removed_by_run = $shutdown.ProjectEntryRemoved; previous_restored = $shutdown.PreviousProjectRestored } } else { $null })
 $receipt.errors = $errors
-$receipt.status = $(if ($errors.Count -eq 0 -and $shutdown.Succeeded -and $receipt.persistence -and $receipt.persistence.transforms_identical) { "complete" } else { "FAILED" })
+$receipt.status = $(if ($errors.Count -eq 0 -and $shutdown.Succeeded -and $receipt.persistence -and $receipt.persistence.transforms_identical) { Resolve-RunStatus -Status "complete" -Dialogs $dialogs } else { "FAILED" })   # W1: complete_with_dialogs when anything was dismissed
 ConvertTo-Json -InputObject $receipt -Depth 10 | Set-Content -LiteralPath (Join-Path $OutputDirectory "placement-receipt.json") -Encoding UTF8
 Log "Placement pilot status: $($receipt.status)"
-if ($receipt.status -ne "complete") { exit 1 }
+if ($receipt.status -notlike "complete*") { exit 1 }

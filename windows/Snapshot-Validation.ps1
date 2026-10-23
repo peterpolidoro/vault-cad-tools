@@ -97,7 +97,7 @@ function Test-SnapshotOutputs {
             $listed = @{}; foreach ($prop in $receipt.files.PSObject.Properties) { $listed[$prop.Name] = $prop.Value }
             foreach ($p in $scene.parts) { $ap = [string]$p.asset.path; if (-not $listed.ContainsKey($ap)) { $failures += "receipt does not list asset '$ap'" } elseif ($VerifyHashes) { $f = Join-Path $Directory ($ap -replace '/', '\'); if (-not (Test-Path -LiteralPath $f)) { $failures += "asset file missing: $ap" } elseif ((Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$listed[$ap].sha256) { $failures += "asset hash mismatch: $ap" } elseif ([string]$p.asset.sha256 -ne [string]$listed[$ap].sha256) { $failures += "scene/receipt hash disagreement: $ap" } } }
             foreach ($n in "scene.json", "inventory-raw.json", "native-snapshot.json") { if (-not $listed.ContainsKey($n)) { $failures += "receipt does not list $n" } elseif ($VerifyHashes -and (Get-FileHash -LiteralPath (Join-Path $Directory $n) -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$listed[$n].sha256) { $failures += "receipt hash mismatch: $n" } }
-            if ([string]$receipt.status -eq "complete" -and $failures.Count -gt 0) { $failures += "receipt status is 'complete' although validation failed" }
+            if ([string]$receipt.status -like "complete*" -and $failures.Count -gt 0) { $failures += "receipt status is '$($receipt.status)' although validation failed" }
         }
     }
     [ordered]@{ ok = ($failures.Count -eq 0); failures = $failures; summary = $summary }

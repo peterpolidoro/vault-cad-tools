@@ -296,12 +296,12 @@ function Write-Receipt($status) {
         guards = $guards; validation = $(if ($validation) { [ordered]@{ ok = $validation.ok; failures = $validation.failures; summary = $validation.summary } } else { [ordered]@{ ok = $false; failures = @("validation did not run") } })
         assembly = $(if ($snapshotWritten) { $snapshot.assembly } else { @{ document = $NativeAssembly } }); counts = $(if ($snapshotWritten) { $snapshot.counts } else { $null }); cross_check = $(if ($snapshotWritten) { $snapshot.cross_check } else { $null }); warnings = $warnings; files = $files } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $OutputDirectory "export-receipt.json") -Encoding UTF8
 }
-$status = $(if ($errors.Count -eq 0 -and $snapshotWritten -and $validation -and $validation.ok -and $shutdown.Succeeded) { "complete" } else { "FAILED" })
+$status = $(if ($errors.Count -eq 0 -and $snapshotWritten -and $validation -and $validation.ok -and $shutdown.Succeeded) { Resolve-RunStatus -Status "complete" -Dialogs $dialogs } else { "FAILED" })   # W1: complete_with_dialogs when anything was dismissed
 Write-Receipt $status
-if ($status -eq "complete") {
+if ($status -like "complete*") {
     # final check with the receipt present: every asset listed and hashed as recorded
     $final = Test-SnapshotOutputs -Directory $OutputDirectory -ExpectParts $parts.Count -ExpectOccurrences $leafCount -VerifyHashes
     if (-not $final.ok) { $errors += "post-receipt validation failed: $($final.failures -join '; ')"; $validation = $final; $status = "FAILED"; Write-Receipt $status }
 }
 Write-Output "Receipt status: $status"
-if ($status -ne "complete") { exit 1 }
+if ($status -notlike "complete*") { exit 1 }

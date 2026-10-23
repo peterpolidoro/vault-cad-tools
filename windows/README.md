@@ -15,7 +15,43 @@
 - Git: the shared clones under `U:\Repositories\github\` are the only remote used on
   this machine (`shared`); Peter pushes to GitHub and fast-forwards them.
 
-## Current result — monitor placement pilot in a disposable copy; adapter design document; dialog watchdog (2026-10-22/23)
+## Current result — synchronisation design (revision 2), reference-model probe, REST and Pixi surveys, W1 (2026-10-23)
+
+Evidence: `vault-cad-exchange/evidence/2026-10-23-windows-sync-design-01/` (report `REPORT.md`).
+Requested by `to-windows/20261023T141829Z-...` (Peter's directives) and
+`to-windows/20261023T142722Z-...` (review). Base: tools `b84e944` + patch `ad3b8431`; project
+`b19018f`. No Vault write; no production document opened; nothing committed.
+
+- `docs/native-checkin-adapter-design.md` rewritten as the synchronisation design: per-file
+  sync states (`in_sync`, `vault_newer`, `repo_newer`, `both_changed`, `new_in_repo`,
+  `new_in_vault`, `unknown`) from the Vault version id, the acquired native hash, the exported
+  STEP hash and the repository STEP hash; natives never written in `in_sync`/`vault_newer`;
+  folder discovery (roots = IAMs without parents, standalone = no parents and no uses, closure
+  by recursive `uses`), incremental acquisition and export with the strict binding kept; the
+  metadata contract (`scene.json` + `metadata.json`); protocol v2 request kinds; qualification
+  plan; the revision-1 native check-in condensed as the deferred route; open questions.
+- Reference-model probe (`Invoke-ReferenceModelProbe.ps1`, disposable copy, new documents
+  only): Inventor 2025 accepts the published STEP as a reference model
+  (`ImportedGenericComponentDefinition.ReferenceModel = true`); the imported component is
+  `LinkedToFile`, `IsEmbedded` (cached translation), health 11778; the wrapper part's
+  `File.ReferencedFileDescriptors` lists exactly the STEP while `AllReferencedDocuments` is
+  empty; a new assembly placing the wrapper lists only the wrapper. Hence directive 2's route:
+  wrapper IPT with the link kept, STEP authoritative, associations IAM -> IPT -> STEP declared
+  on add; binding must also walk file descriptors. Vault's own record of IPT -> STEP is
+  unverified (needs the disposable live pilot, with authorization).
+- REST (read-only, verified): folder contents with `isHidden`/`isCheckedOut`, sub-folders,
+  version records with 77 inline properties (lifecycle, revision, category, lab UDPs), all
+  versions of a master, `uses`/`parents`, content, 119 property definitions, text search; the
+  server's OpenAPI document (65 paths) has no file write at all. Hidden files, reference strings
+  (`RefId`/`Source`) and every write need the SDK.
+- Pixi win-64: FreeCAD, Typst, Poppler, mkdocs-material resolve on conda-forge; `bpy` only as a
+  PyPI wheel for Python 3.13 or 3.11 (workspace pins 3.12); nothing installed.
+- W1: `Resolve-RunStatus` gives `complete_with_dialogs` when the watchdog dismissed anything
+  (exporter, placement pilot, probe); `Test-SnapshotOutputs` flags `complete*` with failures;
+  mock cases S29-S31. Suites: hygiene 27 scripts, 37 mock cases, 3 watchdog, 12 snapshot,
+  10 STEP, 11 receipt, 77 Python.
+
+## Earlier result — monitor placement pilot in a disposable copy; adapter design document; dialog watchdog (2026-10-22/23)
 
 Evidence: `vault-cad-exchange/evidence/2026-10-22-windows-placement-pilot-01/` (report
 `REPORT.md`). Requested by `to-windows/20261022T182324Z-linux-pilot-ingested-and-placement-route-confirmed.md`;

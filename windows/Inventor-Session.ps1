@@ -416,6 +416,17 @@ function Start-DialogWatchdog {
     [pscustomobject]@{ State = $state; Worker = $worker; Runspace = $runspace; Handle = $handle; OwnerPid = $OwnerPid; IntervalMilliseconds = $IntervalMilliseconds; LogPath = $LogPath; Policy = $DialogWatchdogPolicy }
 }
 
+function Resolve-RunStatus {
+    <# W1 (Linux review 2026-10-23): a run in which the watchdog DISMISSED anything must not end as a plain
+       'complete'; it becomes 'complete_with_dialogs' so a reader cannot accept it as clean without reading the
+       receipt's 'dialogs' field. Dialogs that were only recorded (left alone) keep 'complete'. Any other status
+       (FAILED, ...) is returned unchanged. #>
+    param([Parameter(Mandatory = $true)][string]$Status, $Dialogs)
+    if ($Status -ne "complete") { return $Status }
+    if ($Dialogs -and [int]$Dialogs.Dismissed -gt 0) { return "complete_with_dialogs" }
+    return "complete"
+}
+
 function Stop-DialogWatchdog {
     param([Parameter(Mandatory = $true)]$Watchdog, [int]$WaitSeconds = 15)
     $problems = @(); $remaining = @()

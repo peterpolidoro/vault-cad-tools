@@ -189,7 +189,8 @@ Measurement and native authoring (added for the command-line pilot):
    `dialogs`), only a window whose visible, enabled buttons are exactly one
    acknowledgement (OK/Close/Continue) is dismissed, a choice is never answered
    (added after a Before-Save iLogic error form of the production assembly blocked
-   `Save2` for 19 hours; `SilentOperation` does not cover add-in forms). Used by
+   `Save2` for 19 hours; `SilentOperation` does not cover add-in forms); `Resolve-RunStatus`
+   turns a run's `complete` into `complete_with_dialogs` when anything was dismissed (W1). Used by
    `Export-PartAssets.ps1` and `Measure-PartBodies.ps1`; the older scripts still
    use the process-list heuristic. `Step-Units.ps1` (`Get-StepLengthUnit`) and
    `Snapshot-Validation.ps1` (`Test-SnapshotOutputs`) are the other shared modules.
@@ -223,7 +224,7 @@ Measurement and native authoring (added for the command-line pilot):
     authors a native part from named user parameters, saves, reopens, edits and
     restores a parameter, exports STEP and cross-checks an external STEP. Fixture only.
 12. Offline tests (no Inventor): `Test-ExportReceipt.ps1` (11 receipt provenance
-    cases), `Test-InventorSession.ps1` (34 mock cases: unproven or
+    cases), `Test-InventorSession.ps1` (37 mock cases: unproven or
     pre-existing owner never mutated, start failure after proven ownership quits the
     owned instance, activation that throws before or AFTER changing the active
     project restores the previous project first and removes only the added entry,
@@ -231,7 +232,9 @@ Measurement and native authoring (added for the command-line pilot):
     every required cleanup observation false rather than null, removal/quit/close
     failures and a PID that never exits reported as not succeeded; dialog decisions
     S19-S28: a single visible OK is dismissed, Yes/No, Save/Don't Save and OK+Cancel
-    are left alone, a disabled window is blocked, hidden buttons do not count, a hidden dialog is dismissed only while the application main frame is disabled by a modal loop),
+    are left alone, a disabled window is blocked, hidden buttons do not count, a hidden dialog is dismissed only while the application main frame is disabled by a modal loop;
+    S29-S31 run status: a dismissed dialog makes `complete_with_dialogs`, record-only keeps
+    `complete`, FAILED stays),
     `Test-DialogWatchdog.ps1` (live but without Inventor: child powershell
     MessageBoxes; an OK-only box is dismissed so the child exits by itself, a Yes/No
     box is recorded and left alone, the window scan is scoped to one pid),
@@ -300,9 +303,17 @@ Measurement and native authoring (added for the command-line pilot):
     (`Save2(SaveDependents=false)`), reopens it to prove persistence, and re-hashes every
     copied file and the mirror root. `placement-receipt.json` carries the transforms in
     cm and mm, the world boxes and the hash evidence; `dialogs.log` and the receipt's
-    `dialogs` field record every dialog the watchdog saw. Supports, mates and acrylic are
-    not invented. The native update/check-in adapter is a design document only:
-    `docs/native-checkin-adapter-design.md`.
+    `dialogs` field record every dialog the watchdog saw; the status is `complete`, or
+    `complete_with_dialogs` when the watchdog dismissed anything (W1). Supports, mates and
+    acrylic are not invented.
+18. `Invoke-ReferenceModelProbe.ps1 -StepInput FILE -ExpectedStepSha256 SHA -WorkspaceRoot COPY -OutputDirectory NEW`
+    answers, in a disposable copy and with new documents only, whether Inventor keeps a STEP
+    as a REFERENCED source (`ImportedComponents` with `ReferenceModel = true`) and what the
+    wrapper part and a new assembly then list in `File.ReferencedFileDescriptors` and
+    `AllReferencedDocuments`; verified 2026-10-23 (linked, embedded cache, the STEP visible only
+    through the descriptors). The Vault <-> repository synchronisation design (sync states,
+    folder discovery, incremental export, metadata contract, the reference-model route, the
+    deferred native check-in) is a design document only: `docs/native-checkin-adapter-design.md`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,
