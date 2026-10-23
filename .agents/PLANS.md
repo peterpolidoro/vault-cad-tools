@@ -51,6 +51,15 @@ Directives (Peter, 2026-10-23):
   is an option only if every tool of the workflow is installable through Pixi on
   Windows; the Windows commands are written so that either arrangement can call
   them.
+- Authoring (2026-10-23): new parts are parametric Python programs producing B-rep
+  STEP (FreeCAD scripting now; build123d/CadQuery, both Apache-2.0, once packaged, with
+  Guix packages of OCP/CadQuery/build123d as Peter's upstream ambition); the program,
+  parameters, STEP and receipt are committed together; OpenSCAD is not used for STEP.
+  Inventor is not an authoring tool unless a collaborator insists. glTF is derived from
+  STEP on Linux; Inventor glTF export is optional. Materials: the exporter records the
+  CAD claim per part and body (`metadata.json` `materials`), each project curates
+  `assembly/materials.json` (claim kept, never trusted silently). Full text:
+  `docs/authoring-and-materials.md`.
 - Priority: the enclosure manual and its Pages site first (2026-10-23); the
   synchronisation is built gradually over days, design document before code, live
   Vault writes only on explicit request.
@@ -325,3 +334,10 @@ No Vault writes, production assembly edits or service-mode qualification occurre
   section 2, written to `sync-status.json`, never into the lock), after Windows delivers qualification step 1; then the
   generic snapshot-to-documentation adapter against the `metadata.json` sample (design section 4). Design revision 2
   accepted with findings R1-R4 (`vault-cad-exchange/evidence/2026-10-23-linux-sync-design-review-01/`).
+- [ ] Windows: record the material claim per part and body in the export metadata
+  (`docs/authoring-and-materials.md` 4.1) and ship it in the incremental-export dry run;
+  optionally confirm the glTF translator. Linux: `materials_manifest.py` exists in the
+  enclosure project (37 rows: 14 unknown, 23 cad_claimed); documentation adapter to read
+  `materials.json` for appearances; lock to record the metadata hash.
+- [ ] Peter: Guix packages for OCP (pinned to the OCCT Guix ships), CadQuery and
+  build123d, submitted upstream; until then a Pixi environment for authored parts.
