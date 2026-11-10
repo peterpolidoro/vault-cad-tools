@@ -414,3 +414,7 @@ and one new-file publication verified in FreeCAD and Inventor. The export half
 exists as evidence (pilot part and assembly with receipts, re-opened in Inventor);
 targeted enclosure checks and the publication half are still open, so the end-to-end
 milestone is not claimed.
+
+## Licence
+
+3-clause BSD, copyright Howard Hughes Medical Institute; see [LICENSE](LICENSE).

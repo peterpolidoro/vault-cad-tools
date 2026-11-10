@@ -5,6 +5,43 @@
 Support versioned Vault-to-STEP imports into project Git repositories and
 publication of Linux-authored STEP files back to Vault, using a Windows adapter.
 
+## Direction and layout change under proposal (2026-11-10)
+
+The overall direction is now kept in `mechanical-cad/docs/direction.md`; the
+sections below remain the status of the Vault side. Peter runs cross-repository
+work from an agent session rooted in `mechanical-cad`, which holds the Linux
+role of the shared coordination directory.
+
+Peter wants the structure of STEP files and metadata settled and the enclosure
+re-exported into it. The proposal (`mechanical-cad/docs/layout-proposal.md`, not
+accepted, nothing implemented) is one directory per Vault file, for parts and
+for assemblies. If accepted it changes, in this repository:
+
+- `windows/Export-PartAssets.ps1`: output layout; names keyed by Vault master id
+  instead of a hash of the Vault path; a manifest per assembly document with its
+  direct children, in place of one flattened `scene.json`; workspace-relative
+  document paths; a normalised STEP header (fixed name and timestamp, no account
+  name).
+- The lock: reduced to an index, with the per-file facts in each directory
+  (`docs/native-checkin-adapter-design.md` 2.3).
+- The planned `metadata.json` (design 4.2, 4.3): replaced by a `source.json` per
+  directory, written on Windows; Linux check results go to a separate file.
+- `import-step` and the planned `scene-check` / `scene-metadata` commands.
+
+Until Peter decides:
+
+- [ ] Do not start the Windows agent on the queued read-only qualification
+  (`to-windows/20261023T151357Z-…` and `…153207Z-…`): the `metadata.json` sample
+  and the incremental export dry run would be built on the old layout. Folder
+  discovery in the first message is unaffected. The Linux role replaces both with
+  one message asking for four read-only tests (AP214 against AP242, header
+  stability, lifecycle state and revision, parameters and hole or thread data).
+- [ ] Measured on 2026-11-10 from the enclosure repository: two exports of one
+  Vault version differ only in the header's file name and timestamp, the data
+  sections are byte-identical (one part); the asset name suffix is a hash of the
+  Vault path and model state; 33 of 37 STEP headers carry a Windows account name;
+  `scene.json` and `native-snapshot.json` carry absolute Windows paths.
+
 ## Target workflow (Peter, 2026-10-23)
 
 Give an agent a Vault location; it mirrors every file of that project at exact
@@ -63,6 +100,13 @@ Directives (Peter, 2026-10-23):
 - Priority: the enclosure manual and its Pages site first (2026-10-23); the
   synchronisation is built gradually over days, design document before code, live
   Vault writes only on explicit request.
+- Licence (2026-11-10): 3-clause BSD, copyright Howard Hughes Medical Institute
+  (`LICENSE`); the same text is in `mechanical-docs`, `mechanical-cad` and the
+  enclosure project.
+- Tool home and hosting (2026-11-10): the code-authoring and geometry-checking tools
+  go to the new `mechanical-cad` repository on GitHub, which also doubles as the Guix
+  channel for OCP, build123d and CadQuery; the Codeberg repositories will move to
+  GitHub (where exactly is not decided). The packaging itself is not started.
 
 ## Architecture decisions
 
@@ -346,4 +390,9 @@ No Vault writes, production assembly edits or service-mode qualification occurre
   `build123d` (lighter dependency tree: OCP plus pure-Python geometry helpers), then
   `cadquery` (OCP plus VTK through its wheels). Until then authored parts use FreeCAD
   scripting from Guix (`freecad` 1.1.3), and a Pixi environment on Windows if a part
-  must be built there. No agent starts this packaging on its own.
+  must be built there. No agent starts this packaging on its own. 2026-11-10: when it
+  starts, the packages go into the `mechanical-cad` repository, used as a Guix channel.
+- [ ] `pyproject.toml` carries no licence field yet (2026-11-10): the SPDX form
+  (`license = "BSD-3-Clause"`) needs setuptools 77 or later, while the build requirement
+  is `setuptools>=65` and the Windows Pixi lock is not to be re-resolved silently. Add
+  it together with the next deliberate manifest and lock update.

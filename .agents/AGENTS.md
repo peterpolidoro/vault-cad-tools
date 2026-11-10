@@ -3,6 +3,13 @@
 This repository owns reusable Linux/Windows code. CAD geometry, server/project
 configuration, and model provenance belong to project repositories.
 
+The direction of the wider work and the layout of project repositories (where
+STEP files and metadata go, and who writes which file) are kept in the sibling
+`mechanical-cad` repository: `docs/direction.md` and `docs/layout-proposal.md`.
+Read them before changing the exporter's output layout, the lock or the
+exchange protocol. Work that spans repositories runs from an agent session
+rooted there (Peter, 2026-11-10).
+
 Read README.md, docs/exchange-protocol.md, and .agents/PLANS.md. On Linux use
 `guix shell --pure -m manifest.scm -- python3 -m unittest discover -s tests -v`.
 On Windows use `pixi install --locked`, `pixi run --locked doctor`, and
