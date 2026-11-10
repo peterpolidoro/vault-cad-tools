@@ -24,7 +24,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][string]$BaseUri,
     [Parameter(Mandatory = $true)][string]$VaultId,
-    [int]$PageLimit = 100,
+    [ValidateRange(1, 1000)][int]$PageLimit = 1000,
     [switch]$AllVersions
 )
 $ErrorActionPreference = "Stop"
@@ -47,17 +47,19 @@ function Get-Json($path, $query) {
     try { return Invoke-RestMethod -Uri $url -Headers $headers -Method Get -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 0 } catch { $script:failures += [ordered]@{ path = $path; error = $_.Exception.Message }; return $null }
 }
 function Get-Pages($path, $query) {
-    $all = @(); $cursor = $null
-    for ($page = 0; $page -lt 200; $page++) {
-        $q = @{}; foreach ($k in $query.Keys) { $q[$k] = $query[$k] }; $q["limit"] = $PageLimit; if ($cursor) { $q["cursorState"] = $cursor }
-        $data = Get-Json $path $q
-        if ($null -eq $data) { return ,$all }
-        $results = @($data.results); $all += $results
-        $next = $null; try { $next = $data.pagination.cursorState } catch { }
-        if (-not $results.Count -or -not $next -or $next -eq $cursor) { break }
-        $cursor = $next
-    }
-    return ,$all
+    <# ONE page, never a cursor (corrected 2026-11-10). The earlier loop read a pagination.cursorState field this
+       server does not return, so it stopped after one page of 100 rows without noticing a longer listing; and the
+       server's real cursor (pagination.nextUrl, id-based while rows are ordered by name) repeats and skips rows.
+       The page size cap is 1000. A listing that does not fit one page, or whose row count is not the server's
+       total, is recorded as a failure (the receipt then cannot be "complete"). #>
+    $q = @{}; foreach ($k in $query.Keys) { $q[$k] = $query[$k] }; $q["limit"] = $PageLimit
+    $data = Get-Json $path $q
+    if ($null -eq $data) { return ,@() }
+    $results = @($data.results); $total = $null; $more = $false
+    try { if ($null -ne $data.pagination.totalResults) { $total = [int]$data.pagination.totalResults } } catch { }
+    try { $more = [bool]$data.pagination.nextUrl } catch { }
+    if ($more -or ($null -ne $total -and $results.Count -ne $total)) { $script:failures += [ordered]@{ path = $path; error = "the listing does not fit one page of $PageLimit rows ($($results.Count) of $total); the result is incomplete" } }
+    return ,$results
 }
 function Classify($name) { $ext = [IO.Path]::GetExtension([string]$name).ToLowerInvariant(); switch ($ext) { ".idw" { "drawing" } ".dwg" { "drawing" } ".ipn" { "presentation" } ".iam" { "assembly" } ".ipt" { "part" } ".dwf" { "visualization" } ".dwfx" { "visualization" } ".xlsx" { "spreadsheet" } ".xls" { "spreadsheet" } ".pdf" { "pdf" } ".docx" { "document" } ".txt" { "text" } default { "other:$ext" } } }
 function FileRec($fv) { if ($null -eq $fv) { return $null }; [ordered]@{ name = $fv.name; version_id = [string]$fv.id; master_id = $(try { [string]$fv.file.id } catch { $null }); version = $fv.version; parent_folder_id = [string]$fv.parentFolderId; classification = $(try { [string]$fv.classification } catch { $null }); state = $fv.state; kind = (Classify $fv.name); checked_out = $fv.isCheckedOut } }

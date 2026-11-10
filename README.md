@@ -255,7 +255,12 @@ Measurement and native authoring (added for the command-line pilot):
     and `-Directory DIR -ExpectParts N -ExpectOccurrences M -VerifyHashes` on a real
     run, `Test-ScriptHygiene.ps1` (AST: parse errors, variables that differ from a
     parameter only by case, functions shadowed by built-ins, one variable spelled
-    with different casing in the same scope).
+    with different casing in the same scope; every run first proves these checks on
+    nine built-in snippets and fails if they cannot find their own target),
+    `Test-StepHeader.ps1` (11 cases on synthetic STEP text: header fields, the
+    data-section hash, the normalised header, refusals), `Get-VaultFileFacts.ps1
+    -SelfTest` (7 cases of the join with the inventory) and
+    `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
     runs the exporter for real and judges each case mechanically from the exit code
     (captured immediately), the receipt, the asset count, the output validation and
@@ -323,6 +328,46 @@ Measurement and native authoring (added for the command-line pilot):
     through the descriptors). The Vault <-> repository synchronisation design (sync states,
     folder discovery, incremental export, metadata contract, the reference-model route, the
     deferred native check-in) is a design document only: `docs/native-checkin-adapter-design.md`.
+19. `Step-Header.ps1` (dot-sourced): `Get-StepFileInfo` reads a STEP file as bytes and returns
+    its SHA-256, the data-section SHA-256 (from the `DATA` keyword to the end of the file),
+    the `FILE_NAME`, `FILE_DESCRIPTION` and `FILE_SCHEMA` fields and the protocol;
+    `Set-StepFileHeader` replaces the `FILE_NAME` statement and nothing else, by default with
+    the normalised header of the layout specification (name `part.step`, time stamp
+    `1970-01-01T00:00:00`, empty author, organization and authorisation), refuses to
+    overwrite and proves on every call that the data-section hash is unchanged. It is a
+    port of `mechanical-cad/mechanical_cad/stepfile.py` and gives the same bytes (49 real
+    files compared on 2026-11-10).
+20. `Invoke-StepExportProbe.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW [-Variant @{label; protocol; options; properties; output_name},...] [-WorkOnCopies]`
+    exports parts in ONE owned Inventor instance per call, in named variants (application
+    protocol, translator options, iProperties changed in memory only and only on copies),
+    with every part bound to its acquired hash first and re-hashed afterwards; the receipt
+    holds size, both hashes, schema, header fields, length unit and the translator options
+    read back. Documents are never saved.
+21. `Compare-StepExports.ps1 -Path A.step,B.step[,...] [-Label ...] [-OutputPath NEW.json]`
+    says whether several exports of one part have identical data sections, which header
+    lines differ, and whether they normalise to identical files.
+22. `Get-VaultFileFacts.ps1 -Acquisition acquisition.json -Inventory dependency-inventory.json -OutputDirectory NEW -BaseUri URL -VaultId ID`
+    (REST GET only) reports for every acquired master the latest version id and number,
+    whether anything changed since the acquisition, revision, lifecycle definition and
+    state, check-in date and check-out state beside the inventory's values, and the
+    property system names the server returns, without values.
+23. `Get-PartFeatureDump.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW`
+    dumps, without saving, what the Inventor API returns for parameters, hole features
+    (tap, clearance, extent, placement, centres), thread features, patterns and sheet-metal
+    data. Property names come from the interop assembly by reflection; every call that
+    throws is listed in `call-failures.json`.
+24. `Discover-VaultFolder.ps1 -FolderPath '$/A/B' [-FolderId ID] -OutputDirectory NEW -BaseUri URL -VaultId ID`
+    (REST GET only) lists a Vault folder and classifies its files within the folder's own
+    scope (review finding R1): a root is an assembly no file of the scope uses, a
+    standalone file is used by none and uses nothing, parents outside the scope are
+    recorded as `external_parents` and never disqualify. `discovery.json` holds the files
+    with their roles and the closure of every root.
+
+REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
+server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
+by name, so following it repeats and skips rows. A listing that does not fit is refused.
+The results of items 19 to 24 on the enclosure are in
+`vault-cad-exchange/evidence/2026-11-10-windows-layout-tests-01/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,

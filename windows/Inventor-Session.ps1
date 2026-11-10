@@ -389,14 +389,15 @@ function Start-DialogWatchdog {
     $runspace.Open()
     $worker = [powershell]::Create(); $worker.Runspace = $runspace
     [void]$worker.AddScript({
-        param($state, $modulePath, $ownerPid, $mainFrame, $logPath, $interval)
+        # This block runs in its own runspace; its parameters are named apart from the function's ($OwnerPid, $LogPath).
+        param($state, $modulePath, $watchedPid, $mainFrame, $eventLog, $interval)
         . $modulePath
         $seen = @{}
         while (-not $state.Stop) {
             $state.Polls = [int]$state.Polls + 1
             try {
                 $frameEnabled = $null; if ($mainFrame) { $frameEnabled = [bool][VaultCad.Win32Windows]::IsWindowEnabled([IntPtr][int64]$mainFrame) }
-                foreach ($window in (Get-OwnedDialogWindows -OwnerPid $ownerPid -MainFrameHandle $mainFrame)) {
+                foreach ($window in (Get-OwnedDialogWindows -OwnerPid $watchedPid -MainFrameHandle $mainFrame)) {
                     $key = "$($window.Handle)|$($window.Text)|$($window.Enabled)|$($window.Visible)|$frameEnabled"
                     if ($seen.ContainsKey($key)) { continue }
                     $seen[$key] = $true
@@ -406,7 +407,7 @@ function Start-DialogWatchdog {
                         answer_controls = @($decision.Labels); action = $decision.Action; reason = $decision.Reason; dismissed = $null; dismissal = @() }
                     if ($decision.Action -eq "dismiss") { $outcome = Invoke-DialogDismissal -Window $window -Control $decision.Control; $event.dismissed = $outcome.Dismissed; $event.dismissal = @($outcome.Steps) }
                     [void]$state.Events.Add($event)
-                    if ($logPath) { Add-Content -LiteralPath $logPath -Value (ConvertTo-Json -InputObject $event -Compress -Depth 5) }
+                    if ($eventLog) { Add-Content -LiteralPath $eventLog -Value (ConvertTo-Json -InputObject $event -Compress -Depth 5) }
                 }
             } catch { [void]$state.Errors.Add("$([DateTime]::UtcNow.ToString('o')) $($_.Exception.Message)") }
             Start-Sleep -Milliseconds $interval

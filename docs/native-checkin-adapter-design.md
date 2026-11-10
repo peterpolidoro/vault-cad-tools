@@ -36,6 +36,15 @@ Notes added on 2026-11-10 (Linux):
     expected SHA-256 of the current Vault bytes, re-downloaded before check-out,
     so a STEP changed in Vault by someone else is `both_changed`, never
     overwritten.
+- Two statements below were corrected by the read-only run of 2026-11-10
+  (`windows/Discover-VaultFolder.ps1`, evidence `2026-11-10-windows-layout-tests-01`):
+  - 3.1: a REST listing on this server is reliable only as one page of up to
+    1000 rows whose row count equals the server's total. Following the paging
+    cursor repeats and skips rows (349 folders came back as 474 rows with 198
+    distinct ids).
+  - 3.2: the ENCLOSURE folder has two root assemblies under R1, not one.
+    `SLLB Enclosure.iam` is used by no file of the folder; its only parent is
+    outside it. The folder's 32 files also include four standalone files.
 
 ## 0. Directives this design follows
 

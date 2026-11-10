@@ -35,7 +35,9 @@ parameters.
 
 Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 `Test-InventorSession.ps1`, `Test-DialogWatchdog.ps1`, `Test-StepLengthUnit.ps1`,
-`Test-SnapshotOutputs.ps1 -SelfTest`, `Test-ScriptHygiene.ps1`.
+`Test-SnapshotOutputs.ps1 -SelfTest`, `Test-StepHeader.ps1`,
+`Get-VaultFileFacts.ps1 -SelfTest`, `Discover-VaultFolder.ps1 -SelfTest`,
+`Test-ScriptHygiene.ps1`.
 
 ## Operating preconditions for live Vault writes
 
@@ -57,8 +59,9 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 - Every script that drives Inventor should start it through
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
   `Export-PartAssets.ps1`, `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
-  `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1` and
-  `Invoke-ExporterGuardChecks.ps1` do. `Export-InventorStep.ps1`,
+  `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
+  `Invoke-ExporterGuardChecks.ps1`, `Invoke-StepExportProbe.ps1` and
+  `Get-PartFeatureDump.ps1` do. `Export-InventorStep.ps1`,
   `Inspect-StepInInventor.ps1`, `Compare-NativeAndStepAssembly.ps1`,
   `Invoke-NativeAuthoringPilot.ps1` and `Invoke-NativeParameterPilot.ps1` do not
   yet: use them only in the single-user interactive session they were
@@ -69,3 +72,16 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   Pilots that save anything work in a disposable copy of the mirror.
 - All automation so far ran in an interactive desktop session. Unattended
   service mode is not qualified.
+- A REST listing is read as one page (`limit` up to 1000) and accepted only
+  when its row count equals the server's `totalResults`. This server's paging
+  cursor is id-based while rows are ordered by name; following it repeats and
+  skips rows.
+- The STEP translator takes the header's author from the native file's Summary
+  Information "Author" when its own `Author` option is empty, the header's name
+  from the output file name, and has no option for the time stamp. A fixed
+  header is written afterwards with `Set-StepFileHeader` (`Step-Header.ps1`),
+  which changes the `FILE_NAME` statement only.
+- In PowerShell the comma binds tighter than arithmetic: write
+  `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
+  is case-insensitive and its dot access returns the value of a key named
+  `count`; use an ordinal dictionary and `get_Count()` where either matters.

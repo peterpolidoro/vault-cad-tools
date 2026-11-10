@@ -1,11 +1,52 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-10-23
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-10
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
-`windows/README.md` until 2026-11-10 and is unchanged apart from this heading.
+`windows/README.md` until 2026-11-10 and is unchanged apart from this heading;
+results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — five read-only tests for the layout proposal (2026-11-10)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-10-windows-layout-tests-01/` (report `REPORT.md`,
+which records the commits it ran from). Requested by
+`to-windows/20261110T171124Z-linux-layout-proposal-five-read-only-tests-replace-queued-work.md`.
+No Vault write, check-out or check-in; REST GET only; no document saved; every opened mirror file
+re-hashed and unchanged.
+
+- AP214 against AP242 (three parts, `Invoke-StepExportProbe.ps1`): six files, all `Successful`.
+  AP242 adds a saved-view block to every file, and for the part with hidden bodies it writes four
+  solids with an `INVISIBILITY` entity where AP214 writes the one visible solid.
+- Stability: for each of the three parts, nine AP214 exports from nine Inventor instances between
+  2026-10-21 and 2026-11-10 have byte-identical data sections and normalise to identical files; only
+  the header's name and time stamp differ (`Compare-StepExports.ps1`).
+- Vault facts (`Get-VaultFileFacts.ps1`, REST GET only): nothing has changed for the 44 files since
+  2026-10-21; all are revision 0, lifecycle `JFRC - Flexible Release (MCAD)`, state Work in Progress,
+  none checked out; 77 property system names are returned inline per file version.
+- Parameters, holes and threads (`Get-PartFeatureDump.ps1`, seven plates): parameters with
+  expressions and units, hole features with tap data (`10-24 UNC` 2B, `M8x1.25` 6H, `M5x0.8` 6H),
+  clearance data, extents and centres all read late-bound; 15 of 3232 reads fail, all `E_FAIL` on a
+  property that does not apply (`CSinkDepth`, `DrillPointType`, `MirrorFeature.NewBodyOperation`).
+  A tapped hole has no `HoleDiameter`; thread table values are in the standard's own unit; holes
+  repeated by a mirror or pattern are not in the hole features' centre lists. Thread features and
+  sheet metal were not exercised (none in these parts).
+- Header author: it is the native file's Summary Information "Author" (shown by changing it in
+  memory on copies). A non-empty translator option overrides it; the header's name is the output
+  file name; no option controls the time stamp. `Step-Header.ps1` rewrites `FILE_NAME` to the
+  normalised form; on 14 real exports the data section is unchanged and the Linux module accepts
+  the result. Its hashes, fields and normalised bytes equal `mechanical_cad/stepfile.py` on 49 files.
+- Optional `Discover-VaultFolder.ps1` with R1 on the ENCLOSURE folder: 32 files, two roots
+  (`Free Standing Enclosure.iam` and `SLLB Enclosure.iam`), four standalone files, three files with
+  parents outside the scope.
+- Found on the way: REST paging on this server repeats and skips rows (one page up to 1000 rows is
+  reliable); `Discover-VaultAssociations.ps1` read only the first 100 rows of a listing without
+  checking the total (corrected; the October lists were at most 17 rows); hygiene check 4 could not
+  find a case clash and is rewritten with a self-test.
+- Suites: hygiene over 34 scripts with a 9-case self-test, 37 session mock cases, 3 watchdog, 12
+  snapshot, 10 STEP unit, 11 receipt, 11 STEP header, 7 Vault facts and 8 folder discovery cases;
+  87 Python tests under Pixi.
 
 ## Result — synchronisation design (revision 2), reference-model probe, REST and Pixi surveys, W1 (2026-10-23)
 

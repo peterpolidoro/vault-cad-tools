@@ -38,10 +38,11 @@ the scene flattened from it equals the exporter's). Nothing was written into
 the enclosure's tracked tree.
 
 Tests: 87 portable tests pass in the Guix environment (run 2026-11-10; 10 of
-them are new, for `import-snapshot`). The Windows offline suites were last
-reported on 2026-10-23 (script hygiene over 27 scripts, 37 session mock cases,
-3 watchdog, 12 snapshot, 10 STEP unit, 11 receipt cases); they were not rerun
-since, and the new command has not been run on Windows.
+them are new, for `import-snapshot`). On Windows the same 87 pass under Pixi
+and the offline suites pass (run 2026-11-10: script hygiene over 34 scripts
+with a 9-case self-test of the checks, 37 session mock cases, 3 watchdog, 12
+snapshot, 10 STEP unit, 11 receipt, 11 STEP header, 7 Vault facts and 8 folder
+discovery cases). `import-snapshot` itself has not been run on Windows.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -84,6 +85,22 @@ Vault path and model state. All 37 STEP headers carry an account-like name in
 the `author` field (four distinct names, none of them the exporting account),
 although the exporter passed an empty `Author` translator option. `scene.json`
 and `native-snapshot.json` carry absolute Windows paths.
+
+Measured on Windows on 2026-11-10 (the five read-only tests; record in
+`windows/HISTORY.md`): nine AP214 exports per part, from nine Inventor instances
+over 20 days, have byte-identical data sections for three parts, and normalise
+to identical files. The header's author is the native file's Summary
+Information "Author"; a non-empty translator option overrides it, the header's
+name is the output file name, and no option controls the time stamp, so the
+exporter has to rewrite `FILE_NAME` after the translator has run
+(`windows/Step-Header.ps1`, same bytes as `mechanical-cad`'s normaliser). AP242
+adds a saved-view block and, for the part with hidden bodies, writes the hidden
+solids with an `INVISIBILITY` entity where AP214 omits them. Nothing has changed
+in Vault for the 44 files since 2026-10-21; revision, lifecycle definition and
+state reach REST for every file. Parameters, hole features with tap and
+clearance data and hole centres read from PowerShell; thread features and
+sheet metal were not exercised. In the ENCLOSURE folder `SLLB Enclosure.iam` is
+a second root under finding R1.
 
 ## Target workflow (Peter, 2026-10-23)
 
@@ -136,14 +153,12 @@ Directives:
 
 ## Next work
 
-1. Windows, when Peter starts that agent: the five read-only tests of
-   `mechanical-cad/docs/layout-proposal.md` (AP214 against AP242; two exports
-   in separate sessions; lifecycle state, revision and check-in date of the 44
-   files; parameters, holes and threads of one drilled or tapped plate; where
-   the header's author name comes from and whether the exporter can write a
-   fixed header). The request is in the shared mailbox. It replaces the two
-   messages of 2026-10-23 that asked for a `metadata.json` sample and an
-   incremental export dry run on the old layout.
+1. Peter: the protocol. Linux compared the AP214 and AP242 pairs of the
+   Windows layout tests in FreeCAD on 2026-11-10: two of the three parts are
+   the same geometry in both; for the part with hidden bodies FreeCAD reads the
+   AP242 file as four solids (37 306.4 mm³) and the AP214 file as one
+   (34 485.9 mm³). Recommended: AP214
+   (`mechanical-cad/docs/layout-proposal.md`, "Open choices").
 2. Linux, once the layout is accepted: run `import-snapshot` on a branch of
    the enclosure (the rest of that conversion is in the enclosure's plan);
    specify the exporter's package in `mechanical-cad` and make the import
@@ -164,7 +179,9 @@ Directives:
   session they were qualified in until they are moved.
 - The material and appearance claim per part and body
   (`docs/authoring-and-materials.md` 4.1) is not recorded by the exporter.
-- Design document revision 3: fold in findings R1 to R4 and the layout.
+- Design document revision 3: fold in findings R1 to R4 and the layout; correct
+  3.2 (the ENCLOSURE folder has two roots under R1, not one) and 3.1 (a REST
+  listing is reliable only as a single page of up to 1000 rows).
 - The disposable live pilot of the reference-model route (design 5.5): what
   Vault records for wrapper part to STEP is unverified. Needs Peter's
   authorization and a destination.
