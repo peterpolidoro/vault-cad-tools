@@ -55,7 +55,9 @@ silently trusted.
 ### 4.1 What the Windows exporter records (CAD claim), per part and per body
 
 Added to the export metadata (design document section 4.2, `metadata.json`; the same
-values may also appear under `scene.json` `parts[].properties`):
+values may also appear under `scene.json` `parts[].properties`). Not implemented
+in the exporter yet. Under the layout proposal in `mechanical-cad` the same
+record goes into each part directory's `source.json` instead:
 
 ```json
 "materials": {

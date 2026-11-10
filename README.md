@@ -1,33 +1,42 @@
 # vault-cad-tools
 
-Pilot 02 (2026-10-21): 37 distinct STEP assets and 155 instance placements now
-reconstruct the enclosure's 479 solids in FreeCAD. Default-accuracy Inventor
-volume differences shrink to about 0.0022% at VeryHigh accuracy. Windows also
-proved native parameter-driven sketches/extrusion and a depth edit/restore cycle
-for the monitor fixture (29 checks). All 34 portable tests pass on both hosts;
-11 offline receipt cases and the changed-input guard passed on Windows.
-
-New scripts: `Export-PartAssets.ps1` (snapshot exporter), `Measure-PartBodies.ps1`
-(diagnostic), `Invoke-NativeParameterPilot.ps1` (nominal monitor fixture),
-`Inventor-Session.ps1` (shared instance ownership, project cleanup, input binding).
-Exporter hardening (2026-10-21, run `2026-10-21-windows-exporter-hardening-01`): every
-opened document (root, intermediate assemblies, parts) is bound to acquisition and
-inventory before any asset is written; non-empty output directories, pre-existing
-assets, ambiguous STEP units, model-state mismatches, factories, adaptive, substitute
-and mirrored occurrences are refused; the Inventor instance is owned by PID and only
-project entries the run added are removed. Its raw scene is still not mechanical-docs
-loader input without an adapter. See `windows/README.md`. No Vault write adapter or
-publication is implemented.
-
 Command-line tools for exchanging STEP files between Autodesk Vault and Git CAD
 projects. The same repository contains portable Python code and Windows helpers.
 
-**Current state:** offline project/import/request operations and a REST reader
-are implemented and verified against the live Vault 2025 server from Windows.
-A Windows export route exists (`windows/*.ps1`: dependency snapshot, local
-Inventor STEP export, re-import check, receipt composition) and produced the
-first real pilot part and assembly on 2026-10-21. No command submits Job
-Processor jobs or uploads files into Vault; publication remains prepare-only.
+**Status (2026-11-10).** Each of the following has been demonstrated once, on
+the enclosure pilot:
+
+- **Vault to repository.** An exact-version snapshot of one root assembly (44
+  files) was exported with a local Inventor instance as 37 per-part STEP files
+  plus placement and BOM records for 155 occurrences, every opened document
+  bound to its acquired hash. The project imported them with provenance in
+  `vault-lock.json`, and FreeCAD reconstructs the assembly's 479 solids from
+  them.
+- **Repository to Vault.** One new STEP file was added through the Vault SDK
+  from a gated, journaled request and verified by an exact-byte re-download
+  (2026-10-22).
+- **Read-only audits.** The native BOM views, and the drawing and attachment
+  associations of every acquired version.
+- **Pilots in a disposable copy only.** Native parameter-driven authoring,
+  placing a STEP envelope in an assembly, and keeping a STEP as a referenced
+  source inside a wrapper part.
+
+Not implemented: updating or checking in an existing Vault file, folder-level
+discovery, change detection against the lock, incremental re-export, a single
+synchronisation command, unattended operation, and export through the Job
+Processor. The synchronisation between Vault and a repository is a design
+document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
+Vault without Peter's explicit request.
+
+The 87 portable tests pass in the Guix environment (2026-11-10). The Windows
+side's own suites and results are recorded in `windows/HISTORY.md`.
+
+Where this work is going, and the layout of project repositories that the
+exporter and importer are to write, are kept in the sibling `mechanical-cad`
+repository (`docs/direction.md`, `docs/layout-proposal.md`). That layout is a
+proposal. If it is accepted, the exporter's output, the lock and the planned
+metadata file described below change. One command already writes it,
+provisionally: see "Convert an exported snapshot into the proposed layout".
 
 ## Environments
 
@@ -82,8 +91,8 @@ python3 run.py --project ../free-standing-tank-enclosure --username USER search 
 ```
 
 `probe` is unauthenticated. It captures server info, the vault list, and the served
-OpenAPI description. The initial Linux session could not resolve `svault5`; run
-the probe on Windows or configure a reachable base URL. See `windows/README.md`.
+OpenAPI description. The Vault server's name does not resolve from the Linux
+workstation; run the probe on Windows or configure a reachable base URL.
 
 For authenticated reads, set `VAULT_CAD_TOKEN` to an existing session token, or
 use `--username` to prompt for a Vault-account password. `VAULT_CAD_USERNAME` and
@@ -325,7 +334,8 @@ model/vendor data, d absent from all native sources, e unknown), refusing an aud
 whose receipt is not `complete` or whose inputs changed. Tests: `tests/test_bom_audit.py`.
 
 Run them with `&` from PowerShell (not `powershell -File`, which flattens array
-parameters). Evidence lives in the shared exchange area under
+parameters). The dated results are in `windows/HISTORY.md`. Evidence lives in the
+shared exchange area under
 `vault-cad-exchange/evidence/2026-10-21-windows-qualification-01/` (first export),
 `.../2026-10-21-windows-native-pilot-01/` (comparison, native pilot, verified export),
 `.../2026-10-21-windows-native-pilot-02/` (guards, volumes, part assets, parameters),
@@ -349,6 +359,34 @@ untracked/modified references, records provenance, and rejects Windows filename
 collisions and paths outside `references/`. It does **not** validate CAD geometry.
 Inspect the result in FreeCAD before accepting it. Commit models and lock-file
 updates together. Keep edits in project `designs/` and authored exports in `step/`.
+
+## Convert an exported snapshot into the proposed layout (provisional)
+
+```sh
+python3 run.py import-snapshot ../free-standing-tank-enclosure/references/enclosure \
+    --into /path/to/a/new/directory --run legacy-snapshot-991056 \
+    [--inventory dependency-inventory.json] [--acquisition acquisition.json]
+```
+
+`import-snapshot` reads the package `windows/Export-PartAssets.ps1` wrote
+(`native-snapshot.json`, `scene.json`, `export-receipt.json`, `assets/`),
+verifies it against its receipt, and writes into a new directory:
+`references/parts/<key>/` and `references/assemblies/<key>/` with a
+`source.json` each, a `part.step` copied byte for byte, an `assembly.json`
+listing each assembly's direct children at their definition placements with
+the placements of flexible instances as overrides, the exporter's records
+unchanged under `references/receipts/<run>/`, and `vault-lock.json` as the
+index of those directories. The dependency inventory and acquisition record of
+the same acquisition, when given, supply the Vault identity of the
+sub-assembly documents and the version number, revision, lifecycle state and
+check-in date of every file.
+
+It refuses a package that does not match its receipt, a destination that is
+not empty, suppressed or mirrored occurrences, and instances whose definitions
+disagree. The layout it writes is specified and validated in `mechanical-cad`
+(`docs/layout-specification.md`, `python3 -m mechanical_cad validate`). It is
+not accepted yet, and this command does not touch a project's existing
+`references/` or lock. Tests: `tests/test_layout_import.py`.
 
 ## Prepare a new-file publication
 
@@ -403,17 +441,17 @@ record; it never reads the executor journal. Identical re-imports are no-ops; co
 ones are refused. First qualified live add: 2026-10-22, request `e1caf6c0-...`, Vault
 version 994252 (`vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/`).
 
-These commands **do not upload**. They package and validate a committed file for
-the forthcoming Windows uploader. Existing destination names must cause failure;
-automatic overwrite/check-in is outside the initial protocol. STEP bytes must
-match the Git commit. LFS is not implemented yet. Read the Windows handoff before
-implementing an uploader or processing any real request.
+None of the Linux commands uploads. The one live write is
+`windows/Publish-StepToVault.ps1 -Live` (item 14 above), gated to a single
+request. Existing destination names must cause failure; updating or checking in
+an existing file is outside the implemented protocol. STEP bytes must match the
+Git commit. LFS is not implemented.
 
-The first supported release will be established by one real part/assembly export
-and one new-file publication verified in FreeCAD and Inventor. The export half
-exists as evidence (pilot part and assembly with receipts, re-opened in Inventor);
-targeted enclosure checks and the publication half are still open, so the end-to-end
-milestone is not claimed.
+Both halves of the first milestone exist as evidence: a real part and assembly
+export verified in FreeCAD and re-opened in Inventor, and one new-file
+publication verified by exact-byte re-download. Using the published STEP from
+Inventor as a referenced model was shown only in a disposable copy (item 18);
+what Vault itself records for that reference has not been verified.
 
 ## Licence
 

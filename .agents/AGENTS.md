@@ -10,7 +10,9 @@ Read them before changing the exporter's output layout, the lock or the
 exchange protocol. Work that spans repositories runs from an agent session
 rooted there (Peter, 2026-11-10).
 
-Read README.md, docs/exchange-protocol.md, and .agents/PLANS.md. On Linux use
+Read README.md, docs/exchange-protocol.md, and .agents/PLANS.md.
+.agents/HISTORY.md and windows/HISTORY.md hold the finished checkpoints; read
+them only to trace how something came about. On Linux use
 `guix shell --pure -m manifest.scm -- python3 -m unittest discover -s tests -v`.
 On Windows use `pixi install --locked`, `pixi run --locked doctor`, and
 `pixi run --locked test`. Commit manifest and lock updates together; do not
@@ -34,3 +36,9 @@ settings as a side effect of a test.
 Test metadata consistency, path containment, modified-reference protection,
 publication payload integrity, session cleanup, and failed transfer behavior.
 Geometry and Autodesk integration require separate real-software validation.
+
+.agents/PLANS.md holds the current state, the next work and the open items, and
+nothing else. When a checkpoint is finished, move its record to
+.agents/HISTORY.md. Do not write commit ids or "uncommitted" into tracked files:
+Git knows, and the text is wrong as soon as Peter commits. A checkbox is a task;
+a measurement or a decision is a sentence.

@@ -1,5 +1,16 @@
 # Autodesk Vault + Inventor without the GUIs: a Linux-driven STEP round trip
 
+> **Status, added 2026-11-10.** This is the survey of 2026-10-21, kept as written
+> because it records what the server and the installed software offer. Its
+> recommended design was not the one taken. The export runs in a local Inventor
+> instance on the Windows workstation, not through the Job Processor (no
+> processor runs there, and the built-in job's parameters could not be
+> captured). Adding a file to Vault goes through the Vault SDK on Windows
+> (`FileManager.AddFile`), not through SOAP from Linux (the raw upload call
+> answered Vault error 155). Linux does not reach the server at all; it
+> exchanges request and result files with Windows. For what is implemented see
+> README.md, and for the current design `docs/native-checkin-adapter-design.md`.
+
 **Findings as of 2026-10-21.** Everything marked *verified* below was checked directly
 against the Vault server `svault5` and the software installed on the Windows workstation.
 Everything else is from Autodesk documentation or community sources (links at the end).

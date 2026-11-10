@@ -91,7 +91,7 @@ destination: a file with the requested name and identical bytes recovers the req
 as `uploaded` with its ids, different bytes record a collision, and no file leaves the
 request ambiguous unless the operator passes `--acknowledge-no-file`.
 
-## Publication result (planned; verification implemented)
+## Publication result: verification
 
 `vault-cad record-publish REQUEST_DIR --journal FILE --master-id M --version-id V
 --workdir DIR [--execution FILE]` re-downloads version V, compares size and SHA-256
@@ -153,7 +153,7 @@ project operation lock. Re-importing an identical result is a no-op; a different
 under the same request id, or the same Vault version under another request, is refused.
 The journal is never read.
 
-## Publication result (original plan)
+## Rules for every publication result
 
 Write `results/UUID.json` atomically with request ID, operation status, payload
 SHA-256, destination, and actual Vault master/version IDs. Record the Git commit

@@ -85,6 +85,12 @@ def parser():
     bom.add_argument("--joints", help="joint-audit.json with Linux candidate joints (optional)")
     bom.add_argument("--discovery", help="Directory written by windows/Discover-VaultAssociations.ps1 (optional)")
     bom.add_argument("--output", required=True)
+    layout = sub.add_parser("import-snapshot", help="PROVISIONAL: write an Export-PartAssets package into the proposed layout (one directory per Vault file) under a new directory; offline")
+    layout.add_argument("package", help="Directory with native-snapshot.json, scene.json, export-receipt.json and assets/")
+    layout.add_argument("--into", required=True, help="A new or empty directory; references/ and vault-lock.json are written there")
+    layout.add_argument("--run", required=True, help="Name under which the exporter's records are kept (references/receipts/<run>/)")
+    layout.add_argument("--inventory", help="dependency-inventory.json of the acquisition (optional)")
+    layout.add_argument("--acquisition", help="acquisition.json of the acquisition (optional)")
     return p
 
 
@@ -148,6 +154,9 @@ def execute(args):
         return {"output": args.output, "groups": len(summary["groups"]), "joint_categories": summary["joint_coverage_categories"],
                 "coincident_pairs": summary["coincident_pairs"], "virtual_components": summary["virtual_components"],
                 "native_parts_not_exported": summary["native_parts_not_exported"], "drawings_available": summary["drawings_available"]}
+    if args.command == "import-snapshot":
+        from .layout_import import import_snapshot
+        return import_snapshot(args.package, args.into, args.run, inventory=args.inventory, acquisition=args.acquisition)
     project = Project(args.project)
     if args.command == "status":
         return project.status()

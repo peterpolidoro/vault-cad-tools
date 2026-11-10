@@ -8,6 +8,35 @@ into a synchronisation design. Revision 1's mutating sequence is kept, condensed
 route in section 9. Evidence for every "verified" statement below:
 `vault-cad-exchange/evidence/2026-10-23-windows-sync-design-01/` (`REPORT.md`).
 
+Notes added on 2026-11-10 (Linux):
+
+- The file name is historical. The document is the synchronisation design; the
+  native check-in adapter it was first written for is section 9.
+- The layout of project repositories is being redesigned
+  (`mechanical-cad/docs/layout-proposal.md`, not accepted). If it is accepted,
+  section 2.3 (the lock record) is replaced by a lock that is a derived index of
+  one directory per Vault file, and the `metadata.json` of sections 4.2 and 4.3
+  by a `source.json` in each directory. The sync states of section 2.2 and the
+  facts F1 to F4 are kept. Qualification steps 1 and 2 of section 8 are on hold
+  until then.
+- The Linux review of 2026-10-23 accepted this revision with four findings,
+  which are not yet folded into the text:
+  - R1 (3.2): "an IAM with no parents within the vault" is too strict for a
+    project folder, because parts and assemblies are reused across labs. A root
+    is an IAM in the folder that no other file of the same folder closure uses;
+    parents outside that scope are recorded as `external_parents` and do not
+    disqualify. Standalone files likewise, per scope.
+  - R2 (2.2): F4 is taken from HEAD. An uncommitted repository STEP makes the
+    state `unknown` for writes, with the HEAD state reported beside it.
+  - R3 (2.3): `kind` is a closed set (`native_part`, `native_assembly`, `step`,
+    `other`); `discovery_run` and `computed_at` go into a Linux-written
+    `sync-status.json`, not the lock, so the lock changes only when Vault, the
+    export or the repository bytes change.
+  - R4 (6, `update_step_file`): require the expected version id and the
+    expected SHA-256 of the current Vault bytes, re-downloaded before check-out,
+    so a STEP changed in Vault by someone else is `both_changed`, never
+    overwritten.
+
 ## 0. Directives this design follows
 
 1. Inventor natives in Vault stay intact and authoritative while they match their STEP exports;
