@@ -81,6 +81,11 @@ def _emit(v, level, out):
         out.append(json.dumps(v, ensure_ascii=False))
 
 
+def write_json(path, obj):
+    """Write a file of the layout: UTF-8 without a byte-order mark, LF, lists of scalars on one line."""
+    _write_json(path, obj)
+
+
 def _write_json(path, obj):
     """UTF-8 without a byte-order mark, LF, lists of scalars on one line."""
     out = []

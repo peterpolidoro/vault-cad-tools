@@ -557,12 +557,53 @@ def temporary_workdir(prefix="vault-cad-verify-"):
 
 # ----------------------------------------------------------------- Linux ingestion
 
+def _record_in_part(project, key, part_dir, record, working_tree_matches):
+    """Append a verified publication to designs/parts/<key>/vault.json and derive the index again."""
+    from .layout_import import write_json
+    if not part_dir.is_dir():
+        raise ExchangeError(f"designs/parts/{key} is not in this project")
+    path = part_dir / "vault.json"
+    out = {"request_id": record["request_id"], "path": f"designs/parts/{key}",
+           "vault": {"master_id": record["master_id"], "version_id": record["version_id"]},
+           "part_step_matches_publication": working_tree_matches}
+    with project.transaction():
+        data = read_json(path) if path.is_file() else {"schema_version": 1, "publications": []}
+        if not isinstance(data, dict) or data.get("schema_version") != 1 or not isinstance(data.get("publications"), list):
+            raise ExchangeError(f"Invalid publication record designs/parts/{key}/vault.json")
+        for existing in data["publications"]:
+            if isinstance(existing, dict) and existing.get("request_id") == record["request_id"]:
+                if existing == record:
+                    return dict(out, changed=False)
+                raise ExchangeError(f"Request {record['request_id']} is already recorded with different data; refusing to overwrite")
+        for other in project.derive_publications():
+            if other.get("version_id") == record["version_id"]:
+                raise ExchangeError(f"Vault version {record['version_id']} is already recorded under request {other.get('request_id')}")
+        before = path.read_bytes() if path.is_file() else None
+        data["publications"].append(record)
+        write_json(path, data)
+        try:
+            project.lock["publications"] = project.derive_publications()
+            write_json(project.lock_path, project.lock)
+        except Exception:
+            if before is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(before)
+            raise
+    return dict(out, changed=True)
+
+
 REQUIRED_RESULT_CHECKS = ("folder_resolved", "version_listed_in_folder", "listed_under_destination_name",
                           "listed_master_matches", "sha256_matches_payload", "size_matches_payload")
 
 
 def import_publication_result(project, result_path, exchange=None):
-    """Record a `verified` publication result in the project lock (`publications`).
+    """Record a `verified` publication result in the project.
+
+    In the layout with one directory per Vault file the record goes into the authored
+    part's `vault.json` and the index in `vault-lock.json` is derived again; the
+    evidence of the publication stays in the result file, which the request id names.
+    In the earlier layout the record, with its evidence, goes into the lock.
 
     The result file is data from another host. Before anything is recorded it is
     re-checked here: schema and status, the request directory it names (re-verified,
@@ -630,7 +671,10 @@ def import_publication_result(project, result_path, exchange=None):
             raise ExchangeError(f"Execution record lacks {key}")
     provenance = request["provenance"]
     rel = portable_path(provenance["project_path"])
-    if rel.parts[0] != "step":
+    part_dir = None
+    if project.layout:
+        key, part_dir = project.authored_part(provenance["project_path"])
+    elif rel.parts[0] != "step":
         raise ExchangeError("Published deliverables come from step/")
     contained_path(project.root, provenance["project_path"])
     try:
@@ -641,6 +685,11 @@ def import_publication_result(project, result_path, exchange=None):
     if hashlib.sha256(blob).hexdigest() != payload["sha256"]:
         raise ExchangeError("The committed deliverable at the provenance commit does not hash to the payload")
     working = project.root / provenance["project_path"]
+    if part_dir is not None:
+        return _record_in_part(project, key, part_dir, {
+            "request_id": request_id, "master_id": vault["master_id"], "version_id": vault["version_id"],
+            "git_commit": provenance["git_commit"], "step_sha256": payload["sha256"]},
+            working.is_file() and digest(working) == payload["sha256"])
     entry = {
         "request_id": request_id, "operation": "add_step_file", "project_path": provenance["project_path"],
         "sha256": payload["sha256"], "bytes": payload["bytes"], "git_commit": provenance["git_commit"],

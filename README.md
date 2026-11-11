@@ -390,7 +390,26 @@ offline suites, mechanical guard harness) and
 `.../2026-10-22-windows-review-fixes-vault-dryrun-01/` (lifecycle, harness-ownership
 and null-guard corrections; Vault SDK discovery and the offline publication dry run).
 
-## Import a Windows-generated STEP
+## Two project layouts
+
+A project's `vault-lock.json` says which layout it is in, and the commands
+here read both:
+
+- **One directory per Vault file** (lock schema 2), specified in
+  `mechanical-cad/docs/layout-specification.md`: imported files under
+  `references/parts/<key>/` and `references/assemblies/<key>/`, written by
+  `import-snapshot`; authored parts under `designs/parts/<key>/`, whose
+  `part.step` is the deliverable. The lock is an index of those directories.
+  `status` reports whether each directory still says what the index says, and
+  whether each published part is still the file that was published.
+- **The earlier layout** (lock schema 1): single STEP files under
+  `references/`, imported with `import-step`, and deliverables under `step/`.
+  It stays readable until the last project has been converted, then goes.
+
+`import-step` refuses a project in the first layout, and a request cannot be
+prepared from `step/` there.
+
+## Import a Windows-generated STEP (earlier layout)
 
 Create an export receipt according to `docs/exchange-protocol.md`, using actual
 source IDs, settings, and a SHA-256 of the output. Then:
@@ -405,7 +424,7 @@ collisions and paths outside `references/`. It does **not** validate CAD geometr
 Inspect the result in FreeCAD before accepting it. Commit models and lock-file
 updates together. Keep edits in project `designs/` and authored exports in `step/`.
 
-## Convert an exported snapshot into the proposed layout (provisional)
+## Convert an exported snapshot into one directory per Vault file
 
 ```sh
 python3 run.py import-snapshot ../free-standing-tank-enclosure/references/enclosure \
@@ -429,19 +448,28 @@ check-in date of every file.
 It refuses a package that does not match its receipt, a destination that is
 not empty, suppressed or mirrored occurrences, and instances whose definitions
 disagree. The layout it writes is specified and validated in `mechanical-cad`
-(`docs/layout-specification.md`, `python3 -m mechanical_cad validate`). It is
-not accepted yet, and this command does not touch a project's existing
-`references/` or lock. Tests: `tests/test_layout_import.py`.
+(`docs/layout-specification.md`, `python3 -m mechanical_cad validate`); Peter
+decided its choices on 2026-11-11. This command writes into a new directory
+and does not touch a project's existing `references/` or lock; the package of
+the new exporter is not specified yet, so this reads the package of
+2026-10-21 only. Tests: `tests/test_layout_import.py`.
 
 ## Prepare a new-file publication
 
-Commit the authored STEP first. Then supply an agreed Vault destination and
-filesystem exchange path:
+Build and commit the authored part first. Then supply an agreed Vault
+destination and filesystem exchange path:
 
 ```sh
-python3 run.py --project ../free-standing-tank-enclosure prepare-publish step/new-part.step --vault-folder '$/AGREED/DESTINATION' --exchange /path/to/vault-cad-exchange
+python3 run.py --project ../free-standing-tank-enclosure prepare-publish designs/parts/KEY/part.step --vault-folder '$/AGREED/DESTINATION' --exchange /path/to/vault-cad-exchange [--name NAME.step]
 python3 run.py verify-request /path/to/vault-cad-exchange/requests/REQUEST_ID
 ```
+
+The request is refused unless `part.step` is committed and is the file the
+part's `receipt.json` describes (build the part again if it is not). Every
+deliverable is called `part.step`, so the file is named `KEY.step` in Vault
+unless `--name` gives another name; the name a part has in Vault is Peter's to
+settle, and this default is provisional. In the earlier layout the path is
+`step/NAME.step` and the file keeps its name.
 
 Planning, journal and verification are implemented offline or READ-ONLY against
 Vault (details in `docs/exchange-protocol.md`):
@@ -472,7 +500,7 @@ every check. None of these commands uploads; `tests/test_publication.py` covers 
 (31 cases with fake catalogs and a local HTTP stub), and the Windows executor is item
 14 above.
 
-After Windows has verified an add, Linux records it in the project lock:
+After Windows has verified an add, Linux records it in the project:
 
 ```sh
 python3 run.py --project ../free-standing-tank-enclosure import-publish-result /path/to/vault-cad-exchange/results/REQUEST_ID.json
@@ -481,9 +509,13 @@ python3 run.py --project ../free-standing-tank-enclosure import-publish-result /
 `import-publish-result` re-checks the result against its request directory (fingerprint,
 payload and re-download hashes, destination, vault ids, provenance, every verification
 check, typed execution record) and against the project's Git history (the committed blob
-at the provenance commit must hash to the payload) before appending a `publications`
-record; it never reads the executor journal. Identical re-imports are no-ops; conflicting
-ones are refused. First qualified live add: 2026-10-22, request `e1caf6c0-...`, Vault
+at the provenance commit must hash to the payload) before it records anything; it never
+reads the executor journal. The record goes into the part's `designs/parts/KEY/vault.json`
+(request id, master id, version id, Git commit, STEP hash), and the `publications` of the
+index in `vault-lock.json` are derived again from those files; the evidence of the
+publication stays in the result file. In the earlier layout the record, with its evidence,
+is appended to the lock's `publications`. Identical re-imports are no-ops; conflicting
+ones, and a Vault version already recorded under another request, are refused. First qualified live add: 2026-10-22, request `e1caf6c0-...`, Vault
 version 994252 (`vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/`).
 
 None of the Linux commands uploads. The one live write is

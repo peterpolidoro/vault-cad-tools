@@ -145,7 +145,12 @@ equals the result's; payload and re-download hashes/sizes equal the request; des
 and the Vault master/version ids are present; every verification check is true (none
 false, the six listing/byte checks present); the execution record is typed and names the
 executing host and time; and the blob at `provenance.git_commit:project_path` in the
-project's Git history hashes to the payload. It then appends one record to
+project's Git history hashes to the payload. In a project with one directory per Vault
+file (lock schema 2) the deliverable is `designs/parts/<key>/part.step`, and the command
+appends `request_id`, `master_id`, `version_id`, `git_commit` and `step_sha256` to that
+part's `vault.json`, then derives the `publications` of `vault-lock.json` again from the
+`vault.json` files; a Vault version already recorded under another request is refused. In
+the earlier layout (lock schema 1, deliverables under `step/`) it appends one record to
 `vault-lock.json` `publications` (request id, path, hash, size, commit, Vault ids and
 version, destination with folder id, execution host/time/comment, verified time,
 fingerprint, result file hash, whether the working-tree file still matches) under the

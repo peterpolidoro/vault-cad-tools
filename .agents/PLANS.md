@@ -9,7 +9,7 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 (`docs/direction.md`). Finished checkpoints, with their evidence runs, are in
 .agents/HISTORY.md and windows/HISTORY.md.
 
-## Current state (2026-11-10)
+## Current state (2026-11-11)
 
 Demonstrated, each once, on the enclosure pilot:
 
@@ -37,9 +37,30 @@ passes the proposal's acceptance test (37 parts, 7 assemblies, 44 overrides;
 the scene flattened from it equals the exporter's). Nothing was written into
 the enclosure's tracked tree.
 
-Tests: 87 portable tests pass in the Guix environment (run 2026-11-10; 10 of
-them are new, for `import-snapshot`). On Windows the same 87 pass under Pixi
-and the offline suites pass (run 2026-11-10: script hygiene over 34 scripts
+Added on 2026-11-11, at Peter's request: the commands read both shapes of
+`vault-lock.json`. A project with the index (schema 2, one directory per Vault
+file) gets a `status` that compares each directory with the index and each
+published part with what was published; `prepare-publish` takes an authored
+part's `designs/parts/<key>/part.step`, requires it to be committed and to be
+the file its `receipt.json` describes, and names it `<key>.step` in Vault
+unless `--name` says otherwise; `import-publish-result` writes the record into
+the part's `vault.json` and derives the index's `publications` again. The
+earlier lock (schema 1) works as before; `import-step` refuses the new layout.
+Run that day on the enclosure: `status` on the branch `layout-conversion`
+reports 37 parts and 7 assemblies clean and the one publication as changed
+since it was published; on `main`, with the earlier lock, 38 clean as before.
+The index and `vault.json` written by these commands are byte for byte what
+`mechanical-cad` writes for the same data, and `mechanical-cad`'s validator
+and these commands derive the same publications from the branch. A request
+was prepared from a scratch copy of the converted project and verified; no
+publication cycle has been run on a real project in the new layout, and
+nothing was sent to Vault.
+
+Tests: 100 portable tests pass in the Guix environment (run 2026-11-11; 13 of
+them are new, for the index, in `tests/test_layout_project.py`, and 10 are
+for `import-snapshot`). On Windows 87 passed under Pixi on 2026-11-10; the 13
+new ones have not been run there. On Windows
+the offline suites pass (run 2026-11-10: script hygiene over 34 scripts
 with a 9-case self-test of the checks, 37 session mock cases, 3 watchdog, 12
 snapshot, 10 STEP unit, 11 receipt, 11 STEP header, 7 Vault facts and 8 folder
 discovery cases). `import-snapshot` itself has not been run on Windows.
@@ -162,11 +183,12 @@ Directives:
    For the part with hidden bodies FreeCAD reads the AP242 file as four solids
    (37 306.4 mm³) and the AP214 file as one (34 485.9 mm³); `mechanical-cad`
    now leaves the bodies marked invisible out when it measures and flattens.
-2. Linux, on Peter's word: run `import-snapshot` on a branch of
-   the enclosure (the rest of that conversion is in the enclosure's plan);
-   specify the exporter's package in `mechanical-cad` and make the import
-   command read it, keep existing keys, and refuse what the lock says is newer
-   in the repository; retire `import-step` and the old lock shape.
+2. Linux: specify the exporter's package in `mechanical-cad` (after the
+   Windows AP242 tests) and make the import command read it, keep existing
+   keys, and refuse what the lock says is newer in the repository. When the
+   enclosure's branch `layout-conversion` is merged, no project is left in the
+   earlier layout: then remove `import-step`, the schema 1 lock and
+   publishing from `step/`, with their tests.
 3. Windows: the exporter writes the new package; re-export the enclosure.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
@@ -175,6 +197,21 @@ Directives:
 
 ## Open items
 
+- The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`
+  unless `--name` is given; the pilot of 2026-10-22 went in as
+  `AW2725Q-nominal-envelope.step`. For Peter to settle before the next
+  publication, with the wrapper-part naming question of the design document.
+- The index has two derivations, one here (`import-snapshot` for the
+  components, `Project.derive_publications` for the publications) and one in
+  `mechanical-cad` (`derive_lock`, which the validator holds the file to). They
+  agree on the fixture of the tests and on the converted enclosure. Nothing
+  tests them against each other automatically.
+- The new commands have not been run on Windows, where `plan-publish` and
+  `record-publish` run. Those two do not read the lock, and the request format
+  is unchanged.
+- `prepare-publish` checks that the part is committed and is the file its
+  receipt describes. It does not evaluate the part's `checks.json`; whoever
+  prepares a publication runs `mechanical_cad validate` and `check` first.
 - Five scripts do not start Inventor through `Inventor-Session.ps1`:
   `Export-InventorStep.ps1`, `Inspect-StepInInventor.ps1`,
   `Compare-NativeAndStepAssembly.ps1`, `Invoke-NativeAuthoringPilot.ps1`,
