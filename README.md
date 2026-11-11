@@ -463,10 +463,47 @@ It refuses a package that does not match its receipt, a destination that is
 not empty, suppressed or mirrored occurrences, and instances whose definitions
 disagree. The layout it writes is specified and validated in `mechanical-cad`
 (`docs/layout-specification.md`, `python3 -m mechanical_cad validate`); Peter
-decided its choices on 2026-11-11. This command writes into a new directory
-and does not touch a project's existing `references/` or lock; the package of
-the new exporter is not specified yet, so this reads the package of
-2026-10-21 only. Tests: `tests/test_layout_import.py`.
+decided its choices on 2026-11-11. For this package the command writes into a
+new directory and does not touch a project's existing `references/` or lock.
+Tests: `tests/test_layout_import.py`.
+
+### The package with `package.json`: into a project, keeping its keys
+
+```sh
+python3 run.py import-snapshot /path/to/package --into ../free-standing-tank-enclosure --run RUN
+```
+
+Provisional. When the package directory holds a `package.json`, the command
+reads the package specified in `mechanical-cad/docs/exporter-package.md`
+(draft 2): one directory per Vault file and model state under `files/`, with
+`source.json` and `part.step` or `assembly.json`, every file identified by
+master id and model state and none by a key. No exporter writes this package
+yet; `tests/exporter_package.py` writes one for the tests, by hand or from
+what a project holds.
+
+`--into` is a project with an index, or a new or empty directory. The whole
+package and the project are checked before anything is written:
+
+- every file must match `package.json`, nothing may be unlisted, and the vault
+  and root assembly must be those of the project's `vault-project.toml`;
+- the project's directories must be what `vault-lock.json` says they are;
+- a file the project holds keeps its key, whatever its name and path in Vault
+  are now; a new file gets a key from its name that no imported or authored
+  component has;
+- a package holding an earlier version of a file than the project is refused,
+  as is one whose order cannot be told because a version number is unknown.
+
+Then each file is new, updated (a new Vault version), rewritten (the same
+version, exported differently) or unchanged. An unchanged directory is not
+touched and keeps naming the run it came from; unchanged means the same
+version id, native hash and STEP bytes and the same exported record
+(`source.json` without its `export` block; for an assembly also its children).
+What the project holds and the package does not is reported and kept.
+`package.json` is copied to `references/receipts/<run>/`, the index is derived
+again with its publications kept, and the result names the parts whose
+`part.step` changed, which `mechanical-cad/tools/step_facts.py` has to measure
+before the project validates. `--inventory` and `--acquisition` belong to the
+earlier package. Tests: `tests/test_package_import.py`.
 
 ## Prepare a new-file publication
 

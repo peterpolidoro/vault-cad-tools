@@ -56,10 +56,28 @@ was prepared from a scratch copy of the converted project and verified; no
 publication cycle has been run on a real project in the new layout, and
 nothing was sent to Vault.
 
-Tests: 100 portable tests pass in the Guix environment (run 2026-11-11; 13 of
-them are new, for the index, in `tests/test_layout_project.py`, and 10 are
-for `import-snapshot`). On Windows 87 passed under Pixi on 2026-11-11, from
-the commit before the index was added; the 13 new ones have not been run
+Added on 2026-11-11, provisional: `import-snapshot` also reads the package
+of the draft specification (`mechanical-cad/docs/exporter-package.md`, draft
+2; `src/vault_cad_tools/package_import.py`), into a new directory or into a
+project that holds the files. It keeps the keys the project has, leaves a
+file untouched when its version, native hash, STEP bytes and exported record
+are what the project has, refuses a package that is behind the project, and
+reports what the project holds and the package does not. No exporter writes
+that package yet: the tests and the trial use packages written on Linux
+(`tests/exporter_package.py`). Tried that day on copies of the converted
+enclosure: a package of what the project holds leaves all 44 directories
+untouched; the same package with the 37 AP242 files of the Windows tests
+rewrites the 37 parts and no assembly, and the result, measured again,
+validates in `mechanical-cad` and flattens to the branch's scene apart from
+the STEP files. Who derives the overrides of flexible instances, the
+exporter or this command, is put to the Windows agent; the reader follows
+the draft (the exporter does) until it answers.
+
+Tests: 112 portable tests pass in the Guix environment (run 2026-11-11; 12 of
+them are new, for the package, in `tests/test_package_import.py`, 13 are for
+the index, in `tests/test_layout_project.py`, and 10 are for the earlier
+package). On Windows 87 passed under Pixi on 2026-11-11, from
+the commit before the index was added; the 25 newer ones have not been run
 there. On Windows the offline suites pass (run 2026-11-11: script hygiene over
 34 scripts with a 9-case self-test of the checks, 37 session mock cases, 3
 watchdog, 12 snapshot, 10 STEP unit, 11 receipt, 21 STEP header and entity
@@ -107,9 +125,9 @@ is accepted, this repository changes as follows:
   only writer of the project's `references/` tree apart from the facts command
   of `mechanical-cad`; keeps the exporter's run-level records unchanged under
   `references/receipts/`. `import-snapshot` does this for the present package
-  format, into an empty directory only: it does not yet import into a project
-  that already has keys, and it does not read a package keyed by master id,
-  because no exporter writes one.
+  format, into an empty directory only, and since 2026-11-11 for the package
+  keyed by master id, into a project that already has keys. No exporter
+  writes that package yet.
 - The lock: a derived index of the directories (design document 2.3 is
   replaced); the validator recomputes it.
 - The planned `metadata.json` (design 4.2, 4.3): replaced by a `source.json`
@@ -204,11 +222,15 @@ Directives:
    is not understood. Run read-only on the enclosure. Peter decided on
    2026-11-11 that files exported from Inventor are AP242, with two roots and
    readable keys (`mechanical-cad/docs/direction.md`, "Decided").
-2. Linux: make the import command read that package into an existing project,
-   keep existing keys, and refuse what the index says is newer in the
-   repository. When the enclosure's branch `layout-conversion` is merged, no
-   project is left in the earlier layout: then remove `import-step`, the
-   schema 1 lock and publishing from `step/`, with their tests.
+2. Linux: the import command reads that package into an existing project,
+   keeps existing keys and refuses a package that is behind the project
+   (built 2026-11-11 against packages written on Linux). When Windows
+   reports: correct the reader where the real package differs from the
+   draft, and import it into the enclosure's branch. Not built: removing what
+   a package no longer has. When the enclosure's branch `layout-conversion`
+   is merged, no project is left in the earlier layout: then remove
+   `import-step`, the schema 1 lock and publishing from `step/`, with their
+   tests.
 3. Compare the re-exported enclosure with the branch (`compare-scenes`, and
    `compare_step_exports.py` for the parts), then make AP242 and the new
    package the exporter's default.
@@ -224,7 +246,9 @@ Directives:
   `AW2725Q-nominal-envelope.step`. For Peter to settle before the next
   publication, with the wrapper-part naming question of the design document.
 - The index has two derivations, one here (`import-snapshot` for the
-  components, `Project.derive_publications` for the publications) and one in
+  components, in `layout_import.py` for the earlier package and in
+  `package_import.derive_components` for the new one, and
+  `Project.derive_publications` for the publications) and one in
   `mechanical-cad` (`derive_lock`, which the validator holds the file to). They
   agree on the fixture of the tests and on the converted enclosure. Nothing
   tests them against each other automatically.
