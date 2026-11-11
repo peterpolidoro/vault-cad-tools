@@ -153,13 +153,16 @@ Directives:
 
 ## Next work
 
-1. Peter: the protocol. Linux compared the AP214 and AP242 pairs of the
-   Windows layout tests in FreeCAD on 2026-11-10: two of the three parts are
-   the same geometry in both; for the part with hidden bodies FreeCAD reads the
-   AP242 file as four solids (37 306.4 mm³) and the AP214 file as one
-   (34 485.9 mm³). Recommended: AP214
-   (`mechanical-cad/docs/layout-proposal.md`, "Open choices").
-2. Linux, once the layout is accepted: run `import-snapshot` on a branch of
+1. Windows, when Peter starts it: three read-only AP242 tests asked for on
+   2026-11-11 (stability between sessions and what the saved-view block
+   depends on; the translator's options; all 37 parts as AP242). Peter decided
+   that day that files exported from Inventor are AP242, with two roots and
+   readable keys (`mechanical-cad/docs/direction.md`, "Decided"). The
+   exporter's default is still AP214 and changes with the package (step 3).
+   For the part with hidden bodies FreeCAD reads the AP242 file as four solids
+   (37 306.4 mm³) and the AP214 file as one (34 485.9 mm³); `mechanical-cad`
+   now leaves the bodies marked invisible out when it measures and flattens.
+2. Linux, on Peter's word: run `import-snapshot` on a branch of
    the enclosure (the rest of that conversion is in the enclosure's plan);
    specify the exporter's package in `mechanical-cad` and make the import
    command read it, keep existing keys, and refuse what the lock says is newer
