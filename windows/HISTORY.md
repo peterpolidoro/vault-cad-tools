@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-10
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-11
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,41 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — three read-only AP242 tests (2026-11-11)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-11-windows-ap242-tests-01/` (report `REPORT.md`,
+which records the commits it ran from). Requested by
+`to-windows/20261111T145426Z-linux-ap242-decided-three-read-only-tests.md` after Peter chose AP242
+for files exported from Inventor. No Vault write, check-out or check-in; no document saved; every
+opened mirror file re-hashed and unchanged. The exporter's default protocol was not changed.
+
+- Stability: AP242 exports made without a view have byte-identical data sections. Compared per
+  part: the file of 2026-11-10, three sessions of 2026-11-11 (each its own Inventor instance, the
+  part opened by itself and reached through the assembly), the no-view exports of the view run and
+  the snapshot exporter's own AP242 file: ten exports for the top panel and the corner cube, eight
+  for the shoulder screw.
+- The saved view: the snapshot exporter runs with no view (the root opened invisibly has none, and
+  none of its 43 referenced documents has one). Without a view the block is a fixed default camera,
+  a 20 mm square window looking along -Z, written in the file's length unit; it is the same in all
+  37 files of a unit. A document opened visibly has one view, and the file then carries that view's
+  camera: rotating and zooming it changes `VIEW_VOLUME`, `PLANAR_BOX` and the two directions and two
+  points that place the camera, and nothing else (same instances, every difference inside what
+  `CAMERA_MODEL_D3` reaches, none referenced from outside). With the same camera two separate
+  instances write identical files. Changing the camera does not mark the document dirty.
+- Options: the translator reports eight (`IncludeSketches`, `ApplicationProtocolType`, `Author`,
+  `Organization`, `Authorization`, `Description`, `export_fit_tolerance`, `ExportUCS`). None leaves
+  out the hidden bodies or the saved view: with `ExportUCS` false, `IncludeSketches` true or a
+  fit tolerance of 0.01 the corner cube's data section is byte-identical to the exporter's settings
+  (4 `MANIFOLD_SOLID_BREP`, 1 `INVISIBILITY`, 1 `CAMERA_MODEL_D3`).
+- All 37 parts as AP242 through `Export-PartAssets.ps1 -ApplicationProtocolType 5` with strict
+  binding (44 of 44 documents), then header-normalised: every file has one `CAMERA_MODEL_D3`; one
+  file has an `INVISIBILITY` (the corner cube, three hidden solids, in the form `mechanical-cad`
+  understands; its own module agrees on all 37 files). Solid instances equal Inventor's solid body
+  counts in every file once `BREP_WITH_VOIDS` is counted (one framing part has a solid with a void).
+- Suites: hygiene over 34 scripts with a 9-case self-test, 37 session mock cases, 3 watchdog, 12
+  snapshot, 10 STEP unit, 11 receipt, 21 STEP header and entity cases, 7 Vault facts and 8 folder
+  discovery cases; 87 Python tests under Pixi.
 
 ## Result — five read-only tests for the layout proposal (2026-11-10)
 

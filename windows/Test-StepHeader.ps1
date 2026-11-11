@@ -106,6 +106,82 @@ try {
         $after = $latin1.GetString([IO.File]::ReadAllBytes($out))
         Assert ($after.EndsWith($dataSection) -and $after.Substring($after.Length - $dataSection.Length) -eq $dataSection) "data section text differs"
     }
+    # ---- data-section entities ----
+    $head = "ISO-10303-21;`nHEADER;`nFILE_DESCRIPTION((''),'2;1');`nFILE_NAME('a.step','t',(''),(''),'p','o','');`nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));`nENDSEC;`n"
+    function New-Data([string]$name, [string[]]$lines) { New-Step $name ($head + "DATA;`n" + ($lines -join "`n") + "`nENDSEC;`nEND-ISO-10303-21;`n") }
+    $hiddenBodies = New-Data "hidden.step" @(
+        "#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#11=MANIFOLD_SOLID_BREP('Solid2',#101);", "#12=MANIFOLD_SOLID_BREP('Solid3',#102);", "#13=MANIFOLD_SOLID_BREP('Solid4',#103);",
+        "#20=STYLED_ITEM('',(#30),#11);", "#21=STYLED_ITEM('',(#30),#12);", "#22=OVER_RIDING_STYLED_ITEM('',(#30),#13,#20);", "#23=STYLED_ITEM('',(#30),#10);",
+        "#40=INVISIBILITY((#20,#21));", "#41=CAMERA_MODEL_D3('',#200,#201);",
+        "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#11,#12,`n   #13,#60),#70);", "#51=DESCRIPTIVE_REPRESENTATION_ITEM('note','MANIFOLD_SOLID_BREP(not an entity); #11');",
+        "#52=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#80)) REPRESENTATION_CONTEXT('a;b','3D'));")
+    Case "H12 entity counts: only instances are counted, not a type name inside a string" {
+        $counts = Get-StepEntityCounts -Path $hiddenBodies
+        Assert ($counts["MANIFOLD_SOLID_BREP"] -eq 4 -and $counts["INVISIBILITY"] -eq 1 -and $counts["CAMERA_MODEL_D3"] -eq 1) "counts: $($counts | ConvertTo-Json -Compress)"
+        $more = Get-StepEntityCounts -Path $hiddenBodies -Type "STYLED_ITEM", "VIEW_VOLUME"
+        Assert ($more["STYLED_ITEM"] -eq 3 -and $more["VIEW_VOLUME"] -eq 0) "other counts: $($more | ConvertTo-Json -Compress)"
+    }
+    Case "H13 entities: a wrapped list, a string with a semicolon and a complex instance are each one instance" {
+        $entities = Get-StepEntities -Path $hiddenBodies
+        Assert ($entities.get_Count() -eq 13) "instances: $($entities.get_Count())"
+        Assert ($entities.get_Item(50).Type -eq "ADVANCED_BREP_SHAPE_REPRESENTATION" -and $entities.get_Item(50).Body -eq "('',(#10,#11,#12, #13,#60),#70)") "wrapped: $($entities.get_Item(50).Body)"
+        Assert ($entities.get_Item(52).Type -eq "" -and $entities.get_Item(52).Body.Contains("REPRESENTATION_CONTEXT('a;b','3D')")) "complex: $($entities.get_Item(52) | ConvertTo-Json -Compress)"
+        Assert ($entities.get_Item(51).Body.EndsWith("#11')")) "string with a semicolon: $($entities.get_Item(51).Body)"
+    }
+    Case "H14 invisibility in the understood form: styled items of bodies that are listed in a representation" {
+        $found = Get-StepInvisibility -Path $hiddenBodies
+        Assert ($found.invisibility_entities -eq 1 -and $found.form_understood -and @($found.problems).Count -eq 0) "result: $($found | ConvertTo-Json -Compress -Depth 5)"
+        Assert (@($found.hidden_items).Count -eq 2 -and (@($found.hidden_items | ForEach-Object { $_.item }) -join ',') -eq "11,12" -and $found.hidden_items[0].item_type -eq "MANIFOLD_SOLID_BREP" -and $found.hidden_items[0].representations[0] -eq "#50 ADVANCED_BREP_SHAPE_REPRESENTATION") "items: $($found.hidden_items | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H15 invisibility that hides something other than a styled item is not the understood form" {
+        $direct = New-Data "direct.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#40=INVISIBILITY((#10));", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10),#70);")
+        $found = Get-StepInvisibility -Path $direct
+        Assert (-not $found.form_understood -and (@($found.problems) -join ';') -match 'not a STYLED_ITEM \(MANIFOLD_SOLID_BREP\)') "result: $($found | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H16 an invisible item used outside a representation's item list, or in none, is not the understood form" {
+        $elsewhere = New-Data "elsewhere.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#11=MANIFOLD_SOLID_BREP('Solid2',#101);", "#20=STYLED_ITEM('',(#30),#10);", "#21=STYLED_ITEM('',(#30),#11);", "#40=INVISIBILITY((#20,#21));",
+            "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10),#70);", "#60=SHAPE_ASPECT_RELATIONSHIP('','',#10,#99);")
+        $found = Get-StepInvisibility -Path $elsewhere
+        $text = @($found.problems) -join ';'
+        Assert (-not $found.form_understood -and $text -match '#10 is marked invisible and is used by #60 \(SHAPE_ASPECT_RELATIONSHIP\)' -and $text -match '#11 is marked invisible but is not an item of any representation') "problems: $text"
+    }
+    Case "H17 a file without INVISIBILITY marks nothing" {
+        $plain = New-Data "plain.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10),#70);")
+        $found = Get-StepInvisibility -Path $plain
+        Assert ($found.invisibility_entities -eq 0 -and $found.form_understood -and @($found.hidden_items).Count -eq 0) "result: $($found | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H18 entity difference: a changed value, a changed type and an instance present in one file only" {
+        $one = New-Data "one.step" @("#1=CARTESIAN_POINT('',(0.,0.,0.));", "#2=DIRECTION('',(0.,0.,1.));", "#3=VIEW_VOLUME(.PARALLEL.,#1,10.,5.,.F.,20.,.F.,.T.,#9);", "#4=PLANAR_BOX('',2.,3.,#8);")
+        $two = New-Data "two.step" @("#1=CARTESIAN_POINT('',(1.5,0.,0.));", "#2=DIRECTION('',(0.,0.,1.));", "#3=VIEW_VOLUME(.PARALLEL.,#1,10.,5.,.F.,20.,.F.,.T.,#9);", "#4=PLANAR_EXTENT('',2.,3.);", "#5=VECTOR('',#2,1.);")
+        $difference = Compare-StepEntities -FirstPath $one -OtherPath $two
+        Assert ($difference.changed_count -eq 2 -and $difference.only_in_other_count -eq 1 -and $difference.only_in_first_count -eq 0 -and $difference.listing_complete) "counts: $($difference | ConvertTo-Json -Compress -Depth 5)"
+        Assert ($difference.changed[0].id -eq 1 -and $difference.changed[0].first -eq "('',(0.,0.,0.))" -and $difference.changed[0].other -eq "('',(1.5,0.,0.))" -and $difference.changed[1].first_type -eq "PLANAR_BOX" -and $difference.changed[1].other_type -eq "PLANAR_EXTENT") "changed: $($difference.changed | ConvertTo-Json -Compress -Depth 5)"
+        Assert ($difference.only_in_other[0].type -eq "VECTOR" -and $difference.changed_by_type["CARTESIAN_POINT"] -eq 1 -and $difference.changed_by_type["PLANAR_BOX -> PLANAR_EXTENT"] -eq 1) "by type: $($difference.changed_by_type | ConvertTo-Json -Compress)"
+    }
+    # A part with a saved view: the camera #19 owns its placement #379 (points #561, directions #472, #473), its
+    # VIEW_VOLUME #20 (projection point #563) and the PLANAR_BOX #21 (placement #380, point #562). #600 is geometry.
+    function New-ViewFile([string]$name, [string]$eye, [string]$window, [string]$geometry, [string]$extra) {
+        New-Data $name @("#16=DRAUGHTING_MODEL('',(#11,#19),#568);", "#19=CAMERA_MODEL_D3('',#379,#20);", "#20=VIEW_VOLUME(.PARALLEL.,#563,1.,0.,.F.,0.,.F.,.F.,#21);", "#21=PLANAR_BOX('view window',$window,#380);",
+            "#379=AXIS2_PLACEMENT_3D('',#561,#472,#473);", "#380=AXIS2_PLACEMENT_2D('',#562,#473);", "#472=DIRECTION('center_axis',(0.,0.,-1.));", "#473=DIRECTION('ref_axis',(-1.,0.,0.));",
+            "#561=CARTESIAN_POINT('Origin',($eye));", "#562=CARTESIAN_POINT('Origin',(-1.,-1.));", "#563=CARTESIAN_POINT('',(0.,0.,0.));", "#600=CARTESIAN_POINT('',($geometry));", "#601=VERTEX_POINT('',#600);$extra")
+    }
+    Case "H19 reference closure: everything the camera reaches, and nothing else" {
+        $entities = Get-StepEntities -Path (New-ViewFile "closure.step" "0.,0.,5." "2.,2." "1.,2.,3." "")
+        $closure = Get-StepReferenceClosure -Entities $entities -Root 19
+        Assert ((@($closure | Sort-Object) -join ',') -eq "19,20,21,379,380,472,473,561,562,563") "closure: $(@($closure | Sort-Object) -join ',')"
+    }
+    Case "H20 two exports that differ in the camera only are confined to the view block" {
+        $verdict = Test-StepViewBlockConfinement -FirstPath (New-ViewFile "view-a.step" "0.,0.,5." "2.,2." "1.,2.,3." "") -OtherPath (New-ViewFile "view-b.step" "3.,4.,5." "9.,7." "1.,2.,3." "")
+        Assert ($verdict.confined_to_view_block -and $verdict.changed_count -eq 2 -and @($verdict.outside_view_block).Count -eq 0 -and $verdict.view_block.first.entities -eq 10) "verdict: $($verdict | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H21 a difference in geometry, an extra instance, or a changed point that geometry also uses is NOT confined" {
+        $geometry = Test-StepViewBlockConfinement -FirstPath (New-ViewFile "geo-a.step" "0.,0.,5." "2.,2." "1.,2.,3." "") -OtherPath (New-ViewFile "geo-b.step" "0.,0.,5." "2.,2." "1.,2.,3.5" "")
+        Assert (-not $geometry.confined_to_view_block -and (@($geometry.outside_view_block) -join ',') -eq "600") "geometry: $($geometry | ConvertTo-Json -Compress -Depth 5)"
+        $extra = Test-StepViewBlockConfinement -FirstPath (New-ViewFile "extra-a.step" "0.,0.,5." "2.,2." "1.,2.,3." "") -OtherPath (New-ViewFile "extra-b.step" "3.,4.,5." "2.,2." "1.,2.,3." "`n#700=VECTOR('',#472,1.);")
+        Assert (-not $extra.confined_to_view_block -and $extra.only_in_other_count -eq 1) "extra instance: $($extra | ConvertTo-Json -Compress -Depth 5)"
+        $shared = Test-StepViewBlockConfinement -FirstPath (New-ViewFile "shared-a.step" "0.,0.,5." "2.,2." "1.,2.,3." "`n#700=VERTEX_POINT('',#561);") -OtherPath (New-ViewFile "shared-b.step" "3.,4.,5." "2.,2." "1.,2.,3." "`n#700=VERTEX_POINT('',#561);")
+        Assert (-not $shared.confined_to_view_block -and (@($shared.referenced_from_outside) -join ';') -match '#700 VERTEX_POINT -> #561') "shared point: $($shared | ConvertTo-Json -Compress -Depth 5)"
+    }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
 Write-Output "$passed passed, $failed failed"

@@ -23,6 +23,16 @@ This is a port of mechanical-cad/mechanical_cad/stepfile.py (sections, data_sha2
 the same statement scanner (semicolons inside strings and comments do not end a statement; '' is an escaped
 quote), the same definition of the data section, and the same replacement text, so both sides produce identical
 bytes from the same input. Bytes are handled as ISO 8859-1 text so that a character index is a byte offset.
+
+Data-section helpers (text level, no kernel):
+  Get-StepEntityCounts -Path FILE [-Type NAME,...]   how many instances of each entity type (default
+                                                      MANIFOLD_SOLID_BREP, INVISIBILITY, CAMERA_MODEL_D3)
+  Get-StepEntities -Path FILE                         every instance: id -> Type and Body
+  Get-StepInvisibility -Path FILE                     what the file marks invisible and whether the mark has the
+                                                      one form mechanical-cad's visible_only understands
+  Compare-StepEntities -FirstPath A -OtherPath B      instances (matched by id) that differ or exist in one file
+  Get-StepReferenceClosure, Test-StepViewBlockConfinement   is a difference between two exports confined to the
+                                                      saved view (everything reachable from CAMERA_MODEL_D3)?
 Offline tests: Test-StepHeader.ps1.
 #>
 $StepLatin1 = [Text.Encoding]::GetEncoding(28591)
@@ -232,4 +242,161 @@ function Set-StepFileHeader {
     [pscustomobject]@{ input = $Path; output = $OutPath; input_sha256 = $inputHash; output_sha256 = $outputHash; data_sha256 = $after; data_sha256_unchanged = $true
         input_bytes = $bytes.Length; output_bytes = $result.Length; replaced_statement = $text.Substring($start, $end - $start); new_statement = $statement
         bytes_before_statement_unchanged = $true; bytes_after_statement_unchanged = $true; changed = ($inputHash -ne $outputHash) }
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Data-section entities, read as text (no kernel). An entity instance is "#id = TYPE(...);" or, for a complex
+# instance, "#id = (A(...) B(...));"; semicolons inside strings do not end it.
+# ---------------------------------------------------------------------------------------------------------
+$StepEntityPattern = "#(\d+)\s*=\s*([A-Z0-9_]*)\s*((?:[^';]+|'(?:[^']|'')*')*);"
+
+function Get-StepDataText {
+    # The data section of a file as ISO 8859-1 text, from the DATA keyword to the end of the file.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { throw "STEP file not found: $Path" }
+    $text = $StepLatin1.GetString([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path).Path))
+    $sections = Get-StepSections $text
+    return $text.Substring($sections.DataStart)
+}
+
+function Get-StepEntityCounts {
+    # How many instances of each named entity type the data section holds (simple instances only).
+    param([Parameter(Mandatory = $true)][string]$Path, [string[]]$Type = @("MANIFOLD_SOLID_BREP", "INVISIBILITY", "CAMERA_MODEL_D3"))
+    $data = Get-StepDataText -Path $Path
+    $counts = [ordered]@{}
+    foreach ($name in $Type) { $counts[$name] = [regex]::Matches($data, "#\d+\s*=\s*" + [regex]::Escape($name) + "\s*\(").Count }
+    return $counts
+}
+
+function Get-StepEntities {
+    <# Every entity instance of the data section in a dictionary keyed by its id: Id, Type ('' for a complex
+       instance) and Body (the text after the type up to the closing ';', white space collapsed). #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $data = Get-StepDataText -Path $Path
+    $entities = New-Object 'System.Collections.Generic.Dictionary[int,object]'
+    foreach ($match in [regex]::Matches($data, $StepEntityPattern)) {
+        $id = [int]$match.Groups[1].Value
+        if (-not $entities.ContainsKey($id)) { $entities.Add($id, [pscustomobject]@{ Id = $id; Type = $match.Groups[2].Value; Body = ($match.Groups[3].Value -replace '\s+', ' ').Trim() }) }
+    }
+    return $entities
+}
+
+function Get-StepInvisibility {
+    <# What a file marks invisible, and whether the mark has the one form mechanical-cad understands
+       (mechanical_cad/stepfile.py, visible_only): an INVISIBILITY whose members are STYLED_ITEMs (or
+       OVER_RIDING_STYLED_ITEMs), each styling an item that is used, apart from its styled items, only in the
+       item list of representations, and is in at least one. Anything else is listed under problems. #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $result = [ordered]@{ invisibility_entities = 0; hidden_items = @(); form_understood = $true; problems = @() }
+    $data = Get-StepDataText -Path $Path
+    if (-not $data.Contains("INVISIBILITY")) { return $result }
+    $entities = Get-StepEntities -Path $Path
+    $styled = @("STYLED_ITEM", "OVER_RIDING_STYLED_ITEM")
+    $hidden = @{}; $problems = @(); $count = 0
+    foreach ($entity in $entities.get_Values()) {
+        if ($entity.Type -ne "INVISIBILITY") { continue }
+        $count++
+        $inner = [regex]::Match($entity.Body, '^\(\s*\(([^()]*)\)\s*\)$')
+        if (-not $inner.Success) { $problems += "#$($entity.Id) INVISIBILITY does not have one list of members"; continue }
+        foreach ($reference in [regex]::Matches($inner.Groups[1].Value, '#(\d+)')) {
+            $member = $null; [void]$entities.TryGetValue([int]$reference.Groups[1].Value, [ref]$member)
+            if ($null -eq $member -or $styled -notcontains $member.Type) { $problems += "#$($entity.Id) INVISIBILITY hides #$($reference.Groups[1].Value), which is not a STYLED_ITEM ($(if ($member) { $member.Type } else { 'missing' }))"; continue }
+            $item = [regex]::Match($member.Body, '#(\d+)\s*\)$')
+            if (-not $item.Success) { $problems += "#$($member.Id) $($member.Type) does not name the item it styles"; continue }
+            $hidden[[int]$item.Groups[1].Value] = [ordered]@{ invisibility = $entity.Id; styled_item = $member.Id; styled_item_type = $member.Type; representations = @() }
+        }
+    }
+    $result.invisibility_entities = $count
+    if ($hidden.Count -gt 0) {
+        foreach ($entity in $entities.get_Values()) {
+            if ($entity.Type -eq "INVISIBILITY" -or $styled -contains $entity.Type) { continue }
+            if (-not $entity.Body.Contains("#")) { continue }
+            $bare = [regex]::Replace($entity.Body, "'(?:[^']|'')*'", "''")   # a "#12" inside a string is not a reference
+            $used = @([regex]::Matches($bare, '#(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) })
+            if ($used.Count -eq 0) { continue }
+            $typeName = $(if ($entity.Type) { $entity.Type } else { "a complex instance" })
+            $items = [regex]::Match($bare, "^\(\s*''\s*,\s*\(([^()]*)\)")
+            if (-not $entity.Type.EndsWith("REPRESENTATION") -or -not $items.Success) { $problems += "#$($used[0]) is marked invisible and is used by #$($entity.Id) ($typeName); only items listed directly in a representation can be left out"; continue }
+            $listed = @([regex]::Matches($items.Groups[1].Value, '#(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) })
+            if ($listed.Count -ne $used.Count) { $problems += "#$($entity.Id) $typeName uses an invisible item outside its list of items" }
+            foreach ($itemId in ($listed | Sort-Object -Unique)) { $hidden[$itemId].representations += "#$($entity.Id) $typeName" }
+        }
+        foreach ($itemId in ($hidden.Keys | Sort-Object)) {
+            $itemEntity = $null; [void]$entities.TryGetValue([int]$itemId, [ref]$itemEntity)
+            if (@($hidden[$itemId].representations).Count -eq 0) { $problems += "#$itemId is marked invisible but is not an item of any representation" }
+            $result.hidden_items += [ordered]@{ item = [int]$itemId; item_type = $(if ($itemEntity) { $itemEntity.Type } else { $null }); styled_item = $hidden[$itemId].styled_item; styled_item_type = $hidden[$itemId].styled_item_type
+                invisibility = $hidden[$itemId].invisibility; representations = @($hidden[$itemId].representations) }
+        }
+    }
+    $result.problems = $problems; $result.form_understood = ($problems.Count -eq 0)
+    return $result
+}
+
+function Get-StepReferenceClosure {
+    # The ids reachable from the given roots by following #n references (a "#n" inside a string is not one).
+    param([Parameter(Mandatory = $true)]$Entities, [Parameter(Mandatory = $true)][int[]]$Root)
+    $seen = New-Object 'System.Collections.Generic.HashSet[int]'; $queue = New-Object System.Collections.Queue
+    foreach ($start in $Root) { if ($seen.Add($start)) { $queue.Enqueue($start) } }
+    while ($queue.Count -gt 0) {
+        $entity = $null
+        if (-not $Entities.TryGetValue([int]$queue.Dequeue(), [ref]$entity)) { continue }
+        $bare = [regex]::Replace($entity.Body, "'(?:[^']|'')*'", "''")
+        foreach ($reference in [regex]::Matches($bare, '#(\d+)')) { $next = [int]$reference.Groups[1].Value; if ($seen.Add($next)) { $queue.Enqueue($next) } }
+    }
+    return ,$seen
+}
+
+function Test-StepViewBlockConfinement {
+    <# Do two exports of one part differ ONLY in the saved view? The view block is everything reachable from the
+       CAMERA_MODEL_D3 instances (the camera's placement, its VIEW_VOLUME and the PLANAR_BOX of the view window).
+       Confined means: both files have the same instances; every instance whose text differs lies in the view block
+       of both files; and no instance outside the view block refers to a differing one. #>
+    param([Parameter(Mandatory = $true)][string]$FirstPath, [Parameter(Mandatory = $true)][string]$OtherPath, [int]$MaxListed = 200)
+    $difference = Compare-StepEntities -FirstPath $FirstPath -OtherPath $OtherPath -MaxListed 1000000
+    $result = [ordered]@{ changed_count = $difference.changed_count; only_in_first_count = $difference.only_in_first_count; only_in_other_count = $difference.only_in_other_count; changed_by_type = $difference.changed_by_type
+        view_block = $null; outside_view_block = @(); referenced_from_outside = @(); confined_to_view_block = $false; changed = @($difference.changed | Select-Object -First $MaxListed) }
+    $changedIds = @($difference.changed | ForEach-Object { [int]$_.id })
+    $blocks = @()
+    foreach ($path in @($FirstPath, $OtherPath)) {
+        $entities = Get-StepEntities -Path $path
+        $cameras = @($entities.get_Values() | Where-Object { $_.Type -eq "CAMERA_MODEL_D3" } | ForEach-Object { [int]$_.Id })
+        $closure = $(if ($cameras.Count) { Get-StepReferenceClosure -Entities $entities -Root $cameras } else { New-Object 'System.Collections.Generic.HashSet[int]' })
+        $outside = @($changedIds | Where-Object { -not $closure.Contains($_) })
+        $referrers = @()
+        if ($changedIds.Count) {
+            $wanted = New-Object 'System.Collections.Generic.HashSet[int]'; foreach ($id in $changedIds) { [void]$wanted.Add($id) }
+            foreach ($entity in $entities.get_Values()) {
+                if ($closure.Contains([int]$entity.Id) -or -not $entity.Body.Contains("#")) { continue }
+                $bare = [regex]::Replace($entity.Body, "'(?:[^']|'')*'", "''")
+                foreach ($reference in [regex]::Matches($bare, '#(\d+)')) { if ($wanted.Contains([int]$reference.Groups[1].Value)) { $referrers += "#$($entity.Id) $($entity.Type) -> #$($reference.Groups[1].Value)" } }
+            }
+        }
+        $types = [ordered]@{}; foreach ($id in ($closure | Sort-Object)) { $member = $null; if ($entities.TryGetValue([int]$id, [ref]$member)) { $types[$member.Type] = 1 + [int]$types[$member.Type] } }
+        $blocks += [ordered]@{ cameras = $cameras; entities = $closure.get_Count(); entity_types = $types; changed_outside = $outside; changed_referenced_from_outside = $referrers }
+    }
+    $result.view_block = [ordered]@{ first = $blocks[0]; other = $blocks[1] }
+    $result.outside_view_block = @(@($blocks[0].changed_outside) + @($blocks[1].changed_outside) | Sort-Object -Unique)
+    $result.referenced_from_outside = @(@($blocks[0].changed_referenced_from_outside) + @($blocks[1].changed_referenced_from_outside) | Sort-Object -Unique)
+    $result.confined_to_view_block = ($difference.only_in_first_count -eq 0 -and $difference.only_in_other_count -eq 0 -and $result.outside_view_block.Count -eq 0 -and $result.referenced_from_outside.Count -eq 0 -and @($blocks[0].cameras).Count -gt 0 -and @($blocks[1].cameras).Count -gt 0)
+    return $result
+}
+
+function Compare-StepEntities {
+    <# Entity-level difference of two data sections, matched by entity id: instances whose type or text differs,
+       and instances present in only one file. Lists at most -MaxListed of each, with the full counts. #>
+    param([Parameter(Mandatory = $true)][string]$FirstPath, [Parameter(Mandatory = $true)][string]$OtherPath, [int]$MaxListed = 200)
+    $first = Get-StepEntities -Path $FirstPath; $other = Get-StepEntities -Path $OtherPath
+    $changed = New-Object System.Collections.ArrayList; $onlyFirst = New-Object System.Collections.ArrayList; $onlyOther = New-Object System.Collections.ArrayList
+    foreach ($id in $first.get_Keys()) {
+        $left = $first.get_Item($id); $right = $null
+        if ($other.TryGetValue($id, [ref]$right)) { if ($left.Type -cne $right.Type -or $left.Body -cne $right.Body) { [void]$changed.Add([ordered]@{ id = $id; first_type = $left.Type; other_type = $right.Type; first = $left.Body; other = $right.Body }) } }
+        else { [void]$onlyFirst.Add([ordered]@{ id = $id; type = $left.Type; text = $left.Body }) }
+    }
+    foreach ($id in $other.get_Keys()) { if (-not $first.ContainsKey($id)) { $right = $other.get_Item($id); [void]$onlyOther.Add([ordered]@{ id = $id; type = $right.Type; text = $right.Body }) } }
+    $byType = [ordered]@{}
+    foreach ($group in (@($changed) | Group-Object { "$($_.first_type)$(if ($_.first_type -cne $_.other_type) { ' -> ' + $_.other_type })" } | Sort-Object Count -Descending)) { $byType[$group.Name] = $group.Count }
+    [ordered]@{ entities_first = $first.get_Count(); entities_other = $other.get_Count(); changed_count = $changed.Count; only_in_first_count = $onlyFirst.Count; only_in_other_count = $onlyOther.Count
+        changed_by_type = $byType; changed = @($changed | Sort-Object { $_.id } | Select-Object -First $MaxListed)
+        only_in_first = @($onlyFirst | Sort-Object { $_.id } | Select-Object -First $MaxListed); only_in_other = @($onlyOther | Sort-Object { $_.id } | Select-Object -First $MaxListed)
+        listing_complete = ($changed.Count -le $MaxListed -and $onlyFirst.Count -le $MaxListed -and $onlyOther.Count -le $MaxListed) }
 }

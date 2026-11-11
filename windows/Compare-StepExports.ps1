@@ -1,23 +1,33 @@
 <#
 .SYNOPSIS
 Compare several STEP exports of the same part as text: are the data sections identical, which header lines
-differ, and do the files become byte-identical once their headers are normalised? Offline; no CAD kernel.
+differ, which entities differ, and do the files become byte-identical once their headers are normalised?
+Offline; no CAD kernel.
 
 .DESCRIPTION
     & .\windows\Compare-StepExports.ps1 -Path A.step,B.step,C.step -Label today-1,today-2,october -OutputPath NEW.json
+    & .\windows\Compare-StepExports.ps1 -Path A.step,B.step -ListDifferingEntities -AllowDifferences
 
 For every file: size, SHA-256, the data-section SHA-256 (from the DATA keyword to the end of the file) and the
 header fields. Every later file is compared with the first: whether the data sections are identical and which
 header lines differ (line by line; both texts are listed). Each file is also normalised into a temporary
 directory with Set-StepFileHeader (name part.step, time stamp 1970-01-01T00:00:00, empty author, organization
 and authorisation), and the hashes of the normalised files are compared. Nothing is written beside the inputs.
+
+-ListDifferingEntities adds, for every pair whose data sections differ, the entity instances (matched by id)
+whose type or text differs and those present in only one file, with their types and texts (at most -MaxListed
+of each; the counts are complete), and a count of the changed instances per entity type.
+
 The result goes to -OutputPath (refused if it exists) and to the pipeline. Exit code 1 when the data sections
-differ.
+differ, unless -AllowDifferences is given (for a comparison that is expected to find some).
 #>
 param(
     [Parameter(Mandatory = $true)][string[]]$Path,
     [string[]]$Label,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [switch]$ListDifferingEntities,
+    [int]$MaxListed = 200,
+    [switch]$AllowDifferences
 )
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Step-Header.ps1")
@@ -44,15 +54,17 @@ try {
             $left = $(if ($line -lt $first.header_lines.Count) { $first.header_lines[$line] } else { $null }); $right = $(if ($line -lt $other.header_lines.Count) { $other.header_lines[$line] } else { $null })
             if ($left -cne $right) { $differing += [ordered]@{ line = $line + 1; first = $left; other = $right } }
         }
-        $pairs += [ordered]@{ first = $first.label; other = $other.label; data_sections_identical = ($first.data_sha256 -eq $other.data_sha256); files_identical = ($first.sha256 -eq $other.sha256)
-            normalised_files_identical = ($first.normalised_sha256 -eq $other.normalised_sha256); differing_header_lines = $differing }
+        $pair = [ordered]@{ first = $first.label; other = $other.label; data_sections_identical = ($first.data_sha256 -eq $other.data_sha256); files_identical = ($first.sha256 -eq $other.sha256)
+            normalised_files_identical = ($first.normalised_sha256 -eq $other.normalised_sha256); differing_header_lines = $differing; differing_entities = $null }
+        if ($ListDifferingEntities -and -not $pair.data_sections_identical) { $pair.differing_entities = Compare-StepEntities -FirstPath $first.path -OtherPath $other.path -MaxListed $MaxListed }
+        $pairs += $pair
     }
-    $result = [ordered]@{ schema_version = 1; generated_at = [DateTime]::UtcNow.ToString("o"); files = @($files | ForEach-Object { [ordered]@{ label = $_.label; path = $_.path; bytes = $_.bytes; sha256 = $_.sha256; data_sha256 = $_.data_sha256; data_offset = $_.data_offset
+    $result = [ordered]@{ schema_version = 2; generated_at = [DateTime]::UtcNow.ToString("o"); files = @($files | ForEach-Object { [ordered]@{ label = $_.label; path = $_.path; bytes = $_.bytes; sha256 = $_.sha256; data_sha256 = $_.data_sha256; data_offset = $_.data_offset
                 data_bytes = $_.data_bytes; header = $_.header; normalised_sha256 = $_.normalised_sha256; normalised_bytes = $_.normalised_bytes } })
         distinct_data_sha256 = @($files | ForEach-Object { $_.data_sha256 } | Sort-Object -Unique).Count; data_sections_identical = (@($files | ForEach-Object { $_.data_sha256 } | Sort-Object -Unique).Count -eq 1)
         distinct_normalised_sha256 = @($files | ForEach-Object { $_.normalised_sha256 } | Sort-Object -Unique).Count; normalised_files_identical = (@($files | ForEach-Object { $_.normalised_sha256 } | Sort-Object -Unique).Count -eq 1)
         differing_header_line_numbers = @($pairs | ForEach-Object { $_.differing_header_lines | ForEach-Object { $_.line } } | Sort-Object -Unique); pairs = $pairs }
-    if ($OutputPath) { ConvertTo-Json -InputObject $result -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding UTF8 }
+    if ($OutputPath) { ConvertTo-Json -InputObject $result -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding UTF8 }
     $result
-    if (-not $result.data_sections_identical) { exit 1 }
+    if (-not $result.data_sections_identical -and -not $AllowDifferences) { exit 1 }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }

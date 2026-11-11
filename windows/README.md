@@ -81,6 +81,16 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   from the output file name, and has no option for the time stamp. A fixed
   header is written afterwards with `Set-StepFileHeader` (`Step-Header.ps1`),
   which changes the `FILE_NAME` statement only.
+- An AP242 export carries a saved view (`CAMERA_MODEL_D3` and what it reaches).
+  A document opened without a view gets a fixed default camera, so the file is
+  the same in every session; a document that has a view gets that view's
+  camera, and the file changes with it. `Export-PartAssets.ps1` opens the root
+  invisibly and no document has a view. Keep it so: never export for the
+  repository from a document opened visibly.
+- AP242 also writes the bodies that are hidden in the part, marked by an
+  `INVISIBILITY` entity; no translator option leaves them or the saved view
+  out. A solid with an internal void is a `BREP_WITH_VOIDS`, not a
+  `MANIFOLD_SOLID_BREP`: count both when counting solids.
 - In PowerShell the comma binds tighter than arithmetic: write
   `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
   is case-insensitive and its dot access returns the value of a key named

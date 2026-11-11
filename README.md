@@ -257,8 +257,10 @@ Measurement and native authoring (added for the command-line pilot):
     parameter only by case, functions shadowed by built-ins, one variable spelled
     with different casing in the same scope; every run first proves these checks on
     nine built-in snippets and fails if they cannot find their own target),
-    `Test-StepHeader.ps1` (11 cases on synthetic STEP text: header fields, the
-    data-section hash, the normalised header, refusals), `Get-VaultFileFacts.ps1
+    `Test-StepHeader.ps1` (21 cases on synthetic STEP text: header fields, the
+    data-section hash, the normalised header, refusals; entity counts, the form of
+    an INVISIBILITY mark, entity differences and whether a difference is confined
+    to the saved view), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
@@ -336,16 +338,26 @@ Measurement and native authoring (added for the command-line pilot):
     `1970-01-01T00:00:00`, empty author, organization and authorisation), refuses to
     overwrite and proves on every call that the data-section hash is unchanged. It is a
     port of `mechanical-cad/mechanical_cad/stepfile.py` and gives the same bytes (49 real
-    files compared on 2026-11-10).
-20. `Invoke-StepExportProbe.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW [-Variant @{label; protocol; options; properties; output_name},...] [-WorkOnCopies]`
+    files compared on 2026-11-10). It also reads the data section as text:
+    `Get-StepEntityCounts` (instances per entity type), `Get-StepEntities`,
+    `Get-StepInvisibility` (what a file marks invisible, and whether the mark has the one
+    form `mechanical-cad` understands), `Compare-StepEntities` (instances that differ
+    between two files) and `Test-StepViewBlockConfinement` (whether two exports differ
+    only in the saved view, that is in what `CAMERA_MODEL_D3` reaches).
+20. `Invoke-StepExportProbe.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW [-Variant @{label; protocol; open; camera; options; properties; output_name},...] [-ViaAssembly REL -Inventory dependency-inventory.json] [-WorkOnCopies]`
     exports parts in ONE owned Inventor instance per call, in named variants (application
     protocol, translator options, iProperties changed in memory only and only on copies),
     with every part bound to its acquired hash first and re-hashed afterwards; the receipt
-    holds size, both hashes, schema, header fields, length unit and the translator options
-    read back. Documents are never saved.
-21. `Compare-StepExports.ps1 -Path A.step,B.step[,...] [-Label ...] [-OutputPath NEW.json]`
+    holds size, both hashes, schema, header fields, length unit, entity counts and the
+    translator options reported and read back. A variant's `open` says how the document is
+    reached: `invisible` (opened by itself without a view), `visible` (with a view, whose
+    camera a `camera` entry can rotate, zoom or set) or `referenced` (taken from the
+    invisibly opened, hash-bound assembly, exactly as `Export-PartAssets.ps1` reaches a
+    part; the receipt then holds a census of views). Documents are never saved.
+21. `Compare-StepExports.ps1 -Path A.step,B.step[,...] [-Label ...] [-OutputPath NEW.json] [-ListDifferingEntities] [-AllowDifferences]`
     says whether several exports of one part have identical data sections, which header
-    lines differ, and whether they normalise to identical files.
+    lines differ, whether they normalise to identical files and, on request, which entity
+    instances differ (type and text).
 22. `Get-VaultFileFacts.ps1 -Acquisition acquisition.json -Inventory dependency-inventory.json -OutputDirectory NEW -BaseUri URL -VaultId ID`
     (REST GET only) reports for every acquired master the latest version id and number,
     whether anything changed since the acquisition, revision, lifecycle definition and
@@ -367,7 +379,9 @@ REST listings are read as ONE page (`limit` up to 1000) whose row count must equ
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
 by name, so following it repeats and skips rows. A listing that does not fit is refused.
 The results of items 19 to 24 on the enclosure are in
-`vault-cad-exchange/evidence/2026-11-10-windows-layout-tests-01/`.
+`vault-cad-exchange/evidence/2026-11-10-windows-layout-tests-01/`; the AP242 tests of
+2026-11-11 (stability, the saved view, the translator's options, all 37 parts) are in
+`.../2026-11-11-windows-ap242-tests-01/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,

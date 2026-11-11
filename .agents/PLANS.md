@@ -58,12 +58,32 @@ nothing was sent to Vault.
 
 Tests: 100 portable tests pass in the Guix environment (run 2026-11-11; 13 of
 them are new, for the index, in `tests/test_layout_project.py`, and 10 are
-for `import-snapshot`). On Windows 87 passed under Pixi on 2026-11-10; the 13
-new ones have not been run there. On Windows
-the offline suites pass (run 2026-11-10: script hygiene over 34 scripts
-with a 9-case self-test of the checks, 37 session mock cases, 3 watchdog, 12
-snapshot, 10 STEP unit, 11 receipt, 11 STEP header, 7 Vault facts and 8 folder
-discovery cases). `import-snapshot` itself has not been run on Windows.
+for `import-snapshot`). On Windows 87 passed under Pixi on 2026-11-11, from
+the commit before the index was added; the 13 new ones have not been run
+there. On Windows the offline suites pass (run 2026-11-11: script hygiene over
+34 scripts with a 9-case self-test of the checks, 37 session mock cases, 3
+watchdog, 12 snapshot, 10 STEP unit, 11 receipt, 21 STEP header and entity
+cases, 7 Vault facts and 8 folder discovery cases). `import-snapshot` itself
+has not been run on Windows.
+
+Added on 2026-11-11 by the Windows side, with its three read-only AP242 tests
+(record in `windows/HISTORY.md`; reviewed and applied on Linux):
+`Step-Header.ps1` reads a data section as text (entity counts, what a file
+marks invisible and whether in the form `mechanical-cad` understands, the
+instances that differ between two exports, whether a difference is confined
+to the saved view); `Invoke-StepExportProbe.ps1` can reach a part as the
+exporter does, open it with a view and move the camera;
+`Compare-StepExports.ps1` lists differing instances. Measured: AP242 exports
+made without a view are byte-identical in their data sections between
+sessions, and the exporter runs without a view; with a view the file carries
+that view's camera, and nothing outside what `CAMERA_MODEL_D3` reaches
+changes; no translator option leaves out the hidden bodies or the saved view;
+of the 37 parts one has an `INVISIBILITY`, in the understood form. Linux
+compared the 37 AP242 files with the tracked AP214 parts by measured geometry
+that day: 37 of 37 the same (`mechanical-cad/docs/layout-proposal.md`,
+"Windows tests of 2026-11-11"). The exporter is untouched: its default is
+still AP214, it does not normalise headers, and it writes the earlier
+package.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -174,22 +194,24 @@ Directives:
 
 ## Next work
 
-1. Windows, when Peter starts it: three read-only AP242 tests asked for on
-   2026-11-11 (stability between sessions and what the saved-view block
-   depends on; the translator's options; all 37 parts as AP242). Peter decided
-   that day that files exported from Inventor are AP242, with two roots and
-   readable keys (`mechanical-cad/docs/direction.md`, "Decided"). The
-   exporter's default is still AP214 and changes with the package (step 3).
-   For the part with hidden bodies FreeCAD reads the AP242 file as four solids
-   (37 306.4 mm³) and the AP214 file as one (34 485.9 mm³); `mechanical-cad`
-   now leaves the bodies marked invisible out when it measures and flattens.
-2. Linux: specify the exporter's package in `mechanical-cad` (after the
-   Windows AP242 tests) and make the import command read it, keep existing
-   keys, and refuse what the lock says is newer in the repository. When the
-   enclosure's branch `layout-conversion` is merged, no project is left in the
-   earlier layout: then remove `import-step`, the schema 1 lock and
-   publishing from `step/`, with their tests.
-3. Windows: the exporter writes the new package; re-export the enclosure.
+1. Windows, when Peter starts it (asked on 2026-11-11): review the draft of
+   the exporter's package (`mechanical-cad/docs/exporter-package.md`, draft 2)
+   against what Inventor and Vault give, and write the package as a new mode
+   of the exporter that leaves today's output and default unchanged: AP242,
+   headers normalised with `Set-StepFileHeader`, one directory per Vault file
+   and model state, no workstation paths or names of people, and a stop when
+   a document has a view or a file marks something invisible in a form that
+   is not understood. Run read-only on the enclosure. Peter decided on
+   2026-11-11 that files exported from Inventor are AP242, with two roots and
+   readable keys (`mechanical-cad/docs/direction.md`, "Decided").
+2. Linux: make the import command read that package into an existing project,
+   keep existing keys, and refuse what the index says is newer in the
+   repository. When the enclosure's branch `layout-conversion` is merged, no
+   project is left in the earlier layout: then remove `import-step`, the
+   schema 1 lock and publishing from `step/`, with their tests.
+3. Compare the re-exported enclosure with the branch (`compare-scenes`, and
+   `compare_step_exports.py` for the parts), then make AP242 and the new
+   package the exporter's default.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
    (`vault-cad sync-status`, written to `sync-status.json`, never into the
