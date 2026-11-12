@@ -80,6 +80,52 @@ function Write-Model($model, [string]$name, [switch]$NoManifest) {
     return $directory
 }
 function Get-Failures($model, [string]$name) { return @((Test-PackageOutputs -Directory (Write-Model $model $name)).failures) }
+function Get-OpenManifest($model) { $model.manifest.counts = $null; $model.manifest.files = $null; return $model.manifest }   # as the exporter hands it to Complete-Package
+
+# ---- the scripts that drive Inventor, read as syntax trees (nothing is run) ----
+$commandAst = [System.Management.Automation.Language.CommandAst]
+function Get-ScriptTree([string]$Text) {
+    $tokens = $null; $problems = $null
+    $tree = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$problems)
+    if ($problems.Count) { throw "parse error: $($problems[0].Message)" }
+    return $tree
+}
+function Get-CastsInGuardQueries([string]$Text) {
+    # The casts inside the script blocks handed to the guard and optional-read functions, each as "line N: text".
+    $found = @()
+    foreach ($call in (Get-ScriptTree $Text).FindAll({ $args[0] -is $commandAst }, $true)) {
+        if (@("Get-RequiredValue", "Get-OptionalValue", "Get-OptionalObject") -notcontains $call.GetCommandName()) { continue }
+        foreach ($block in @($call.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] })) {
+            foreach ($cast in $block.FindAll({ $args[0] -is [System.Management.Automation.Language.ConvertExpressionAst] }, $true)) { $found += "line $($cast.Extent.StartLineNumber): $($cast.Extent.Text)" }
+        }
+    }
+    return $found   # bare: callers wrap with @(...)
+}
+function Get-SessionStructureProblems([string]$Text) {
+    <# The owned Inventor instance must be started inside the try whose finally stops it, that try must be a
+       top-level statement, and after it the script may run nothing outside a try: only try statements, and
+       assignments and if statements that call no command. #>
+    $tree = Get-ScriptTree $Text
+    $starts = @($tree.FindAll({ $args[0] -is $commandAst -and $args[0].GetCommandName() -eq "Start-IsolatedInventor" }, $true))
+    if ($starts.Count -ne 1) { return @("Start-IsolatedInventor is called $($starts.Count) times") }
+    $owner = $null; $node = $starts[0].Parent
+    while ($node) {
+        if ($node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Finally -and @($node.Finally.FindAll({ $args[0] -is $commandAst -and $args[0].GetCommandName() -eq "Stop-IsolatedInventor" }, $true)).Count -gt 0) { $owner = $node; break }
+        $node = $node.Parent
+    }
+    if (-not $owner) { return @("line $($starts[0].Extent.StartLineNumber): Start-IsolatedInventor is not inside a try whose finally calls Stop-IsolatedInventor") }
+    $top = @($tree.EndBlock.Statements); $position = [array]::IndexOf($top, $owner)
+    if ($position -lt 0) { return @("line $($owner.Extent.StartLineNumber): the try that owns the Inventor instance is not a top-level statement") }
+    $found = @()
+    for ($index = $position + 1; $index -lt $top.Count; $index++) {
+        $statement = $top[$index]
+        if ($statement -is [System.Management.Automation.Language.TryStatementAst]) { continue }
+        $quiet = ($statement -is [System.Management.Automation.Language.AssignmentStatementAst] -or $statement -is [System.Management.Automation.Language.IfStatementAst])
+        if ($quiet -and @($statement.FindAll({ $args[0] -is $commandAst }, $true)).Count -eq 0) { continue }
+        $found += "line $($statement.Extent.StartLineNumber): a statement outside a try after the Inventor instance was started"
+    }
+    return $found   # bare: callers wrap with @(...)
+}
 
 try {
     # ---- JSON ----
@@ -225,6 +271,122 @@ try {
         [IO.File]::WriteAllText((Join-Path $third "extra.txt"), "x")
         $other = Compare-PackageRuns -First $first -Second $third
         Assert (-not $other.identical_except_manifest -and (@($other.different) -contains "occurrences.json") -and (@($other.only_in_second) -join ',') -ceq "extra.txt") "comparison: $($other | ConvertTo-Json -Compress)"
+    }
+    # ---- guard queries and optional reads (the review of 2026-11-12, finding 1) ----
+    Case "P18 a required value: the value in its type, or a refusal of nothing, a failure, a collection and another type" {
+        Assert ((Get-RequiredValue "a flag" { $false }) -eq $false -and (Get-RequiredValue "a flag" { $true }) -eq $true) "booleans"
+        Assert ((Get-RequiredValue "a name" { "[Primary]" } -Kind string) -ceq "[Primary]" -and (Get-RequiredValue "a count" { 3 } -Kind int) -eq 3 -and (Get-RequiredValue "a count" { [long]3 } -Kind int) -is [int]) "a text and integers"
+        Assert ((Get-RequiredValue "a length" { 2.5 } -Kind number) -eq 2.5 -and (Get-RequiredValue "a length" { 2 } -Kind number) -is [double]) "numbers"
+        [void](Throws { Get-RequiredValue "views" { $null } -Kind int } "returned null")
+        [void](Throws { Get-RequiredValue "views" { throw "E_FAIL" } -Kind int } "failed; unknown configuration refused: E_FAIL")
+        [void](Throws { Get-RequiredValue "views" { @(1, 2) } -Kind int } "returned a collection")
+        [void](Throws { Get-RequiredValue "a flag" { 0 } } "not a boolean")
+        [void](Throws { Get-RequiredValue "a flag" { "False" } } "not a boolean")
+        [void](Throws { Get-RequiredValue "a count" { "3" } -Kind int } "not an integer")
+        [void](Throws { Get-RequiredValue "a count" { 3.0 } -Kind int } "not an integer")
+        [void](Throws { Get-RequiredValue "a name" { "  " } -Kind string } "empty or non-string")
+        [void](Throws { Get-RequiredValue "a length" { "2.5" } -Kind number } "not a number")
+        [void](Throws { Get-RequiredValue "a length" { [double]::NaN } -Kind number } "not finite")
+    }
+    Case "P19 why a guard query holds no cast and a collection is asked for first: nothing becomes 0 or False and passes" {
+        Assert ((Get-RequiredValue "views" { [int]$null } -Kind int) -eq 0 -and (Get-RequiredValue "a flag" { [bool]$null }) -eq $false) "the cast of nothing no longer passes a guard; the check of the scripts (P21) would then not be needed"
+        $missing = $null
+        Assert ((Get-RequiredValue "views" { $missing.Count } -Kind int) -eq 0) "the count of nothing is no longer 0"
+        [void](Throws { Get-RequiredCount "views" $missing } "Required object 'views' is missing")
+        Assert ((Get-RequiredCount "views" @()) -eq 0 -and (Get-RequiredCount "views" @(1, 2, 3)) -eq 3) "the counts of collections that exist"
+        [void](Throws { Assert-RequiredObject "a range box" $null } "is missing")
+        Assert ($null -eq (Assert-RequiredObject "a range box" (New-Object object))) "an object that exists was refused, or the check returned something"
+    }
+    Case "P20 an optional value: nothing stays nothing, a failed read is nothing and is counted" {
+        $before = $script:PackageOptionalReadFailures
+        Assert ($null -eq (Get-OptionalValue { $null } "double") -and $null -eq (Get-OptionalValue { $null } "bool") -and $null -eq (Get-OptionalValue { $null } "int") -and $null -eq (Get-OptionalValue { $null } "string")) "nothing became a value"
+        Assert ((Get-OptionalValue { 2 } "double") -is [double] -and (Get-OptionalValue { $false } "bool") -eq $false -and (Get-OptionalValue { "" } "string") -ceq "" -and (Get-OptionalValue { 7 } "int") -eq 7) "values"
+        Assert ($script:PackageOptionalReadFailures -eq $before) "a read that returned nothing was counted as failed"
+        Assert ($null -eq (Get-OptionalValue { throw "E_FAIL" } "double") -and $null -eq (Get-OptionalObject { throw "E_FAIL" })) "a failed read gave a value"
+        Assert ($script:PackageOptionalReadFailures -eq $before + 2) "failed reads counted: $($script:PackageOptionalReadFailures - $before)"
+        $object = New-Object object
+        Assert ([object]::ReferenceEquals((Get-OptionalObject { $object }), $object)) "an object was not returned as it is"
+    }
+    Case "P21 no guard query and no optional read of the package exporter and the assembly probe holds a cast" {
+        Assert (@(Get-CastsInGuardQueries 'Get-RequiredValue "views" { [int]$doc.Views.Count } -Kind int').Count -eq 1 -and @(Get-CastsInGuardQueries 'Get-OptionalValue { [double]$tap.Pitch } "double"; Get-OptionalObject { [string]$a.B }').Count -eq 2) "the check does not find a cast it must find"
+        Assert (@(Get-CastsInGuardQueries 'Get-RequiredValue "views" { $views.Count } -Kind int; $n = [int]$x; Get-OptionalValue { $tap.Pitch } "double"').Count -eq 0) "the check reports a query without a cast, or a cast outside a query"
+        foreach ($scriptName in @("Export-Package.ps1", "Invoke-AssemblyStepProbe.ps1")) {
+            $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))
+            Assert ($text -match 'Get-RequiredValue ') "$scriptName holds no guard query: the check has nothing to look at"
+            $casts = @(Get-CastsInGuardQueries $text)
+            Assert ($casts.Count -eq 0) "$scriptName`: $($casts -join '; ')"
+        }
+    }
+    # ---- findings 5 and 2: the instance is owned by a try, and nothing after it runs unprotected ----
+    Case "P22 the package exporter and the assembly probe start Inventor inside the try whose finally stops it, and run nothing outside a try afterwards" {
+        Assert ((@(Get-SessionStructureProblems '$s = Start-IsolatedInventor; try { Use $s } finally { Stop-IsolatedInventor $s }') -join ';') -match 'not inside a try whose finally calls Stop-IsolatedInventor') "an instance started before its try was not found"
+        Assert ((@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; Write-Receipt $s') -join ';') -match 'a statement outside a try after') "a receipt written outside a try was not found"
+        Assert ((@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; $file = Join-Path $a $b; try { Write-Receipt } catch { }') -join ';') -match 'a statement outside a try after') "an assignment that calls a command outside a try was not found"
+        Assert (@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; $status = "FAILED"; try { Write-Receipt } catch { }; if ($status -ne "complete") { exit 1 }').Count -eq 0) "a script with the right structure was reported"
+        foreach ($scriptName in @("Export-Package.ps1", "Invoke-AssemblyStepProbe.ps1")) {
+            $problems = @(Get-SessionStructureProblems ([IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))))
+            Assert ($problems.Count -eq 0) "$scriptName`: $($problems -join '; ')"
+        }
+    }
+    # ---- finding 3: the guards a run evaluated ----
+    Case "P23 the guards of a run: none evaluated at the start, each counted where it is evaluated, an unknown one refused" {
+        $ledger = New-PackageGuardLedger @("no_view", "rigid")
+        Assert ((ConvertTo-PackageJson $ledger) -ceq "{`n  `"no_view`": 0,`n  `"rigid`": 0`n}") "a new ledger: $(ConvertTo-PackageJson $ledger)"
+        Add-PackageGuardCheck $ledger "no_view"; Add-PackageGuardCheck $ledger "no_view" 43
+        Assert ($ledger["no_view"] -eq 44 -and $ledger["rigid"] -eq 0) "counts: $(ConvertTo-PackageJson $ledger)"
+        Assert ($null -eq (Add-PackageGuardCheck $ledger "rigid")) "counting a guard returned something"
+        [void](Throws { Add-PackageGuardCheck $ledger "no_veiw" } "Unknown guard")
+        [void](Throws { New-PackageGuardLedger @("a", "a") } "named twice")
+    }
+    # ---- finding 4: the whole mirror, before and after ----
+    Case "P24 a directory before and after: a changed, an added and a removed file are found, and nothing when nothing changed" {
+        $directory = Join-Path $work "mirror"; New-Item -ItemType Directory -Path (Join-Path $directory "DATA\sub") -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $directory "DATA\a.ipt"), "a"); [IO.File]::WriteAllText((Join-Path $directory "DATA\sub\b.ipt"), "b"); [IO.File]::WriteAllText((Join-Path $directory "project.ipj"), "p")
+        $before = Get-PackageDirectoryHashes $directory
+        Assert ((@($before.Keys) -join ',') -ceq "DATA/a.ipt,DATA/sub/b.ipt,project.ipj" -and $before["DATA/a.ipt"].bytes -eq 1) "listing: $(@($before.Keys) -join ',')"
+        Assert ((Compare-PackageDirectoryHashes $before (Get-PackageDirectoryHashes $directory)).unchanged) "an untouched directory is reported as changed"
+        [IO.File]::WriteAllText((Join-Path $directory "DATA\a.ipt"), "A"); Remove-Item -LiteralPath (Join-Path $directory "project.ipj"); [IO.File]::WriteAllText((Join-Path $directory "DATA\lockfile.lck"), "")
+        $difference = Compare-PackageDirectoryHashes $before (Get-PackageDirectoryHashes $directory)
+        Assert (-not $difference.unchanged -and (@($difference.changed) -join ',') -ceq "DATA/a.ipt" -and (@($difference.added) -join ',') -ceq "DATA/lockfile.lck" -and (@($difference.removed) -join ',') -ceq "project.ipj" -and $difference.files_before -eq 3 -and $difference.files_after -eq 3) "difference: $($difference | ConvertTo-Json -Compress)"
+    }
+    # ---- finding 2: package.json is written last and never left behind ----
+    Case "P25 completing a package: package.json is written last, with the counts and the hash of every other file, and the package then passes" {
+        $model = New-Model; $directory = Write-Model $model "complete-a" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 2 -ExpectAssemblies 2 -ExpectOccurrences 3
+        Assert ($done.ok -and $done.stage -ceq "complete" -and $done.manifest_written -and (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "result: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $written = Read-PackageJsonFile (Join-Path $directory "package.json")
+        Assert ($written.counts.parts -eq 2 -and $written.counts.assemblies -eq 2 -and @($written.files.PSObject.Properties).Count -eq 9 -and -not (Test-PackageHas $written.files "package.json")) "package.json: $($written.counts | ConvertTo-Json -Compress), $(@($written.files.PSObject.Properties).Count) files"
+        Assert ((Test-PackageOutputs -Directory $directory).ok) "the completed package does not pass"
+        $other = Write-Model (New-Model) "complete-b"
+        Assert ((Compare-PackageRuns -First $directory -Second $other).manifest_identical) "package.json is not the one written by hand for the same package"
+    }
+    Case "P26 whatever fails after package.json was written removes it, an exception included; nothing is written when the check before it fails" {
+        $model = New-Model; $model.sources["100_primary"]["key"] = "plate"; $directory = Write-Model $model "incomplete-a" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model)
+        Assert (-not $done.ok -and $done.stage -ceq "before package.json" -and -not $done.manifest_written -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "a package that fails its first check: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $model = New-Model; $model.manifest.root.master_id = "100"; $directory = Write-Model $model "incomplete-b" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model)
+        Assert (-not $done.ok -and $done.stage -ceq "with package.json" -and -not $done.manifest_written -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json")) -and ($done.failures -join ';') -match 'root assembly named in package.json') "a package that fails only with package.json: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $model = New-Model; $directory = Write-Model $model "incomplete-c" -NoManifest
+        $calls = @{ made = 0 }
+        $failing = { param($beforeManifest) $calls.made++; if (-not $beforeManifest) { throw "the disk is full" }; Test-PackageOutputs -Directory $directory -AllowMissingManifest }
+        [void](Throws { Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -Check $failing } "the disk is full")
+        Assert ($calls.made -eq 2 -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "an exception after package.json was written left it in place ($($calls.made) checks made)"
+        $model = New-Model; $directory = Write-Model $model "incomplete-d" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 3
+        Assert (-not $done.ok -and ($done.failures -join ';') -match '2 parts, 3 exported' -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "a package that does not hold what was exported: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $directory = Write-Model (New-Model) "incomplete-e"
+        [void](Throws { Complete-Package -Directory $directory -Manifest (Get-OpenManifest (New-Model)) } "already exists")
+        Assert (Test-Path -LiteralPath (Join-Path $directory "package.json")) "an existing package.json was removed"
+        $directory = Write-Model (New-Model) "incomplete-f" -NoManifest
+        [void](Throws { Complete-Package -Directory $directory -Manifest ([ordered]@{ kind = "x" }) } "must have the key")
+    }
+    # ---- finding 6: a run in which a dialog was dismissed does not leave a complete package ----
+    Case "P27 only a run that ended complete may leave package.json; taking it away reports that none is left" {
+        Assert ((Test-PackageRunStatus "complete") -and -not (Test-PackageRunStatus "complete_with_dialogs") -and -not (Test-PackageRunStatus "FAILED") -and -not (Test-PackageRunStatus "Complete") -and -not (Test-PackageRunStatus "")) "statuses"
+        $directory = Write-Model (New-Model) "withheld"
+        Assert ((Remove-PackageManifest $directory) -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json")) -and (Remove-PackageManifest $directory)) "package.json was not taken away"
+        Assert ((@((Test-PackageOutputs -Directory $directory).failures) -join ';') -match 'package.json is missing') "a package without package.json passed"
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count

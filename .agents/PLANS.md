@@ -79,10 +79,10 @@ them are new, for the package, in `tests/test_package_import.py`, 13 are for
 the index, in `tests/test_layout_project.py`, and 10 are for the earlier
 package). On Windows 87 passed under Pixi on 2026-11-11, from
 the commit before the index was added; the 25 newer ones have not been run
-there. On Windows all 112 passed under Pixi on 2026-11-12, and the offline
+there. On Windows all 115 passed under Pixi on 2026-11-12, and the offline
 suites pass (run 2026-11-12: script hygiene over 38 scripts with a 9-case
 self-test of the checks, 37 session mock cases, 3 watchdog, 12 snapshot, 10
-STEP unit, 11 receipt, 27 STEP header and entity cases, 17 package format
+STEP unit, 11 receipt, 27 STEP header and entity cases, 27 package format
 cases, 7 Vault facts and 8 folder discovery cases). The package reader was
 run on Windows that day on a copy of the exporter's first package
 (`import_package` into an empty directory); `import-snapshot` on a project
@@ -133,6 +133,16 @@ yet reviewed on Linux):
   a part again and never repairs a header.
 - The three findings of the Linux review of 2026-11-11 on `Step-Header.ps1`
   are corrected.
+- The six findings of the Linux review of 2026-11-12 on `Export-Package.ps1`
+  are answered (record in `windows/HISTORY.md`): guard queries hold no cast
+  and a collection must exist before it is counted; everything after
+  Inventor runs inside a `try`, the receipt is always written and whatever
+  fails after `package.json` was written removes it; the receipt counts how
+  often each guard was evaluated; the whole mirror is hashed before and
+  after; Inventor is started inside the `try` that stops it; and a run that
+  ends `complete_with_dialogs` leaves no `package.json`. The same holds in
+  `Invoke-AssemblyStepProbe.ps1`. The package written afterwards has every
+  file but `package.json` byte for byte as before.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -251,8 +261,14 @@ Directives:
    project has one to try; a file whose `FILE_SCHEMA` names a second schema
    is exported again and never delivered or repaired. The review's findings
    on `Export-Package.ps1` (a guard that a cast can defeat, what happens when
-   a step after the export fails) are with the Windows agent. Peter has not
-   reviewed the draft.
+   a step after the export fails) were corrected on Windows that day, and
+   the corrections were reviewed on Linux (evidence
+   `2026-11-12-linux-windows-package-findings-review-01/REVIEW.md`): all six
+   are there, the package the corrected exporter writes is the first one in
+   every file but `package.json`, and a run in which a dialog was dismissed
+   delivers no package. Six smaller remarks of that review wait for the next
+   change of the script; none needs a run of its own. Peter has not reviewed
+   the draft.
 2. The import command reads the real package since 2026-11-12
    (`_read_occurrences` in `package_import.py`). Tried that day on a copy of
    the enclosure's branch: 44 files rewritten, all keys kept, 44 overrides
@@ -307,6 +323,18 @@ Directives:
   thread features, patterns of holes other than a mirror.
 - Why the STEP translator sometimes names a second schema in `FILE_SCHEMA` is
   not known; it has only been seen in runs of `Export-Package.ps1`.
+- Seven older scripts start their owned Inventor instance a few statements
+  before the `try` whose `finally` stops it, and write their receipt outside
+  a `try`: `Export-PartAssets.ps1`, `Invoke-StepExportProbe.ps1`,
+  `Get-PartFeatureDump.ps1`, `Audit-NativeBom.ps1`, `Measure-PartBodies.ps1`,
+  `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`. A
+  failure of their first log line or of the watchdog's start would leave the
+  instance running. `Export-Package.ps1` and `Invoke-AssemblyStepProbe.ps1`
+  are corrected and held to the structure by `Test-PackageFormat.ps1`; the
+  others were left as they are, as asked for the exporter.
+- `Export-Package.ps1` has no switch to accept the package of a run in which
+  the watchdog dismissed a dialog. If a dialog comes back on every run of a
+  project, that needs a decision.
 - The Vault paths of the enclosure run through folders named after labs, so
   `vault.path` in every `source.json` carries those names.
 - Design document revision 3: fold in findings R1 to R4 and the layout; correct

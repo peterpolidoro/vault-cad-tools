@@ -24,6 +24,20 @@ Test-PackageOutputs -Directory DIR   checks a written package against itself: th
 Find-PackageForbiddenText            workstation paths, host and account names, and names given by the caller.
 Get-PackageFileMap DIR               every file under a directory by its relative path, in ordinal order.
 Compare-PackageRuns -First A -Second B    which files of two packages are byte-identical.
+Complete-Package -Directory DIR -Manifest M    checks the package, writes package.json last and checks again;
+                                     whatever fails after package.json was written removes it.
+Remove-PackageManifest DIR, Test-PackageRunStatus STATUS    a package is complete only after a run that ended
+                                     "complete"; anything else takes package.json away.
+Get-PackageDirectoryHashes DIR, Compare-PackageDirectoryHashes BEFORE AFTER    every file of a directory, and what
+                                     changed, appeared or disappeared between two listings.
+Guard queries (for the scripts that drive Inventor; nothing here touches it):
+Get-RequiredValue WHAT { query } -Kind bool|string|int|number    the value or an exception. The query returns what
+                                     the API returned and holds no cast: [int]$null is 0, [bool]$null is False,
+                                     [string]$null is "", and a cast would pass "nothing" as a value.
+Assert-RequiredObject WHAT OBJECT, Get-RequiredCount WHAT COLLECTION    a collection must exist before it is
+                                     counted or walked: $null.Count is 0 and foreach over $null runs zero times.
+Get-OptionalValue { query } TYPE, Get-OptionalObject { query }    $null when the API gives nothing or the read fails.
+New-PackageGuardLedger NAMES, Add-PackageGuardCheck LEDGER NAME    how often each guard was evaluated in a run.
 Offline tests: Test-PackageFormat.ps1.
 #>
 . (Join-Path $PSScriptRoot "Step-Header.ps1")
@@ -461,4 +475,133 @@ function Compare-PackageRuns {
     $other = @($different | Where-Object { $_ -ne "package.json" })
     return [pscustomobject]@{ files_first = $one.Count; files_second = $two.Count; identical = $same.Count; different = $different; only_in_first = $onlyFirst; only_in_second = $onlySecond
         identical_except_manifest = ($onlyFirst.Count -eq 0 -and $onlySecond.Count -eq 0 -and $other.Count -eq 0); manifest_identical = ($same -contains "package.json") }
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Guard queries and optional reads. Nothing here touches Inventor: these take script blocks and objects.
+# ---------------------------------------------------------------------------------------------------------
+function Get-RequiredValue {
+    <# The value a guard needs, or an exception: when the query fails, returns nothing, returns a collection or
+       returns another type than asked for. The query must return what the API returned. A cast inside it turns
+       "nothing" into 0, False or "" before this function can refuse it; converting is this function's job. #>
+    param([Parameter(Mandatory = $true)][string]$What, [Parameter(Mandatory = $true)][scriptblock]$Query, [ValidateSet("bool", "string", "int", "number")][string]$Kind = "bool")
+    $raw = $null
+    try { $raw = & $Query } catch { throw "Required guard query '$What' failed; unknown configuration refused: $($_.Exception.Message)" }
+    if ($null -eq $raw) { throw "Required guard query '$What' returned null; unknown configuration refused" }
+    if ($raw -is [array]) { throw "Required guard query '$What' returned a collection; unknown configuration refused" }
+    switch ($Kind) {
+        "bool"   { if ($raw -isnot [bool]) { throw "Required guard query '$What' returned '$raw' ($($raw.GetType().Name)), not a boolean; unknown configuration refused" }; return [bool]$raw }
+        "string" { if ($raw -isnot [string] -or [string]::IsNullOrWhiteSpace($raw)) { throw "Required guard query '$What' returned an empty or non-string value ($($raw.GetType().Name)); unknown configuration refused" }; return [string]$raw }
+        "int"    { if ($raw -isnot [int] -and $raw -isnot [long] -and $raw -isnot [int16] -and $raw -isnot [byte]) { throw "Required guard query '$What' returned '$raw' ($($raw.GetType().Name)), not an integer; unknown configuration refused" }; return [int]$raw }
+        "number" {
+            if (-not (Test-PackageNumber $raw)) { throw "Required guard query '$What' returned '$raw' ($($raw.GetType().Name)), not a number; unknown configuration refused" }
+            $number = [double]$raw
+            if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw "Required guard query '$What' returned a number that is not finite; unknown configuration refused" }
+            return $number
+        }
+    }
+}
+function Assert-RequiredObject {
+    <# A collection or another object that a guard walks or asks must exist. Pass the object itself, assigned
+       directly from the API: a COM collection that leaves a script block is enumerated, `$null.Count` is 0 and
+       `foreach` over $null runs zero times, so a missing collection would otherwise pass as an empty one. #>
+    param([Parameter(Mandatory = $true)][string]$What, [AllowNull()]$Object)
+    if ($null -eq $Object) { throw "Required object '$What' is missing; unknown configuration refused" }
+}
+function Get-RequiredCount {
+    # The number of items of a collection that must exist, as the collection itself reports it.
+    param([Parameter(Mandatory = $true)][string]$What, [AllowNull()]$Collection)
+    Assert-RequiredObject $What $Collection
+    return (Get-RequiredValue "$What (count)" { $Collection.Count } -Kind int)
+}
+$script:PackageOptionalReadFailures = 0   # reads that failed (an exception), over the whole run of the script that dot-sourced this file
+function Get-OptionalObject([scriptblock]$Query) {
+    # A single object or scalar the API may not give: $null when the read fails. Not for collections (see above).
+    try { return (& $Query) } catch { $script:PackageOptionalReadFailures++; return $null }
+}
+function Get-OptionalValue([scriptblock]$Query, [ValidateSet("double", "bool", "int", "string")][string]$As) {
+    # A typed value, or $null when the read fails or the API returns nothing: a cast of $null would invent 0, False or "".
+    $raw = $null
+    try { $raw = & $Query } catch { $script:PackageOptionalReadFailures++; return $null }
+    if ($null -eq $raw) { return $null }
+    switch ($As) { "double" { return [double]$raw } "bool" { return [bool]$raw } "int" { return [int]$raw } default { return [string]$raw } }
+}
+function New-PackageGuardLedger([string[]]$Names) {
+    # Every guard of a run with the number of times it was evaluated: 0 until the run reaches it.
+    $ledger = [ordered]@{}
+    foreach ($guard in $Names) { if ($ledger.Contains($guard)) { throw "The guard '$guard' is named twice" }; $ledger[$guard] = 0 }
+    return $ledger
+}
+function Add-PackageGuardCheck($Ledger, [string]$Name, [int]$Count = 1) {
+    # Called as a statement where a guard has just been evaluated and has let the run pass. It returns nothing.
+    if (-not $Ledger.Contains($Name)) { throw "Unknown guard '$Name'" }
+    $Ledger[$Name] = [int]$Ledger[$Name] + $Count
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Every file of a directory, before and after
+# ---------------------------------------------------------------------------------------------------------
+function Get-PackageDirectoryHashes([string]$Directory) {
+    # Every file under a directory: its relative path with SHA-256 and size.
+    $files = Get-PackageFileMap $Directory; $listing = [ordered]@{}
+    foreach ($name in $files.Keys) { $bytes = [IO.File]::ReadAllBytes($files[$name]); $listing[$name] = [ordered]@{ sha256 = (Get-PackageSha $bytes); bytes = $bytes.Length } }
+    return $listing
+}
+function Compare-PackageDirectoryHashes($Before, $After) {
+    # What changed, appeared or disappeared between two listings of Get-PackageDirectoryHashes.
+    $changed = @(); $added = @(); $removed = @()
+    foreach ($name in $Before.Keys) { if (-not $After.Contains($name)) { $removed += $name } elseif ($After[$name].sha256 -ne $Before[$name].sha256) { $changed += $name } }
+    foreach ($name in $After.Keys) { if (-not $Before.Contains($name)) { $added += $name } }
+    return [pscustomobject]@{ files_before = $Before.Count; files_after = $After.Count; changed = $changed; added = $added; removed = $removed; unchanged = (($changed.Count + $added.Count + $removed.Count) -eq 0) }
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# package.json: written last, and never left behind by something that failed after it
+# ---------------------------------------------------------------------------------------------------------
+function Remove-PackageManifest([string]$Directory) {
+    # Takes package.json away from a package that is not complete after all. $true when none is left.
+    $manifestPath = Join-Path $Directory "package.json"
+    if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }
+    return (-not (Test-Path -LiteralPath $manifestPath))
+}
+function Test-PackageRunStatus([string]$Status) {
+    <# Whether a run with this status may leave a complete package: only one that ended "complete". A run that
+       ended "complete_with_dialogs" had a dialog dismissed by the watchdog. What was acknowledged is in the run's
+       receipt, which stays on the workstation; whoever reads the package cannot see it. #>
+    return ($Status -ceq "complete")
+}
+function Complete-Package {
+    <# Checks a written package, writes package.json and checks the package once more with it. The manifest comes
+       without its "counts" and "files" (both keys present and null); they are filled here, in place. Whatever
+       fails after package.json was written removes it, an exception included: the caller never gets a
+       package.json that a failed check left behind. Returns ok, stage, failures, summary and manifest_written.
+       -Check replaces the package check (for tests): a script block taking $true before package.json exists and
+       $false after, and returning what Test-PackageOutputs returns. #>
+    param([Parameter(Mandatory = $true)][string]$Directory, [Parameter(Mandatory = $true)]$Manifest, [string[]]$ForbiddenTerms = @(), [double]$RotationTolerance = 1e-9, [double]$LengthTolerance = 1e-7,
+        [int]$ExpectParts = -1, [int]$ExpectAssemblies = -1, [int]$ExpectOccurrences = -1, [scriptblock]$Check = $null)
+    $manifestPath = Join-Path $Directory "package.json"
+    if (Test-Path -LiteralPath $manifestPath) { throw "package.json already exists in $Directory" }
+    foreach ($key in @("counts", "files")) { if (-not $Manifest.Contains($key)) { throw "The manifest must have the key '$key' (null until it is filled here)" } }
+    $run = $(if ($Check) { $Check } else { { param($beforeManifest) Test-PackageOutputs -Directory $Directory -ForbiddenTerms $ForbiddenTerms -AllowMissingManifest:$beforeManifest -RotationTolerance $RotationTolerance -LengthTolerance $LengthTolerance } })
+    $before = & $run $true
+    if (-not $before.ok) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @($before.failures); summary = $before.summary; manifest_written = $false } }
+    $unexpected = @()
+    if ($ExpectParts -ge 0 -and $before.summary.parts -ne $ExpectParts) { $unexpected += "$($before.summary.parts) parts, $ExpectParts exported" }
+    if ($ExpectAssemblies -ge 0 -and $before.summary.assemblies -ne $ExpectAssemblies) { $unexpected += "$($before.summary.assemblies) assemblies, $ExpectAssemblies exported" }
+    if ($ExpectOccurrences -ge 0 -and $before.summary.occurrences -ne $ExpectOccurrences) { $unexpected += "$($before.summary.occurrences) occurrences, $ExpectOccurrences read" }
+    if ($unexpected.Count -gt 0) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @("the package does not hold what was exported: $($unexpected -join '; ')"); summary = $before.summary; manifest_written = $false } }
+    $Manifest["counts"] = [ordered]@{ parts = $before.summary.parts; assemblies = $before.summary.assemblies }
+    $Manifest["files"] = Get-PackageDirectoryHashes $Directory
+    try {
+        Write-PackageJsonFile $manifestPath $Manifest
+        $after = & $run $false
+        if (-not $after.ok) {
+            [void](Remove-PackageManifest $Directory)
+            return [pscustomobject]@{ ok = $false; stage = "with package.json"; failures = @($after.failures); summary = $after.summary; manifest_written = $false }
+        }
+        return [pscustomobject]@{ ok = $true; stage = "complete"; failures = @(); summary = $after.summary; manifest_written = $true }
+    } catch {
+        if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }
+        throw
+    }
 }

@@ -261,10 +261,15 @@ Measurement and native authoring (added for the command-line pilot):
     data-section hash, the normalised header, refusals; entity counts, the form of
     an INVISIBILITY mark, entity differences, whether a difference is confined
     to the saved view, a `FILE_SCHEMA` that names two schemas),
-    `Test-PackageFormat.ps1` (17 cases: the package's JSON, directory names and
+    `Test-PackageFormat.ps1` (27 cases: the package's JSON, directory names and
     Vault block, and the check of a written package on synthetic ones: the
     manifest, `source.json`, `part.step`, `assembly.json`, `occurrences.json`,
-    forbidden text, two runs compared), `Get-VaultFileFacts.ps1
+    forbidden text, two runs compared; guard queries and optional reads, the
+    guards a run evaluated, a directory before and after, the completion of a
+    package with `package.json` written last and removed by whatever fails after
+    it; and `Export-Package.ps1` and `Invoke-AssemblyStepProbe.ps1` read as syntax
+    trees: no cast in a guard query, Inventor started inside the `try` whose
+    `finally` stops it, nothing outside a `try` afterwards), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
@@ -390,7 +395,10 @@ Measurement and native authoring (added for the command-line pilot):
     representations, Inventor's occurrence tree with every flag and placement, the
     translator's options, the file's entity counts and the hash of every file of the
     mirror before and after. Such a file is evidence for a comparison with the recorded
-    placements; it is not part of any package.
+    placements; it is not part of any package. What its receipt states as a fact (an
+    occurrence is not suppressed, is visible; a document has no view; nothing is dirty)
+    is read as a guard query; a flag it only describes is null when Inventor does not
+    give it.
 26. `Export-Package.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputDirectory PACKAGE -WorkDirectory WORK`
     writes the package of `mechanical-cad/docs/exporter-package.md` (draft 3), strict
     binding only: `files/<master id>_<state>/` with `source.json` and `part.step` (AP242,
@@ -408,7 +416,13 @@ Measurement and native authoring (added for the command-line pilot):
     definition under no flexible occurrence. The translator sometimes names a second,
     unrelated schema in a file's `FILE_SCHEMA`: such a file is neither delivered nor
     repaired, the part is exported again (three attempts at most, the same data section
-    required each time) and every attempt is recorded. Draft 3 of the specification follows the exporter
+    required each time) and every attempt is recorded. Every file of the mirror is hashed
+    before Inventor starts and after it has exited; a file that changed, appeared or
+    disappeared fails the run. The receipt is always written and says how often each guard
+    was evaluated. `package.json` is written last, whatever fails after it removes it, and
+    only a run that ends `complete` leaves it: a run in which the watchdog dismissed a
+    dialog ends `complete_with_dialogs`, exits 1 and leaves no `package.json`.
+    Draft 3 of the specification follows the exporter
     in two things draft 2 had otherwise: the placements of flexible instances are not
     written as `overrides` (the import command derives them from `occurrences.json`),
     and the hash of the translator's file is in `package.json`, because it changes with
@@ -416,8 +430,14 @@ Measurement and native authoring (added for the command-line pilot):
 27. `Package-Format.ps1` (dot-sourced): the package's JSON writer (two spaces, LF, keys in
     the order given, a double written so that it reads back the same), directory names,
     the nine vault fields from the two records of the acquisition, `Test-PackageOutputs`
-    (a written package against itself), `Find-PackageForbiddenText` and
-    `Compare-PackageRuns`.
+    (a written package against itself), `Find-PackageForbiddenText`,
+    `Compare-PackageRuns`, `Complete-Package` (checks, writes `package.json` last, checks
+    again, removes it when anything fails after it), `Get-PackageDirectoryHashes` and
+    `Compare-PackageDirectoryHashes`, and what the scripts that drive Inventor ask the API
+    through: `Get-RequiredValue`, `Assert-RequiredObject` and `Get-RequiredCount` (guard
+    queries that refuse nothing, a failure, a collection and another type, and hold no
+    cast), `Get-OptionalValue` and `Get-OptionalObject` (null when the API gives nothing),
+    and a ledger of the guards a run evaluated.
 
 REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
@@ -427,7 +447,9 @@ The results of items 19 to 24 on the enclosure are in
 2026-11-11 (stability, the saved view, the translator's options, all 37 parts) are in
 `.../2026-11-11-windows-ap242-tests-01/`. Inventor's own STEP export of the root assembly
 (item 25) is in `.../2026-11-12-windows-assembly-step-01/`, and the first two packages
-written by item 26 are in `.../2026-11-12-windows-package-01/`.
+written by item 26 are in `.../2026-11-12-windows-package-01/`. The run after the Linux
+review's findings on the script were corrected is in
+`.../2026-11-12-windows-package-findings-01/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,

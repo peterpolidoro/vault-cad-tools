@@ -8,6 +8,47 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — the Linux review's findings on the package exporter corrected (2026-11-12)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-12-windows-package-findings-01/` (report `REPORT.md`, which
+records the commits it ran from). Requested by
+`to-windows/20261112T143336Z-linux-package-accepted-reader-reads-it-findings-on-the-script.md` after Linux had
+read `Export-Package.ps1` (`evidence/2026-11-12-linux-windows-package-review-01/REVIEW.md`). No Vault access; no
+document saved. `Export-PartAssets.ps1`, its output, its default protocol and every earlier test are untouched.
+
+- Finding 1, a guard that its own cast can defeat: right, and wider than the three queries the review named.
+  `[int]$null` is 0, and `$null.Count` is 0 too, so a missing collection passed as an empty one. Guard queries
+  now go through `Get-RequiredValue` and hold no cast; a collection must exist and give as many items as it
+  counts (`Assert-RequiredObject`, `Get-RequiredCount`); the translator must report `Successful`; the volume,
+  a pattern's parents and elements and a hole's centres are null when Inventor does not give them.
+- Finding 2, what follows the `finally`: right. Everything after Inventor runs inside a `try`, the receipt is
+  always written, and `Complete-Package` writes `package.json` last and removes it when anything fails after it.
+- Finding 3, the constant `guards` block: right. The receipt (schema 2) counts how often each guard was
+  evaluated; 0 means the run did not reach it.
+- Finding 4, only the bound documents hashed again: right. Every file of the mirror is hashed before Inventor
+  starts and after it has exited.
+- Finding 5, Inventor started before its `try`: right. It is started inside the `try` whose `finally` stops it.
+  Seven older scripts have the same order and are not changed (open item in `.agents/PLANS.md`).
+- Finding 6, a package from a run that ended `complete_with_dialogs`: not complete. The script takes
+  `package.json` away and exits 1; the rule is in `README.md` of this directory.
+- The same in `Invoke-AssemblyStepProbe.ps1`: what its receipt states as a fact is read as a guard query, the
+  instance is started inside its `try`, and the receipt is always written.
+- The exporter, run once on the enclosure afterwards: `complete`, 37 parts, 7 assemblies, 171 occurrences, 90
+  files, no part exported twice. Every file but `package.json` is byte for byte the file of the first package;
+  `package.json` differs in `exported_at`, in the exporter's version and in the hashes of the translator's own
+  files.
+- A further run with one wrong hash in a copy of the acquisition record was refused where the inputs are bound:
+  a receipt with 23 of its 24 guards at 0 (the mirror was still compared), no `package.json`, the instance
+  stopped, exit code 1.
+- The probe, run with the corrections: the data section of its STEP file is the one of the first export of the
+  root assembly, and all 171 occurrence records agree with that receipt in every field. Its first run of the day
+  asked a part occurrence for `Flexible`, which Inventor does not give; since then only an assembly occurrence is
+  asked, as in the exporter, and no described flag is left unread.
+- Suites: hygiene over 38 scripts with a 9-case self-test, 37 session mock cases, 3 watchdog, 12 snapshot, 10
+  STEP unit, 11 receipt, 27 STEP header and entity cases, 27 package format cases (ten new: guard queries, the
+  guards a run evaluated, a directory before and after, the completion of a package, and the two scripts read
+  as syntax trees), 7 Vault facts and 8 folder discovery cases; 115 Python tests under Pixi.
+
 ## Result — the export package as a new mode of the exporter (2026-11-12)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-12-windows-package-01/` (report `REPORT.md`, which records the

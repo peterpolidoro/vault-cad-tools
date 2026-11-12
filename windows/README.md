@@ -69,6 +69,16 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   qualified in.
 - A run that ends `complete_with_dialogs` had a dialog dismissed by the
   watchdog. Read the receipt's `dialogs` field before accepting it.
+- A package is complete only after a run that ended `complete`. When a run of
+  `Export-Package.ps1` ends `complete_with_dialogs`, the script takes
+  `package.json` away again and exits 1. The reason: what the watchdog
+  acknowledged is only in the run's receipt, the receipt stays on the
+  workstation, and whoever reads the package cannot see it; a package that
+  says it is complete must not depend on something its reader cannot check.
+  The other files stay where they are, without `package.json`, as after any
+  failed run. There is no switch to accept such a package: read `dialogs` in
+  the receipt, remove the cause and run again. A dialog that comes back on
+  every run is for Peter to decide.
 - Production documents are opened from the acquired mirror and never saved.
   Pilots that save anything work in a disposable copy of the mirror.
 - All automation so far ran in an interactive desktop session. Unattended
@@ -117,6 +127,22 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 - Build relative file names from the directory entries, not by cutting a
   prefix off a full path: a directory given in its 8.3 form, as `%TEMP%` is
   on this workstation, lists its files under their long names.
+- A guard query returns what the API returned and holds no cast. `[int]$null`
+  is 0, `[bool]$null` is False and `[string]$null` is an empty text, so
+  `{ [int]$doc.Views.Count }` reads a missing collection as "no view" and
+  passes its guard. A collection is asked for as an object that must exist:
+  `$null.Count` is 0 and `foreach` over `$null` runs zero times. Use
+  `Get-RequiredValue`, `Assert-RequiredObject` and `Get-RequiredCount` of
+  `Package-Format.ps1`, and `Get-OptionalValue` for what may be unknown and is
+  then null. `Test-PackageFormat.ps1` (P21) reads `Export-Package.ps1` and
+  `Invoke-AssemblyStepProbe.ps1` as syntax trees and fails when a guard query
+  or an optional read holds a cast.
+- Start Inventor inside the `try` whose `finally` stops it, and run nothing
+  outside a `try` after it: the receipt is always written, and whatever fails
+  after `package.json` was written removes it (`Complete-Package`).
+  `Test-PackageFormat.ps1` (P22) holds the same two scripts to that structure.
+  The older scripts that start an owned instance do not have it yet (see the
+  open items in `.agents/PLANS.md`).
 - In PowerShell the comma binds tighter than arithmetic: write
   `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
   is case-insensitive and its dot access returns the value of a key named

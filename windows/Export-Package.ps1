@@ -44,9 +44,17 @@ query fails closed), strict binding of every opened document to the acquisition 
   - a suppressed occurrence (its document is not loaded; not implemented for want of real data);
   - an occurrence whose placement differs from its definition without an enclosing flexible occurrence;
   - an instance whose children are not those of its document; two files that would share a directory;
-  - a BOM structure the layout does not know; a text of the workstation in any file of the package.
+  - a BOM structure the layout does not know; a text of the workstation in any file of the package;
+  - a translator that does not report "Successful"; a file of the mirror that changed, appeared or disappeared
+    during the run (every file of the mirror is hashed before Inventor starts and after it has exited).
 Vault facts come from the two records of the acquisition; the exporter makes no Vault request.
-Exit code 1 unless the status is complete.
+
+A guard query returns what the API returned and holds no cast (Get-RequiredValue in Package-Format.ps1); a
+collection must exist before it is counted or walked; what the API does not give is written as null.
+Inventor is started inside the try whose finally stops it, and nothing after that runs outside a try: a receipt
+is always written, with the number of times each guard was evaluated, and whatever fails after package.json was
+written removes it. Only a run that ends "complete" leaves package.json: a run in which the watchdog dismissed a
+dialog ends "complete_with_dialogs" and its package is withheld. Exit code 1 unless a complete package was left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$NativeAssembly,
@@ -101,7 +109,13 @@ function Get-MapName($map, $i) { $map.GetType().InvokeMember("Name", [Reflection
 function Get-MapValue($map, $k) { $map.GetType().InvokeMember("Value", [Reflection.BindingFlags]::GetProperty, $null, $map, @($k)) }
 function Set-MapValue($map, $k, $v) { [void]$map.GetType().InvokeMember("Value", [Reflection.BindingFlags]::SetProperty, $null, $map, @($k, $v)) }
 function Read-Map($map) { $r = [ordered]@{}; for ($i = 1; $i -le $map.Count; $i++) { $n = Get-MapName $map $i; $r[$n] = Get-MapValue $map $n }; return $r }
-function Cells($m) { $rows = @(); for ($r = 1; $r -le 4; $r++) { $row = @(); for ($c = 1; $c -le 4; $c++) { $row += [double]$m.GetType().InvokeMember("Cell", [Reflection.BindingFlags]::GetProperty, $null, $m, @($r, $c)) }; $rows += ,$row }; return ,$rows }
+function Cells($m) {
+    # The 16 cells of an Inventor matrix. A matrix that is missing, or a cell that is not a number, is refused: [double]$null is 0.
+    if ($null -eq $m) { throw "A placement matrix is missing; unknown configuration refused" }
+    $rows = @()
+    for ($r = 1; $r -le 4; $r++) { $row = @(); for ($c = 1; $c -le 4; $c++) { $cell = $m.GetType().InvokeMember("Cell", [Reflection.BindingFlags]::GetProperty, $null, $m, @($r, $c)); if (-not (Test-PackageNumber $cell)) { throw "Cell $r,$c of a placement matrix is not a number; unknown configuration refused" }; $row += [double]$cell }; $rows += ,$row }
+    return ,$rows
+}
 function Mul($A, $B) { $R = @(); for ($i = 0; $i -lt 4; $i++) { $row = @(); for ($j = 0; $j -lt 4; $j++) { $s = 0.0; for ($k = 0; $k -lt 4; $k++) { $s += $A[$i][$k] * $B[$k][$j] }; $row += $s }; $R += ,$row }; return ,$R }
 function InvRigid($M) {
     $R = @(); for ($i = 0; $i -lt 3; $i++) { $row = @(); for ($j = 0; $j -lt 3; $j++) { $row += [double]$M[$j][$i] }; $row += 0.0; $R += ,$row }
@@ -118,142 +132,173 @@ function Prop($doc, $set, $name) {
     if ($null -eq $value -or $value -is [string] -or $value -is [bool] -or (Test-PackageNumber $value)) { return $value }
     return [string]$value
 }
-# Required guard queries fail CLOSED: an exception means the configuration is unknown and is refused.
-function Require($what, [scriptblock]$query, [ValidateSet("bool", "string", "int")][string]$Kind = "bool") {
-    $raw = $null
-    try { $raw = & $query } catch { throw "Required guard query '$what' failed; unknown configuration refused: $($_.Exception.Message)" }
-    if ($null -eq $raw) { throw "Required guard query '$what' returned null; unknown configuration refused" }
-    if ($raw -is [array]) { throw "Required guard query '$what' returned a collection; unknown configuration refused" }
-    switch ($Kind) {
-        "bool"   { if ($raw -isnot [bool]) { throw "Required guard query '$what' returned '$raw' ($($raw.GetType().Name)), not a boolean; unknown configuration refused" }; return [bool]$raw }
-        "string" { if ($raw -isnot [string] -or [string]::IsNullOrWhiteSpace($raw)) { throw "Required guard query '$what' returned an empty or non-string value ($($raw.GetType().Name)); unknown configuration refused" }; return [string]$raw }
-        "int"    { if ($raw -isnot [int] -and $raw -isnot [long] -and $raw -isnot [int16] -and $raw -isnot [byte]) { throw "Required guard query '$what' returned '$raw' ($($raw.GetType().Name)), not an integer; unknown configuration refused" }; return [int]$raw }
-    }
-}
+# Guard queries fail CLOSED: Get-RequiredValue, Assert-RequiredObject and Get-RequiredCount (Package-Format.ps1) refuse
+# an exception, nothing, a collection and another type than asked for. A query returns what the API returned and
+# holds no cast: the cast of nothing is 0, False or "" and would pass the guard. $guards counts each guard where it
+# is evaluated and has let the run pass; the receipt carries the counts.
 function Get-BomName($value, $what) {
-    $name = $bomNames[[int]$value]
+    # $value comes from a guard query of kind int. Called where its result is captured: it emits the name only.
+    $name = $bomNames[$value]
     if ($PackageBomStructures -notcontains $name) { throw "Unsupported: BOM structure $value ($name) of $what" }
+    Add-PackageGuardCheck $guards "bom_structure_known"
     return $name
 }
-function Assert-Rigid($matrix, $what) { $reason = Test-PackageRigid (Get-PackageFlat $matrix) $rotationTolerance; if ($reason) { throw "Unsupported: the placement of $what is not a rotation and a translation: $reason" } }
-
-# ---- parameters, holes and the features that repeat them (late-bound; a value that cannot be read is null) ----
-$script:featureNulls = 0
-function Read-Optional([scriptblock]$query) { try { return (& $query) } catch { $script:featureNulls++; return $null } }
-function Read-Value([scriptblock]$query, [ValidateSet("double", "bool", "int", "string")][string]$As) {
-    # A typed value, or $null when the read fails or the API returns nothing: a cast of $null would invent 0, False or "".
-    $raw = $null
-    try { $raw = & $query } catch { $script:featureNulls++; return $null }
-    if ($null -eq $raw) { return $null }
-    switch ($As) { "double" { return [double]$raw } "bool" { return [bool]$raw } "int" { return [int]$raw } default { return [string]$raw } }
+function Assert-Rigid($matrix, $what) {
+    $reason = Test-PackageRigid (Get-PackageFlat $matrix) $rotationTolerance
+    if ($reason) { throw "Unsupported: the placement of $what is not a rotation and a translation: $reason" }
+    Add-PackageGuardCheck $guards "rigid_placement"
 }
-# Read-Optional is for scalars and single objects only: a COM collection returned from a script block is
-# enumerated by PowerShell and arrives as an array. Collections are assigned directly, inside try.
+
+# ---- parameters, holes and the features that repeat them (late-bound) ----
+# What the API does not give is written as null, never as 0, False or an empty text: every optional value goes
+# through Get-OptionalValue or Get-OptionalObject (Package-Format.ps1), whose queries hold no cast. A collection is
+# assigned directly (one that leaves a script block is enumerated) and must exist before it is counted: a part whose
+# parameters, features or hole features cannot be listed stops the export.
 function Get-EnumName([string]$interface, [string]$property, $value) {
     if ($null -eq $value) { return $null }
     $type = $interop.GetType("Inventor.$interface"); $declared = $(if ($type) { $type.GetProperty($property) } else { $null })
     if ($declared -and $declared.PropertyType.IsEnum) { $name = [Enum]::GetName($declared.PropertyType, [int]$value); if ($name) { return $name } }
     return "$([int]$value)"
 }
-function Get-ObjectTypeName($object) { $value = Read-Value { $object.Type } "int"; if ($null -eq $value) { return $null }; $name = [Enum]::GetName($objectTypeEnum, $value); if ($name) { return $name }; return "ObjectTypeEnum $value" }
+function Get-ObjectTypeName($object) { $value = Get-OptionalValue { $object.Type } "int"; if ($null -eq $value) { return $null }; $name = [Enum]::GetName($objectTypeEnum, $value); if ($name) { return $name }; return "ObjectTypeEnum $value" }
 function Get-ParameterBrief($parameter) {
     if ($null -eq $parameter) { return $null }
-    return [ordered]@{ parameter = (Read-Value { $parameter.Name } "string"); expression = (Read-Value { $parameter.Expression } "string"); value = (Read-Value { $parameter.Value } "double"); units = (Read-Value { $parameter.Units } "string") }
+    return [ordered]@{ parameter = (Get-OptionalValue { $parameter.Name } "string"); expression = (Get-OptionalValue { $parameter.Expression } "string"); value = (Get-OptionalValue { $parameter.Value } "double"); units = (Get-OptionalValue { $parameter.Units } "string") }
 }
 function Get-PointMm($point) {
     # X, Y, Z of a point in millimetres, or $null when the point or one of its coordinates is not known.
     if ($null -eq $point) { return $null }
-    $x = Read-Value { $point.X } "double"; $y = Read-Value { $point.Y } "double"; $z = Read-Value { $point.Z } "double"
+    $x = Get-OptionalValue { $point.X } "double"; $y = Get-OptionalValue { $point.Y } "double"; $z = Get-OptionalValue { $point.Z } "double"
     if ($null -eq $x -or $null -eq $y -or $null -eq $z) { return $null }
     return @(($x * 10.0), ($y * 10.0), ($z * 10.0))
 }
-function Read-Parameters($definition, $units) {
-    # Every parameter of the part. A failure to list them is an error (the caller stops); a single value may be null.
+function Read-Parameters($definition, $units, $what) {
+    # Every parameter of the part. The parameters must be listable (the caller stops otherwise); a single value may be null.
     $all = $definition.Parameters
+    $count = Get-RequiredCount "parameters of $what" $all
     $kindOf = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
     foreach ($pair in @(@("model", "ModelParameters"), @("reference", "ReferenceParameters"), @("user", "UserParameters"))) {
         $collection = $all.GetType().InvokeMember($pair[1], [Reflection.BindingFlags]::GetProperty, $null, $all, $null)
-        for ($i = 1; $i -le [int]$collection.Count; $i++) { $kindOf[[string]$collection.Item($i).Name] = $pair[0] }
+        $members = Get-RequiredCount "$($pair[1]) of $what" $collection
+        for ($i = 1; $i -le $members; $i++) { $kindOf[(Get-RequiredValue "name of a parameter of $what" { $collection.Item($i).Name } -Kind string)] = $pair[0] }
     }
     $list = @()
-    for ($i = 1; $i -le [int]$all.Count; $i++) {
-        $parameter = $all.Item($i); $name = [string]$parameter.Name
-        $raw = Read-Optional { $parameter.Value }; $unitText = Read-Value { $parameter.Units } "string"
+    for ($i = 1; $i -le $count; $i++) {
+        $parameter = $all.Item($i); $name = Get-RequiredValue "name of parameter $i of $what" { $parameter.Name } -Kind string
+        $raw = Get-OptionalObject { $parameter.Value }; $unitText = Get-OptionalValue { $parameter.Units } "string"
         $value = $(if ($null -eq $raw -or $raw -is [string] -or $raw -is [bool]) { $raw } else { [double]$raw })
-        $text = $(if ($value -is [double]) { Read-Value { $units.GetStringFromValue($value, $unitText) } "string" } else { $null })
-        $list += [ordered]@{ name = $name; kind = $(if ($kindOf.ContainsKey($name)) { $kindOf[$name] } else { "other" }); expression = (Read-Value { $parameter.Expression } "string"); units = $unitText
-            value = $value; value_text = $text; comment = (Read-Value { $parameter.Comment } "string"); is_key = (Read-Value { $parameter.IsKey } "bool"); exposed_as_property = (Read-Value { $parameter.ExposedAsProperty } "bool") }
+        $text = $(if ($value -is [double]) { Get-OptionalValue { $units.GetStringFromValue($value, $unitText) } "string" } else { $null })
+        $list += [ordered]@{ name = $name; kind = $(if ($kindOf.ContainsKey($name)) { $kindOf[$name] } else { "other" }); expression = (Get-OptionalValue { $parameter.Expression } "string"); units = $unitText
+            value = $value; value_text = $text; comment = (Get-OptionalValue { $parameter.Comment } "string"); is_key = (Get-OptionalValue { $parameter.IsKey } "bool"); exposed_as_property = (Get-OptionalValue { $parameter.ExposedAsProperty } "bool") }
     }
     return ,$list
 }
-function Read-Features($definition) {
-    # The hole features and the pattern and mirror features of the part: @{ holes; patterns }.
+function Read-Features($definition, $what) {
+    # The hole features and the pattern and mirror features of the part. The features and the hole features must be
+    # listable; the parents and elements of one pattern and the centres of one hole may be unknown, and are then null.
     $features = $definition.Features
+    $featureCount = Get-RequiredCount "features of $what" $features
     $patterns = @()
-    for ($i = 1; $i -le [int]$features.Count; $i++) {
-        $feature = $features.Item($i); $typeName = Get-ObjectTypeName $feature
+    for ($i = 1; $i -le $featureCount; $i++) {
+        $feature = $features.Item($i)
+        $typeCode = Get-RequiredValue "type of feature $i of $what" { $feature.Type } -Kind int
+        $typeName = [Enum]::GetName($objectTypeEnum, $typeCode); if (-not $typeName) { $typeName = "ObjectTypeEnum $typeCode" }
         if ($typeName -notmatch 'Pattern|Mirror') { continue }
-        $parents = @(); $parentFeatures = $null
-        try { $parentFeatures = $feature.ParentFeatures; for ($j = 1; $j -le [int]$parentFeatures.Count; $j++) { $parents += [string]$parentFeatures.Item($j).Name } } catch { $script:featureNulls++; $parents = $null }
+        $parents = $null; $parentFeatures = $null
+        try {
+            $parentFeatures = $feature.ParentFeatures
+            if ($null -ne $parentFeatures) {
+                $parentCount = Get-RequiredCount "parent features of a feature of $what" $parentFeatures; $parents = @()
+                for ($j = 1; $j -le $parentCount; $j++) { $parents += (Get-RequiredValue "name of a parent feature in $what" { $parentFeatures.Item($j).Name } -Kind string) }
+            }
+        } catch { $parents = $null }
+        if ($null -eq $parents) { $script:PackageOptionalReadFailures++ }
         $elements = $null; $suppressedElements = $null; $patternElements = $null
-        try { $patternElements = $feature.PatternElements; $elements = [int]$patternElements.Count } catch { $script:featureNulls++; $elements = $null }
-        if ($null -ne $elements) { $suppressedElements = 0; for ($j = 1; $j -le $elements; $j++) { if (Read-Value { $patternElements.Item($j).Suppressed } "bool") { $suppressedElements++ } } }
-        $patterns += [ordered]@{ name = [string]$feature.Name; type = $typeName; suppressed = (Read-Value { $feature.Suppressed } "bool"); parents = $parents
-            elements = $elements; elements_suppressed = $suppressedElements; instances = $(if ($null -ne $elements) { $elements - $suppressedElements } else { $null }) }
+        try { $patternElements = $feature.PatternElements } catch { $patternElements = $null }
+        if ($null -ne $patternElements) { $elements = Get-OptionalValue { $patternElements.Count } "int" }
+        if ($null -eq $elements) { $script:PackageOptionalReadFailures++ }
+        else {
+            $suppressedElements = 0
+            for ($j = 1; $j -le $elements; $j++) {
+                $flag = Get-OptionalValue { $patternElements.Item($j).Suppressed } "bool"
+                if ($null -eq $flag) { $suppressedElements = $null; $script:PackageOptionalReadFailures++; break }
+                if ($flag) { $suppressedElements++ }
+            }
+        }
+        $patterns += [ordered]@{ name = (Get-RequiredValue "name of feature $i of $what" { $feature.Name } -Kind string); type = $typeName; suppressed = (Get-OptionalValue { $feature.Suppressed } "bool"); parents = $parents
+            elements = $elements; elements_suppressed = $suppressedElements; instances = $(if ($null -ne $elements -and $null -ne $suppressedElements) { $elements - $suppressedElements } else { $null }) }
     }
     $holes = @(); $holeFeatures = $features.HoleFeatures
-    for ($i = 1; $i -le [int]$holeFeatures.Count; $i++) {
-        $hole = $holeFeatures.Item($i); $name = [string]$hole.Name
-        $holeType = Get-EnumName "HoleFeature" "HoleType" (Read-Value { $hole.HoleType } "int"); $tapped = Read-Value { $hole.Tapped } "bool"
-        $entry = [ordered]@{ name = $name; suppressed = (Read-Value { $hole.Suppressed } "bool"); hole_type = $holeType; extent_type = (Get-EnumName "HoleFeature" "ExtentType" (Read-Value { $hole.ExtentType } "int"))
-            extended_name = (Read-Value { $hole.ExtendedName } "string"); tapped = $tapped
-            diameter = (Get-ParameterBrief (Read-Optional { $hole.HoleDiameter })); depth_cm = (Read-Value { $hole.Depth } "double")
+    $holeCount = Get-RequiredCount "hole features of $what" $holeFeatures
+    for ($i = 1; $i -le $holeCount; $i++) {
+        $hole = $holeFeatures.Item($i); $name = Get-RequiredValue "name of hole feature $i of $what" { $hole.Name } -Kind string
+        $holeType = Get-EnumName "HoleFeature" "HoleType" (Get-OptionalValue { $hole.HoleType } "int"); $tapped = Get-OptionalValue { $hole.Tapped } "bool"
+        $entry = [ordered]@{ name = $name; suppressed = (Get-OptionalValue { $hole.Suppressed } "bool"); hole_type = $holeType; extent_type = (Get-EnumName "HoleFeature" "ExtentType" (Get-OptionalValue { $hole.ExtentType } "int"))
+            extended_name = (Get-OptionalValue { $hole.ExtendedName } "string"); tapped = $tapped
+            diameter = (Get-ParameterBrief (Get-OptionalObject { $hole.HoleDiameter })); depth_cm = (Get-OptionalValue { $hole.Depth } "double")
             counterbore = $null; countersink = $null; spotface = $null; thread = $null; clearance = $null; centres_mm = $null; repeated_by = @() }
-        if ($holeType -eq "kCounterBoreHole") { $entry.counterbore = [ordered]@{ diameter = (Get-ParameterBrief (Read-Optional { $hole.CBoreDiameter })); depth = (Get-ParameterBrief (Read-Optional { $hole.CBoreDepth })) } }
-        if ($holeType -eq "kCounterSinkHole") { $entry.countersink = [ordered]@{ diameter = (Get-ParameterBrief (Read-Optional { $hole.CSinkDiameter })); angle = (Get-ParameterBrief (Read-Optional { $hole.CSinkAngle })) } }
-        if ($holeType -eq "kSpotFaceHole") { $entry.spotface = [ordered]@{ diameter = (Get-ParameterBrief (Read-Optional { $hole.SpotFaceDiameter })); depth = (Get-ParameterBrief (Read-Optional { $hole.SpotFaceDepth })) } }
+        if ($holeType -eq "kCounterBoreHole") { $entry.counterbore = [ordered]@{ diameter = (Get-ParameterBrief (Get-OptionalObject { $hole.CBoreDiameter })); depth = (Get-ParameterBrief (Get-OptionalObject { $hole.CBoreDepth })) } }
+        if ($holeType -eq "kCounterSinkHole") { $entry.countersink = [ordered]@{ diameter = (Get-ParameterBrief (Get-OptionalObject { $hole.CSinkDiameter })); angle = (Get-ParameterBrief (Get-OptionalObject { $hole.CSinkAngle })) } }
+        if ($holeType -eq "kSpotFaceHole") { $entry.spotface = [ordered]@{ diameter = (Get-ParameterBrief (Get-OptionalObject { $hole.SpotFaceDiameter })); depth = (Get-ParameterBrief (Get-OptionalObject { $hole.SpotFaceDepth })) } }
         if ($tapped -eq $true) {
             # A tapped hole has no hole diameter: its size is in the thread data, in the unit of the thread standard.
-            $tap = Read-Optional { $hole.TapInfo }
+            $tap = Get-OptionalObject { $hole.TapInfo }
             if ($tap) {
-                $metric = Read-Value { $tap.Metric } "bool"
-                $entry.thread = [ordered]@{ designation = (Read-Value { $tap.ThreadDesignation } "string"); thread_type = (Read-Value { $tap.ThreadType } "string"); class = (Read-Value { $tap.Class } "string")
-                    internal = (Read-Value { $tap.Internal } "bool"); right_handed = (Read-Value { $tap.RightHanded } "bool"); metric = $metric; unit = $(if ($null -eq $metric) { $null } elseif ($metric) { "mm" } else { "in" })
-                    nominal_size = (Read-Value { $tap.NominalSize } "string"); pitch = (Read-Value { $tap.Pitch } "double"); tap_drill_diameter = (Read-Value { $tap.TapDrillDiameter } "double")
-                    major_diameter_min = (Read-Value { $tap.MajorDiameterMin } "double"); major_diameter_max = (Read-Value { $tap.MajorDiameterMax } "double")
-                    minor_diameter_min = (Read-Value { $tap.MinorDiameterMin } "double"); minor_diameter_max = (Read-Value { $tap.MinorDiameterMax } "double")
-                    pitch_diameter_min = (Read-Value { $tap.PitchDiameterMin } "double"); pitch_diameter_max = (Read-Value { $tap.PitchDiameterMax } "double")
-                    full_thread_depth = (Read-Value { $tap.FullThreadDepth } "bool"); thread_depth = (Get-ParameterBrief (Read-Optional { $tap.ThreadDepth })) }
+                $metric = Get-OptionalValue { $tap.Metric } "bool"
+                $entry.thread = [ordered]@{ designation = (Get-OptionalValue { $tap.ThreadDesignation } "string"); thread_type = (Get-OptionalValue { $tap.ThreadType } "string"); class = (Get-OptionalValue { $tap.Class } "string")
+                    internal = (Get-OptionalValue { $tap.Internal } "bool"); right_handed = (Get-OptionalValue { $tap.RightHanded } "bool"); metric = $metric; unit = $(if ($null -eq $metric) { $null } elseif ($metric) { "mm" } else { "in" })
+                    nominal_size = (Get-OptionalValue { $tap.NominalSize } "string"); pitch = (Get-OptionalValue { $tap.Pitch } "double"); tap_drill_diameter = (Get-OptionalValue { $tap.TapDrillDiameter } "double")
+                    major_diameter_min = (Get-OptionalValue { $tap.MajorDiameterMin } "double"); major_diameter_max = (Get-OptionalValue { $tap.MajorDiameterMax } "double")
+                    minor_diameter_min = (Get-OptionalValue { $tap.MinorDiameterMin } "double"); minor_diameter_max = (Get-OptionalValue { $tap.MinorDiameterMax } "double")
+                    pitch_diameter_min = (Get-OptionalValue { $tap.PitchDiameterMin } "double"); pitch_diameter_max = (Get-OptionalValue { $tap.PitchDiameterMax } "double")
+                    full_thread_depth = (Get-OptionalValue { $tap.FullThreadDepth } "bool"); thread_depth = (Get-ParameterBrief (Get-OptionalObject { $tap.ThreadDepth })) }
             }
         }
-        if ((Read-Value { $hole.IsClearanceHole } "bool") -eq $true) {
-            $clearance = Read-Optional { $hole.ClearanceInfo }
-            if ($clearance) { $entry.clearance = [ordered]@{ standard = (Read-Value { $clearance.FastenerStandard } "string"); fastener_type = (Read-Value { $clearance.FastenerType } "string"); size = (Read-Value { $clearance.FastenerSize } "string")
-                    fit = (Get-EnumName "HoleClearanceInfo" "FastenerFitType" (Read-Value { $clearance.FastenerFitType } "int")) } }
+        if ((Get-OptionalValue { $hole.IsClearanceHole } "bool") -eq $true) {
+            $clearance = Get-OptionalObject { $hole.ClearanceInfo }
+            if ($clearance) { $entry.clearance = [ordered]@{ standard = (Get-OptionalValue { $clearance.FastenerStandard } "string"); fastener_type = (Get-OptionalValue { $clearance.FastenerType } "string"); size = (Get-OptionalValue { $clearance.FastenerSize } "string")
+                    fit = (Get-EnumName "HoleClearanceInfo" "FastenerFitType" (Get-OptionalValue { $clearance.FastenerFitType } "int")) } }
         }
+        $centres = $null; $centrePoints = $null
         try {
-            $centrePoints = $hole.HoleCenterPoints; $centres = @()
-            for ($j = 1; $j -le [int]$centrePoints.Count; $j++) {
-                $item = $centrePoints.Item($j); $itemType = Get-ObjectTypeName $item
-                $point = $(if ($itemType -eq "kSketchPointObject") { Read-Optional { $item.Geometry3d } } elseif ($itemType -eq "kWorkPointObject") { Read-Optional { $item.Point } } else { $item })
-                $centres += ,(Get-PointMm $point)
+            $centrePoints = $hole.HoleCenterPoints
+            if ($null -ne $centrePoints) {
+                $centreCount = Get-RequiredCount "centres of a hole of $what" $centrePoints; $centres = @()
+                for ($j = 1; $j -le $centreCount; $j++) {
+                    $item = $centrePoints.Item($j); $itemType = Get-ObjectTypeName $item
+                    $point = $(if ($itemType -eq "kSketchPointObject") { Get-OptionalObject { $item.Geometry3d } } elseif ($itemType -eq "kWorkPointObject") { Get-OptionalObject { $item.Point } } else { $item })
+                    $centres += ,(Get-PointMm $point)
+                }
             }
-            $entry.centres_mm = $centres
-        } catch { $script:featureNulls++; $entry.centres_mm = $null }
+        } catch { $centres = $null }
+        if ($null -eq $centres) { $script:PackageOptionalReadFailures++ }
+        $entry.centres_mm = $centres
         $entry.repeated_by = @($patterns | Where-Object { @($_.parents) -contains $name } | ForEach-Object { $_.name })
         $holes += $entry
     }
     return [pscustomobject]@{ holes = $holes; patterns = $patterns }
 }
 
-$session = Start-IsolatedInventor
-$app = $session.App
-Log "Owned Inventor instance pid $($session.Pid) ($($session.Version) build $($session.Build)); ownership via $($session.OwnershipMethod)"
-$project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $validation = $null
-$watchdog = Start-DialogWatchdog -OwnerPid $session.Pid -MainFrameHandle ([int64]$app.MainFrameHWND) -LogPath (Join-Path $WorkDirectory "dialogs.log")
+# ---- the guards of this run, and how often each was evaluated and let the run pass (0: the run did not reach it) ----
+$guards = New-PackageGuardLedger @("inputs_bound_to_the_acquisition", "document_type_known", "no_document_has_a_view", "primary_model_state", "master_positional_representation_and_level_of_detail", "no_factory",
+    "occurrence_not_suppressed_adaptive_or_substitute", "occurrence_places_a_bound_document", "rigid_placement", "bom_structure_known", "collection_gives_as_many_items_as_it_counts",
+    "definition_equals_native_occurrence", "instance_has_its_documents_children", "placement_that_differs_has_a_flexible_occurrence_above", "translator_reports_successful",
+    "file_schema_names_the_ap242_schema_alone", "attempts_have_the_same_data_section", "step_length_unit_determined", "invisibility_form_understood", "opened_files_unchanged_on_disk", "mirror_unchanged",
+    "package_checked_before_package_json", "package_checked_with_package_json", "run_status_allows_a_complete_package")
+$session = $null; $app = $null; $project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $completion = $null
 $inputs = @(); $documents = [ordered]@{}; $rootRecord = $null; $script:context = @(); $translatorOptions = $null; $rawOutputs = [ordered]@{}; $headerNames = @(); $partTimings = @(); $timings = [ordered]@{}
-$retried = @(); $packageWritten = $false; $clock = [Diagnostics.Stopwatch]::StartNew()
+$retried = @(); $packageWritten = $false; $mirrorBefore = $null; $mirror = $null; $status = "FAILED"; $withheld = $null
+$changed = @(); $placed = @(); $notExported = @(); $forbidden = @(); $packageComplete = $false
+# Inventor is started INSIDE the try whose finally stops it: nothing between the start and the try can fail and
+# leave the instance running.
 try {
+    # every file of the mirror, before Inventor exists: afterwards none may have changed, appeared or disappeared
+    $mirrorBefore = Get-PackageDirectoryHashes $WorkspaceRoot
+    $session = Start-IsolatedInventor
+    $app = $session.App
+    Log "Owned Inventor instance pid $($session.Pid) ($($session.Version) build $($session.Build)); ownership via $($session.OwnershipMethod)"
+    $watchdog = Start-DialogWatchdog -OwnerPid $session.Pid -MainFrameHandle ([int64]$app.MainFrameHWND) -LogPath (Join-Path $WorkDirectory "dialogs.log")
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     $project = Use-TemporaryProject $app (Join-Path $WorkspaceRoot "$ProjectName.ipj") $TemplateProject
     Log "Project: $($project.Active) (entry pre-existed: $($project.EntryPreExisted); added: $($project.AddedEntry); activated by this run: $($project.Activated))"
     $translator = $app.ApplicationAddIns.ItemById($stepTranslatorClsid); if (-not $translator.Activated) { $translator.Activate() }
@@ -261,85 +306,111 @@ try {
     Log "Opening $(Relative $NativeAssembly)"
     $asm = $app.Documents.Open($NativeAssembly, $false)
     try {
-        if ([int]$asm.DocumentType -ne $kAssembly) { throw "Not an assembly document: $NativeAssembly" }
+        if ((Get-RequiredValue "document type of the root" { $asm.DocumentType } -Kind int) -ne $kAssembly) { throw "Not an assembly document: $NativeAssembly" }
         # ---- bind every opened document BEFORE anything is read for the package ----
         $inputs = Confirm-AcquiredInputs $asm $acqJson $invJson
+        Add-PackageGuardCheck $guards "inputs_bound_to_the_acquisition" @($inputs).Count
         Log "Bound $($inputs.Count) opened documents to acquisition/inventory ($(@($inputs | Where-Object { $_.kind -eq 'assembly' }).Count) assemblies, $(@($inputs | Where-Object { $_.kind -eq 'part' }).Count) parts)"
         $timings.open_and_bind_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
         # ---- the documents: identity, model state, no view ----
         foreach ($doc in @($asm) + @($asm.AllReferencedDocuments)) {
-            $file = [string]$doc.FullFileName; $lower = $file.ToLowerInvariant()
+            $file = Get-RequiredValue "file name of an opened document" { $doc.FullFileName } -Kind string; $lower = $file.ToLowerInvariant()
             if ($documents.Contains($lower)) { continue }
             $what = Relative $file
             $acquired = $acqByPath[$lower]; if (-not $acquired) { throw "Opened document is not in the acquisition record: $what" }
             $listed = $invByVersion[[string]$acquired.version_id]; if (-not $listed) { throw "Acquisition version $($acquired.version_id) is not in the dependency inventory" }
-            $kind = $(if ([int]$doc.DocumentType -eq $kAssembly) { "assembly" } elseif ([int]$doc.DocumentType -eq $kPart) { "part" } else { throw "Unsupported: document type $([int]$doc.DocumentType) of $what" })
-            $views = Require "views of '$what'" { [int]$doc.Views.Count } -Kind int
+            $typeCode = Get-RequiredValue "document type of '$what'" { $doc.DocumentType } -Kind int
+            $kind = $(if ($typeCode -eq $kAssembly) { "assembly" } elseif ($typeCode -eq $kPart) { "part" } else { throw "Unsupported: document type $typeCode of $what" })
+            Add-PackageGuardCheck $guards "document_type_known"
+            # the views are asked for as a collection that must exist: the count of nothing would be 0, "no view"
+            $viewList = $doc.Views
+            $views = Get-RequiredCount "views of '$what'" $viewList
             if ($views -gt 0) { throw "Refused: '$what' has $views view(s); a STEP file exported from it would carry that view's camera" }
+            Add-PackageGuardCheck $guards "no_document_has_a_view"
             $definition = $doc.ComponentDefinition
-            $state = Require "model state of '$what'" { $definition.ModelStates.ActiveModelState.Name } -Kind string
+            $state = Get-RequiredValue "model state of '$what'" { $definition.ModelStates.ActiveModelState.Name } -Kind string
             if ($masterNames -notcontains $state) { throw "Unsupported: '$what' is in model state '$state' (tested subset: primary model states only)" }
+            Add-PackageGuardCheck $guards "primary_model_state"
             $vault = New-PackageVaultBlock -VaultId $vaultId -AcquisitionRecord $acquired -InventoryRecord $listed
             $folder = Get-PackageDirectoryName $vault.master_id $state
             foreach ($other in $documents.Values) { if ($other.Folder -ieq $folder) { throw "Refused: '$what' and '$($other.What)' would share the directory $folder" } }
+            $unitCode = Get-OptionalValue { $doc.UnitsOfMeasure.LengthUnits } "int"
             $documents[$lower] = [pscustomobject]@{ Document = $doc; What = $what; Kind = $kind; Name = [IO.Path]::GetFileNameWithoutExtension($file); ModelState = $state; Vault = $vault; Folder = $folder
-                Placed = 0; Children = @(); ChildByName = @{}; LengthUnit = $lengthUnitNames[[int]$doc.UnitsOfMeasure.LengthUnits]; DisplayName = (Read-Value { $doc.DisplayName } "string") }
+                Placed = 0; Children = @(); ChildByName = @{}; LengthUnit = $(if ($null -ne $unitCode) { $lengthUnitNames[$unitCode] } else { $null }); DisplayName = (Get-OptionalValue { $doc.DisplayName } "string") }
         }
         $rootRecord = $documents[$NativeAssembly.ToLowerInvariant()]; $rootRecord.Placed = 1
         $rootDef = $asm.ComponentDefinition
-        if (Require "root IsiAssemblyFactory" { $rootDef.IsiAssemblyFactory }) { throw "Unsupported: root assembly is an iAssembly factory" }
+        if (Get-RequiredValue "root IsiAssemblyFactory" { $rootDef.IsiAssemblyFactory }) { throw "Unsupported: root assembly is an iAssembly factory" }
+        Add-PackageGuardCheck $guards "no_factory"
         function Get-Target($o, $what) {
-            # The record of the document an occurrence places, with the guards on that occurrence.
-            if (Require "Suppressed of '$what'" { $o.Suppressed }) { throw "Unsupported: suppressed occurrence '$what' (its document is not loaded; the package mode does not export it yet)" }
-            if (Require "Adaptive of '$what'" { $o.Adaptive }) { throw "Unsupported: adaptive occurrence '$what'" }
-            if (Require "IsSubstituteOccurrence of '$what'" { $o.IsSubstituteOccurrence }) { throw "Unsupported: substitute (LOD) occurrence '$what'" }
-            $target = $documents[([string]$o.Definition.Document.FullFileName).ToLowerInvariant()]
+            # The record of the document an occurrence places, with the guards on that occurrence. It emits the record only.
+            if (Get-RequiredValue "Suppressed of '$what'" { $o.Suppressed }) { throw "Unsupported: suppressed occurrence '$what' (its document is not loaded; the package mode does not export it yet)" }
+            if (Get-RequiredValue "Adaptive of '$what'" { $o.Adaptive }) { throw "Unsupported: adaptive occurrence '$what'" }
+            if (Get-RequiredValue "IsSubstituteOccurrence of '$what'" { $o.IsSubstituteOccurrence }) { throw "Unsupported: substitute (LOD) occurrence '$what'" }
+            Add-PackageGuardCheck $guards "occurrence_not_suppressed_adaptive_or_substitute"
+            $placedFile = Get-RequiredValue "document of '$what'" { $o.Definition.Document.FullFileName } -Kind string
+            $target = $documents[$placedFile.ToLowerInvariant()]
             if (-not $target) { throw "Occurrence '$what' places a document that is not among the opened, bound documents" }
-            $kind = $(if ([int]$o.DefinitionDocumentType -eq $kAssembly) { "assembly" } elseif ([int]$o.DefinitionDocumentType -eq $kPart) { "part" } else { "other" })
+            $placedType = Get-RequiredValue "DefinitionDocumentType of '$what'" { $o.DefinitionDocumentType } -Kind int
+            $kind = $(if ($placedType -eq $kAssembly) { "assembly" } elseif ($placedType -eq $kPart) { "part" } else { "other" })
             if ($kind -ne $target.Kind) { throw "Occurrence '$what' is a $kind and its document is a $($target.Kind)" }
-            $state = Require "ActiveModelState of '$what'" { $o.ActiveModelState } -Kind string
+            Add-PackageGuardCheck $guards "occurrence_places_a_bound_document"
+            $state = Get-RequiredValue "ActiveModelState of '$what'" { $o.ActiveModelState } -Kind string
             if ($state -ne $target.ModelState) { throw "Unsupported: occurrence '$what' uses model state '$state' but its document's active state is '$($target.ModelState)'" }
+            Add-PackageGuardCheck $guards "primary_model_state"
             if ($kind -eq "assembly") {
-                if (Require "IsiAssemblyFactory of '$what'" { $o.Definition.IsiAssemblyFactory }) { throw "Unsupported: nested iAssembly factory '$what'" }
-                $lod = Require "ActiveLevelOfDetailRepresentation of '$what'" { $o.ActiveLevelOfDetailRepresentation } -Kind string
-                $pos = Require "ActivePositionalRepresentation of '$what'" { $o.ActivePositionalRepresentation } -Kind string
+                if (Get-RequiredValue "IsiAssemblyFactory of '$what'" { $o.Definition.IsiAssemblyFactory }) { throw "Unsupported: nested iAssembly factory '$what'" }
+                $lod = Get-RequiredValue "ActiveLevelOfDetailRepresentation of '$what'" { $o.ActiveLevelOfDetailRepresentation } -Kind string
+                $pos = Get-RequiredValue "ActivePositionalRepresentation of '$what'" { $o.ActivePositionalRepresentation } -Kind string
                 if ($masterNames -notcontains $lod) { throw "Unsupported: assembly occurrence '$what' uses level of detail '$lod'" }
                 if ($masterNames -notcontains $pos) { throw "Unsupported: assembly occurrence '$what' uses positional representation '$pos'" }
-            } elseif (Require "IsiPartFactory of '$what'" { $o.Definition.IsiPartFactory }) { throw "Unsupported: iPart factory ('$what')" }
+                Add-PackageGuardCheck $guards "master_positional_representation_and_level_of_detail"
+            } else {
+                if (Get-RequiredValue "IsiPartFactory of '$what'" { $o.Definition.IsiPartFactory }) { throw "Unsupported: iPart factory ('$what')" }
+            }
+            Add-PackageGuardCheck $guards "no_factory"
             return $target
         }
         function Get-Flags($o, $kind, $what) {
             # The BOM structure and the flags of an occurrence, each a required query.
-            return [ordered]@{ bom_structure = (Get-BomName (Require "BOMStructure of '$what'" { [int]$o.BOMStructure } -Kind int) "'$what'"); visible = (Require "Visible of '$what'" { $o.Visible }); suppressed = $false
-                grounded = (Require "Grounded of '$what'" { $o.Grounded }); flexible = $(if ($kind -eq "assembly") { Require "Flexible of '$what'" { $o.Flexible } } else { $false }); mirrored = $false }
+            return [ordered]@{ bom_structure = (Get-BomName (Get-RequiredValue "BOMStructure of '$what'" { $o.BOMStructure } -Kind int) "'$what'"); visible = (Get-RequiredValue "Visible of '$what'" { $o.Visible }); suppressed = $false
+                grounded = (Get-RequiredValue "Grounded of '$what'" { $o.Grounded }); flexible = $(if ($kind -eq "assembly") { Get-RequiredValue "Flexible of '$what'" { $o.Flexible } } else { $false }); mirrored = $false }
         }
         # ---- each assembly document once: its children as its own component definition holds them ----
         foreach ($record in @($documents.Values | Where-Object { $_.Kind -eq "assembly" })) {
             $definition = $record.Document.ComponentDefinition
-            $positional = Require "positional representation of '$($record.What)'" { $definition.RepresentationsManager.ActivePositionalRepresentation.Name } -Kind string
-            $detail = Require "level of detail of '$($record.What)'" { $definition.RepresentationsManager.ActiveLevelOfDetailRepresentation.Name } -Kind string
+            $positional = Get-RequiredValue "positional representation of '$($record.What)'" { $definition.RepresentationsManager.ActivePositionalRepresentation.Name } -Kind string
+            $detail = Get-RequiredValue "level of detail of '$($record.What)'" { $definition.RepresentationsManager.ActiveLevelOfDetailRepresentation.Name } -Kind string
             if ($masterNames -notcontains $positional) { throw "Unsupported: '$($record.What)' is in positional representation '$positional' (master required)" }
             if ($masterNames -notcontains $detail) { throw "Unsupported: '$($record.What)' is in level of detail '$detail' (master required)" }
-            $record | Add-Member -NotePropertyName Representations -NotePropertyValue ([ordered]@{ design_view_representation = (Read-Value { $definition.RepresentationsManager.ActiveDesignViewRepresentation.Name } "string"); positional_representation = $positional; level_of_detail = $detail })
+            Add-PackageGuardCheck $guards "master_positional_representation_and_level_of_detail"
+            $record | Add-Member -NotePropertyName Representations -NotePropertyValue ([ordered]@{ design_view_representation = (Get-OptionalValue { $definition.RepresentationsManager.ActiveDesignViewRepresentation.Name } "string"); positional_representation = $positional; level_of_detail = $detail })
+            # the occurrences are a collection that must exist and must give as many items as it counts
+            $occurrenceList = $definition.Occurrences
+            $expected = Get-RequiredCount "occurrences of '$($record.What)'" $occurrenceList
             $children = @()
-            foreach ($o in $definition.Occurrences) {
-                $name = [string]$o.Name; $what = "$($record.Name) > $name"
-                if (-not $name -or $name.Contains("/") -or $record.ChildByName.ContainsKey($name)) { throw "Unsupported: occurrence name '$name' in $($record.What) is empty, repeated or holds '/'" }
+            foreach ($o in $occurrenceList) {
+                $name = Get-RequiredValue "name of an occurrence in '$($record.What)'" { $o.Name } -Kind string; $what = "$($record.Name) > $name"
+                if ($name.Contains("/") -or $record.ChildByName.ContainsKey($name)) { throw "Unsupported: occurrence name '$name' in $($record.What) is repeated or holds '/'" }
                 $target = Get-Target $o $what
                 $transform = Cells $o.Transformation; Assert-Rigid $transform "'$what'"
                 $child = [ordered]@{ name = $name; kind = $target.Kind; master_id = $target.Vault.master_id; model_state = $target.ModelState; transform = $transform }
                 $flags = Get-Flags $o $target.Kind $what; foreach ($flag in $flags.Keys) { $child[$flag] = $flags[$flag] }
                 $record.ChildByName[$name] = $child; $children += $child
             }
+            if ($children.Count -ne $expected) { throw "Refused: '$($record.What)' counts $expected occurrences and gave $($children.Count)" }
+            Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
             $record.Children = $children
         }
         $timings.definitions_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
         # ---- every occurrence in the context of the root ----
         function Walk($occurrences, $parentPath, $parentWorld, $parentRecord, $flexibleAbove) {
             # Called as a statement: files every occurrence in $script:context and goes into the sub-assemblies.
+            $instance = $(if (@($parentPath).Count -gt 0) { "the instance '$($parentPath -join '/')'" } else { "the root" })
+            $expected = Get-RequiredCount "occurrences of $instance of $($parentRecord.What)" $occurrences
             $names = @()
             foreach ($o in $occurrences) {
-                $name = [string]$o.Name; $path = @($parentPath) + $name; $id = $path -join "/"; $names += $name
+                $name = Get-RequiredValue "name of an occurrence of $instance" { $o.Name } -Kind string; $path = @($parentPath) + $name; $id = $path -join "/"; $names += $name
                 $definition = $parentRecord.ChildByName[$name]
                 if (-not $definition) { throw "Occurrence '$id' is not a child its document $($parentRecord.What) defines" }
                 $target = Get-Target $o $id
@@ -348,23 +419,31 @@ try {
                 $local = Mul (InvRigid $parentWorld) $world
                 if ($path.Count -gt 1) {
                     # the definition read from the document must be what Inventor holds for this proxy
-                    $native = Cells $o.NativeObject.Transformation; $check = Deviation $native $definition.transform
+                    $nativeOccurrence = $o.NativeObject
+                    Assert-RequiredObject "native occurrence of '$id'" $nativeOccurrence
+                    $native = Cells $nativeOccurrence.Transformation; $check = Deviation $native $definition.transform
                     if ($check.rotation -gt 0 -or $check.length -gt 0) { throw "Occurrence '$id': the placement its document defines is not the one its native occurrence has" }
+                    Add-PackageGuardCheck $guards "definition_equals_native_occurrence"
                 }
                 $deviation = Deviation $local $definition.transform
                 $differs = ($deviation.rotation -gt $rotationTolerance -or $deviation.length -gt $lengthTolerance)
                 if ($differs -and -not $flexibleAbove) { throw "Refused: the placement of '$id' differs from its definition (rotation $($deviation.rotation), length $($deviation.length) cm) and no enclosing occurrence is flexible" }
+                Add-PackageGuardCheck $guards "placement_that_differs_has_a_flexible_occurrence_above"
                 $flags = Get-Flags $o $target.Kind $id
                 $entry = [ordered]@{ path = $path; kind = $target.Kind; master_id = $target.Vault.master_id; model_state = $target.ModelState; transform = $local; transform_root = $world; differs_from_definition = $differs }
                 foreach ($flag in $flags.Keys) { $entry[$flag] = $flags[$flag] }
                 $entry.flags_that_differ_from_definition = @($flags.Keys | Where-Object { $flags[$_] -ne $definition[$_] })
                 $script:context += $entry; $target.Placed++
-                if ($target.Kind -eq "assembly") { Walk $o.SubOccurrences $path $world $target ($flexibleAbove -or $flags.flexible) }
+                if ($target.Kind -eq "assembly") { $subOccurrences = $o.SubOccurrences; Walk $subOccurrences $path $world $target ($flexibleAbove -or $flags.flexible) }
             }
+            if ($names.Count -ne $expected) { throw "Refused: $instance of $($parentRecord.What) counts $expected occurrences and gave $($names.Count)" }
+            Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
             $defined = @($parentRecord.Children | ForEach-Object { $_.name })
-            if (($names -join "/") -cne ($defined -join "/")) { throw "Refused: the instance '$($parentPath -join '/')' of $($parentRecord.What) does not have the children its document defines" }
+            if (($names -join "/") -cne ($defined -join "/")) { throw "Refused: $instance of $($parentRecord.What) does not have the children its document defines" }
+            Add-PackageGuardCheck $guards "instance_has_its_documents_children"
         }
-        Walk $rootDef.Occurrences @() $Identity $rootRecord $false
+        $rootOccurrences = $rootDef.Occurrences
+        Walk $rootOccurrences @() $Identity $rootRecord $false
         $timings.context_walk_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
         $differing = @($script:context | Where-Object { $_.differs_from_definition }).Count
         Log "Occurrences in context: $(@($script:context | Where-Object { $_.kind -eq 'part' }).Count) part, $(@($script:context | Where-Object { $_.kind -eq 'assembly' }).Count) sub-assembly; $differing differ from their definition; flags that differ from the definition on $(@($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count)"
@@ -373,7 +452,8 @@ try {
         # the usual data section (AUTOMOTIVE_DESIGN, FEATURE_BASED_PROCESS_PLANNING, PROCESS_PLANNING_SCHEMA; what
         # was seen is in windows/README.md). Why is not known. Such a file is not repaired: the part is exported
         # again, a file is accepted only when it names the AP242 schema alone, every attempt must have the same
-        # data section, and every attempt is recorded in the receipt and kept in WORK.
+        # data section, and every attempt is recorded in the receipt and kept in WORK. The limit of three attempts
+        # is not to be raised: a part that fails three times stops the run and is reported.
         $exported = @{}
         foreach ($record in $documents.Values) {
             if ($record.Placed -eq 0 -or $record.Kind -ne "part") { continue }
@@ -384,7 +464,7 @@ try {
             for ($attempt = 1; $attempt -le $maximumAttempts -and $null -eq $rawInfo; $attempt++) {
                 $ctx = $to.CreateTranslationContext(); $ctx.Type = $kFileBrowseIOMechanism
                 $opts = $to.CreateNameValueMap()
-                if (-not $translator.HasSaveCopyAsOptions($doc, $ctx, $opts)) { throw "The STEP translator reports no options for '$($record.What)'" }
+                if (-not (Get-RequiredValue "HasSaveCopyAsOptions for '$($record.What)'" { $translator.HasSaveCopyAsOptions($doc, $ctx, $opts) })) { throw "The STEP translator reports no options for '$($record.What)'" }
                 Set-MapValue $opts "ApplicationProtocolType" 5; Set-MapValue $opts "IncludeSketches" $false
                 foreach ($option in @("Author", "Organization", "Authorization", "Description")) { Set-MapValue $opts $option "" }
                 $options = Read-Map $opts
@@ -395,24 +475,30 @@ try {
                 $medium = $to.CreateDataMedium(); $medium.FileName = $candidate
                 $translator.SaveCopyAs($doc, $ctx, $opts, $medium)
                 if (-not (Test-Path -LiteralPath $candidate)) { throw "The translator wrote no file for '$($record.What)'" }
+                # the translator has to say "Successful": no result at all is not a success
                 $result = (Read-Map $opts)["Translation Result"]
-                if ($null -ne $result -and $result -ne "Successful") { throw "The translator reports '$result' for '$($record.What)'" }
+                if ($result -isnot [string] -or $result -cne "Successful") { throw "The translator did not report 'Successful' for '$($record.What)': it reported '$result'" }
+                Add-PackageGuardCheck $guards "translator_reports_successful"
                 $info = Get-StepFileInfo -Path $candidate
                 $accepted = (@($info.header.schemas).Count -eq 1 -and $info.header.protocol -eq "AP242")
                 $attempts += [ordered]@{ attempt = $attempt; file = [IO.Path]::GetFileName($candidate); schemas = @($info.header.schemas); accepted = $accepted; sha256 = $info.sha256; data_sha256 = $info.data_sha256; bytes = $info.bytes }
                 if ($accepted) { $rawInfo = $info; $rawPath = $candidate } else { Log "  $($record.Folder): attempt $attempt names $(@($info.header.schemas).Count) schemas in FILE_SCHEMA ($(@($info.header.schemas) -join ' | ')); not accepted" }
             }
             if ($null -eq $rawInfo) { throw "Refused: the translator's file of '$($record.What)' did not name the AP242 schema alone in $maximumAttempts attempts: $(@($attempts | ForEach-Object { $_.schemas -join ' | ' }) -join ' ; ')" }
+            Add-PackageGuardCheck $guards "file_schema_names_the_ap242_schema_alone"
             if (@($attempts | ForEach-Object { $_.data_sha256 } | Sort-Object -Unique).Count -ne 1) { throw "Refused: the attempts for '$($record.What)' do not have the same data section" }
+            Add-PackageGuardCheck $guards "attempts_have_the_same_data_section"
             if ($attempts.Count -gt 1) { $retried += [ordered]@{ file = $record.What; directory = $record.Folder; attempts = $attempts }; $warnings += "'$($record.What)' was exported $($attempts.Count) times: the translator named a second schema in FILE_SCHEMA (the data section was the same each time)" }
             $exportSeconds = [Math]::Round($partClock.Elapsed.TotalSeconds, 2); $partClock.Restart()
             foreach ($text in @($rawInfo.header.author) + @($rawInfo.header.organization) + @($rawInfo.header.authorisation)) { if ($text) { $headerNames += [string]$text } }
             $unit = Get-StepLengthUnit $rawPath
             if (-not $unit.ok) { throw "STEP length unit of '$($record.What)' rejected: $($unit.reason)" }
+            Add-PackageGuardCheck $guards "step_length_unit_determined"
             $stepPath = Join-Path $directory "part.step"
             $normalised = Set-StepFileHeader -Path $rawPath -OutPath $stepPath
             $invisible = Get-StepInvisibility -Path $stepPath
             if (-not $invisible.form_understood) { throw "Refused: the file of '$($record.What)' marks items invisible in a form that is not understood: $(@($invisible.problems) -join '; ')" }
+            Add-PackageGuardCheck $guards "invisibility_form_understood"
             $counted = Get-StepEntityCounts -Path $stepPath
             $rawOutputs["files/$($record.Folder)/part.step"] = [ordered]@{ sha256 = $rawInfo.sha256; bytes = $rawInfo.bytes }
             $exported[$record.Folder] = [pscustomobject]@{ Normalised = $normalised; Protocol = $rawInfo.header.protocol; Unit = $unit.unit; Hidden = @($invisible.hidden_items).Count; Result = $result
@@ -442,27 +528,40 @@ try {
             }
             $step = $exported[$record.Folder]
             $partClock = [Diagnostics.Stopwatch]::StartNew()
+            # the bodies are a collection that must exist and must give as many items as it counts
+            $bodyList = $definition.SurfaceBodies
+            $expectedBodies = Get-RequiredCount "bodies of '$($record.What)'" $bodyList
             $bodies = 0; $solids = 0; $visible = 0
-            foreach ($body in $definition.SurfaceBodies) { $bodies++; if (Require "IsSolid of a body in '$($record.What)'" { $body.IsSolid }) { $solids++; if ($body.Visible) { $visible++ } } }
+            foreach ($body in $bodyList) { $bodies++; if (Get-RequiredValue "IsSolid of a body in '$($record.What)'" { $body.IsSolid }) { $solids++; if (Get-RequiredValue "Visible of a body in '$($record.What)'" { $body.Visible }) { $visible++ } } }
+            if ($bodies -ne $expectedBodies) { throw "Refused: '$($record.What)' counts $expectedBodies bodies and gave $bodies" }
+            Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
             if ($step.SolidsInFile -ne $solids) { $warnings += "'$($record.What)': the file has $($step.SolidsInFile) solid instances and the part $solids solid bodies" }
-            $nullsBefore = $script:featureNulls
-            $parameters = Read-Parameters $definition $doc.UnitsOfMeasure
-            $features = Read-Features $definition
+            $failuresBefore = $script:PackageOptionalReadFailures
+            $parameters = Read-Parameters $definition $doc.UnitsOfMeasure "'$($record.What)'"
+            $features = Read-Features $definition "'$($record.What)'"
             $featureSeconds = [Math]::Round($partClock.Elapsed.TotalSeconds, 2)
+            # the extent must be readable (six numbers); the volume may be unknown and is then null, not 0
             $box = $definition.RangeBox
+            Assert-RequiredObject "range box of '$($record.What)'" $box
+            $low = $box.MinPoint; $high = $box.MaxPoint
+            Assert-RequiredObject "range box corners of '$($record.What)'" $low; Assert-RequiredObject "range box corners of '$($record.What)'" $high
+            $extent = @((((Get-RequiredValue "range box of '$($record.What)'" { $high.X } -Kind number) - (Get-RequiredValue "range box of '$($record.What)'" { $low.X } -Kind number)) * 10.0),
+                (((Get-RequiredValue "range box of '$($record.What)'" { $high.Y } -Kind number) - (Get-RequiredValue "range box of '$($record.What)'" { $low.Y } -Kind number)) * 10.0),
+                (((Get-RequiredValue "range box of '$($record.What)'" { $high.Z } -Kind number) - (Get-RequiredValue "range box of '$($record.What)'" { $low.Z } -Kind number)) * 10.0))
+            $volume = Get-OptionalValue { $definition.MassProperties.Volume } "double"
             $native = [ordered]@{ length_unit = $record.LengthUnit
-                extent_mm = @((($box.MaxPoint.X - $box.MinPoint.X) * 10.0), (($box.MaxPoint.Y - $box.MinPoint.Y) * 10.0), (($box.MaxPoint.Z - $box.MinPoint.Z) * 10.0))
-                volume_mm3 = $(try { [double]$definition.MassProperties.Volume * 1000.0 } catch { $null })
+                extent_mm = $extent
+                volume_mm3 = $(if ($null -ne $volume) { $volume * 1000.0 } else { $null })
                 bodies = [ordered]@{ solid_bodies = $solids; visible_solid_bodies = $visible; surface_bodies = $bodies }
                 parameter_values = "value is in Inventor's database units (centimetre, radian); value_text is the same value in the parameter's own unit"
                 parameters = $parameters; holes = $features.holes; patterns = $features.patterns }
             Write-PackageJsonFile (Join-Path $directory "source.json") ([ordered]@{ schema_version = $PackageLayoutSchemaVersion; kind = "part"; name = $record.Name; model_state = $record.ModelState; vault = $record.Vault
                     step = [ordered]@{ sha256 = $step.Normalised.output_sha256; data_sha256 = $step.Normalised.data_sha256; bytes = $step.Normalised.output_bytes; protocol = $step.Protocol; length_unit = $step.Unit; header_normalised = $true; received_sha256 = $null }
                     export = [ordered]@{ translator_result = $step.Result }; properties = $properties
-                    bom_structure_default = (Get-BomName (Require "BOMStructure of '$($record.What)'" { [int]$definition.BOMStructure } -Kind int) "'$($record.What)'")
+                    bom_structure_default = (Get-BomName (Get-RequiredValue "BOMStructure of '$($record.What)'" { $definition.BOMStructure } -Kind int) "'$($record.What)'")
                     native = $native; materials = $null })
             $partTimings += [ordered]@{ file = $record.What; directory = $record.Folder; export_seconds = $step.ExportSeconds; file_checks_seconds = $step.FileSeconds; parameters_and_holes_seconds = $featureSeconds
-                parameters = @($parameters).Count; holes = @($features.holes).Count; patterns = @($features.patterns).Count; values_not_read = ($script:featureNulls - $nullsBefore)
+                parameters = @($parameters).Count; holes = @($features.holes).Count; patterns = @($features.patterns).Count; values_not_read = ($script:PackageOptionalReadFailures - $failuresBefore)
                 solid_bodies = $solids; solid_instances_in_file = $step.SolidsInFile; hidden_items = $step.Hidden; step_length_unit = $step.Unit; bytes = $step.Normalised.output_bytes }
             Log ("{0,-18} {1,-58} {2,9} bytes {3,-2} export {4,5}s features {5,5}s parameters={6} holes={7} patterns={8} hidden={9}" -f $record.Folder, $record.Name, $step.Normalised.output_bytes, $step.Unit, $step.ExportSeconds, $featureSeconds, @($parameters).Count, @($features.holes).Count, @($features.patterns).Count, $step.Hidden)
         }
@@ -472,67 +571,101 @@ try {
                 tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length = $lengthTolerance }
                 counts = [ordered]@{ occurrences = $occurrencesOut.Count; parts = @($occurrencesOut | Where-Object { $_.kind -eq "part" }).Count; assemblies = @($occurrencesOut | Where-Object { $_.kind -eq "assembly" }).Count; differ_from_definition = $differing }
                 occurrences = $occurrencesOut })
-        $dirty = @($documents.Values | Where-Object { [bool]$_.Document.Dirty } | ForEach-Object { $_.What })
+        # a dirty flag that cannot be read is not "not dirty"
+        $dirty = @(); $dirtyUnknown = 0
+        foreach ($held in $documents.Values) { $flag = Get-OptionalValue { $held.Document.Dirty } "bool"; if ($null -eq $flag) { $dirtyUnknown++ } elseif ($flag) { $dirty += $held.What } }
         if ($dirty.Count -gt 0) { $warnings += "dirty when the export ended (closed without saving): $($dirty -join '; ')" }
+        if ($dirtyUnknown -gt 0) { $warnings += "the dirty flag of $dirtyUnknown document(s) could not be read when the export ended (closed without saving)" }
         $packageWritten = $true
     } finally { try { $asm.Close($true) } catch { $errors += "assembly close: $($_.Exception.Message)" } }
 } catch {
-    $errors += $_.Exception.Message; Log "ERROR: $($_.Exception.Message)"; if ($_.ScriptStackTrace) { Log $_.ScriptStackTrace }
+    $errors += $_.Exception.Message
+    try { Log "ERROR: $($_.Exception.Message)"; if ($_.ScriptStackTrace) { Log $_.ScriptStackTrace } } catch { }
 } finally {
-    $shutdown = Stop-IsolatedInventor $session $project
-    if (-not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $($shutdown.Observed | ConvertTo-Json -Compress) notes=$($shutdown.Notes -join ' | ')" }
-    Log "Shutdown: pid $($shutdown.Pid) exited=$($shutdown.Exited) succeeded=$($shutdown.Succeeded)"
-    if ($watchdog) { $dialogs = Stop-DialogWatchdog $watchdog; Log "Dialog watchdog: $($dialogs.Polls) polls, $($dialogs.Events.Count) dialog window(s) seen, $($dialogs.Dismissed) dismissed, $($dialogs.Left) left alone" }
-}
-# ---- integrity: no opened file may have changed on disk ----
-$changed = @(); foreach ($bindingRecord in @($inputs)) { if ((Sha $bindingRecord.path) -ne [string]$bindingRecord.acquisition_sha256) { $changed += (Relative ([string]$bindingRecord.path)) } }
-if ($changed.Count -gt 0) { $errors += "opened documents changed on disk: $($changed -join '; ')" }
-# ---- the package is checked before package.json says it is complete ----
-$placed = @($documents.Values | Where-Object { $_.Placed -gt 0 })
-$notExported = @($documents.Values | Where-Object { $_.Placed -eq 0 } | ForEach-Object { [ordered]@{ master_id = $_.Vault.master_id; model_state = $_.ModelState; reason = "a referenced document that no occurrence places (for example the base of a derived part)" } })
-$openedVersions = @($inputs | ForEach-Object { [string]$_.version_id })
-foreach ($listed in @($invJson.files | Where-Object { $openedVersions -notcontains [string]$_.version_id })) { $notExported += [ordered]@{ master_id = [string]$listed.master_id; model_state = $null; reason = "in the dependency inventory and not opened by Inventor with the root assembly" } }
-$forbidden = @(@($env:COMPUTERNAME, $env:USERNAME, $env:USERPROFILE, $WorkspaceRoot) + @($ForbiddenTerm) + @($headerNames) | Where-Object { $_ } | Sort-Object -Unique)
-$status = "FAILED"
-if ($errors.Count -eq 0 -and $packageWritten -and $shutdown.Succeeded) {
-    $validation = Test-PackageOutputs -Directory $OutputDirectory -ForbiddenTerms $forbidden -AllowMissingManifest -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance
-    if (-not $validation.ok) { $errors += "the package failed its check: $(@($validation.failures) -join '; ')" }
-    elseif ($validation.summary.parts -ne @($placed | Where-Object { $_.Kind -eq "part" }).Count -or $validation.summary.assemblies -ne @($placed | Where-Object { $_.Kind -eq "assembly" }).Count -or $validation.summary.occurrences -ne @($script:context).Count) { $errors += "the package does not hold what was exported: $($validation.summary | ConvertTo-Json -Compress)" }
-    else {
-        $repository = Split-Path -Parent $PSScriptRoot; $commit = $null; $modified = $null
-        try { $answer = @(cmd /c "git -C ""$repository"" rev-parse HEAD 2>nul"); if ($LASTEXITCODE -eq 0 -and "$($answer[0])" -match '^[a-f0-9]{40}$') { $commit = "$($answer[0])"; $state = @(cmd /c "git -C ""$repository"" status --porcelain 2>nul"); if ($LASTEXITCODE -eq 0) { $modified = ($state.Count -gt 0) } } } catch { $commit = $null }
-        $files = [ordered]@{}; $map = Get-PackageFileMap $OutputDirectory
-        foreach ($name in $map.Keys) { $bytes = [IO.File]::ReadAllBytes($map[$name]); $files[$name] = [ordered]@{ sha256 = (Get-PackageSha $bytes); bytes = $bytes.Length } }
-        Write-PackageJsonFile (Join-Path $OutputDirectory "package.json") ([ordered]@{ schema_version = $PackageSchemaVersion; kind = $PackageKind; exported_at = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                exporter = [ordered]@{ name = "windows/Export-Package.ps1"; version = $commit; working_tree_modified = $modified; inventor = "$($session.Version) (build $($session.Build))" }
-                translator_options = $translatorOptions; vault_id = $vaultId
-                root = [ordered]@{ master_id = $rootRecord.Vault.master_id; version_id = $rootRecord.Vault.version_id; model_state = $rootRecord.ModelState }
-                acquisition = [ordered]@{ captured_at = [string]$invJson.captured_at; acquired_at = [string]$acqJson.acquired_at; method = [string]$acqJson.method }
-                counts = [ordered]@{ parts = $validation.summary.parts; assemblies = $validation.summary.assemblies }
-                not_exported = $notExported; translator_outputs = $rawOutputs; files = $files })
-        $final = Test-PackageOutputs -Directory $OutputDirectory -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance
-        if ($final.ok) { $validation = $final; $status = Resolve-RunStatus -Status "complete" -Dialogs $dialogs }
-        else { $errors += "the package failed its check after package.json was written: $(@($final.failures) -join '; ')"; $validation = $final; Remove-Item -LiteralPath (Join-Path $OutputDirectory "package.json") -Force }
+    # each step on its own: one that fails must not keep the next from running
+    if ($session) {
+        try { $shutdown = Stop-IsolatedInventor $session $project } catch { $errors += "the shutdown of the owned Inventor instance threw: $($_.Exception.Message)" }
+        if (-not $shutdown -or -not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $(if ($shutdown) { "$($shutdown.Observed | ConvertTo-Json -Compress) notes=$($shutdown.Notes -join ' | ')" } else { 'no result' })" }
+        try { Log "Shutdown: pid $($session.Pid) exited=$(if ($shutdown) { $shutdown.Exited }) succeeded=$(if ($shutdown) { $shutdown.Succeeded })" } catch { }
+    }
+    if ($watchdog) {
+        try { $dialogs = Stop-DialogWatchdog $watchdog } catch { $errors += "the dialog watchdog could not be stopped: $($_.Exception.Message)" }
+        try { if ($dialogs) { Log "Dialog watchdog: $($dialogs.Polls) polls, $($dialogs.Events.Count) dialog window(s) seen, $($dialogs.Dismissed) dismissed, $($dialogs.Left) left alone" } } catch { }
     }
 }
-$receipt = [ordered]@{ schema_version = 1; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = $status; errors = $errors; warnings = $warnings
-    package = $OutputDirectory; package_complete = (Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json")); work_directory = $WorkDirectory
-    inventor = "$($session.Version) build $($session.Build)"; host = $env:COMPUTERNAME; interactive_desktop = [Environment]::UserInteractive; interop_assembly = $interopPath
-    session = [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids; shutdown = [ordered]@{ succeeded = $shutdown.Succeeded; exited = $shutdown.Exited; attempted = $shutdown.Attempted; observed = $shutdown.Observed; unexpected_survivors = @($shutdown.UnexpectedSurvivors); notes = @($shutdown.Notes) } }
-    project = $(if ($project) { [ordered]@{ file = $project.ProjectFile; entry_pre_existed = $project.EntryPreExisted; entry_added_by_run = $project.AddedEntry; entry_removed_by_run = $shutdown.ProjectEntryRemoved; previous_active = $project.PreviousActive; previous_restored = $shutdown.PreviousProjectRestored } } else { $null })
-    input_binding = [ordered]@{ mode = "strict acquisition binding"; opened_documents = @($inputs).Count; verified = @($inputs | Where-Object verified).Count; changed_on_disk_after_run = $changed; inputs = $inputs }
-    records = [ordered]@{ acquisition = $Acquisition; inventory = $Inventory; vault_facts_from = "the acquisition record (hash) and the dependency inventory of the same acquisition (version number, revision, lifecycle state, check-in date); no Vault request" }
-    guards = [ordered]@{ inputs_bound_before_export = $true; no_document_has_a_view = $true; primary_model_states_only = $true; master_lod_and_positional_required = $true; factories_rejected = $true; adaptive_substitute_suppressed_rejected = $true; rigid_placements_only = $true
-        definition_equals_native_occurrence = $true; instances_have_their_documents_children = $true; a_placement_that_differs_needs_a_flexible_occurrence_above = $true; invisibility_form_understood = $true; file_schema_names_the_ap242_schema_alone = $true; attempts_have_the_same_data_section = $true; guard_queries_fail_closed = $true }
-    tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length_cm = $lengthTolerance }
-    counts = [ordered]@{ documents = $documents.Count; exported_parts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; exported_assemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; not_exported = $notExported.Count
-        occurrences = @($script:context).Count; occurrences_that_differ_from_definition = @($script:context | Where-Object { $_.differs_from_definition }).Count
-        occurrences_whose_flags_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count; feature_values_not_read = $script:featureNulls }
-    display_names_that_are_not_the_file_name = @($documents.Values | Where-Object { $_.DisplayName -and $_.DisplayName -ne $_.Name -and [IO.Path]::GetFileNameWithoutExtension($_.DisplayName) -ne $_.Name } | ForEach-Object { [ordered]@{ file = $_.What; display_name = $_.DisplayName } })
-    flags_that_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 } | ForEach-Object { [ordered]@{ occurrence = ($_.path -join "/"); flags = $_.flags_that_differ_from_definition } })
-    timings = $timings; parts = $partTimings; translator_options = $translatorOptions; translator_outputs = $rawOutputs; exported_more_than_once = $retried; maximum_attempts = $maximumAttempts; header_names_found_in_translator_output = @($headerNames | Sort-Object -Unique)
-    forbidden_terms_checked = $forbidden.Count; validation = $(if ($validation) { [ordered]@{ ok = $validation.ok; failures = @($validation.failures); summary = $validation.summary } } else { [ordered]@{ ok = $false; failures = @("validation did not run") } })
-    dialogs = $(if ($dialogs) { [ordered]@{ policy = $dialogs.Policy; log = "dialogs.log"; polls = $dialogs.Polls; seen = $dialogs.Events.Count; dismissed = $dialogs.Dismissed; left_alone = $dialogs.Left; events = @($dialogs.Events); errors = @($dialogs.Errors); remaining_at_stop = @($dialogs.Remaining) } } else { $null }) }
-ConvertTo-Json -InputObject $receipt -Depth 12 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8
-Log "Package status: $status ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context)"
-if ($status -notlike "complete*") { exit 1 }
+# ---- after Inventor. Nothing from here on runs outside a try: whatever fails must still leave a receipt, and must
+# ---- not leave a package.json behind (Test-PackageFormat.ps1, case P22, holds the script to this).
+try {
+    # no opened file, and no other file of the mirror, may have changed; none may have appeared or disappeared
+    foreach ($bindingRecord in @($inputs)) { if ((Sha $bindingRecord.path) -ne [string]$bindingRecord.acquisition_sha256) { $changed += (Relative ([string]$bindingRecord.path)) } }
+    if ($changed.Count -gt 0) { $errors += "opened documents changed on disk: $($changed -join '; ')" } elseif (@($inputs).Count -gt 0) { Add-PackageGuardCheck $guards "opened_files_unchanged_on_disk" @($inputs).Count }
+    if ($null -ne $mirrorBefore) {
+        $mirror = Compare-PackageDirectoryHashes $mirrorBefore (Get-PackageDirectoryHashes $WorkspaceRoot)
+        if ($mirror.unchanged) { Add-PackageGuardCheck $guards "mirror_unchanged" $mirror.files_after }
+        else { $errors += "the mirror changed during the run: changed [$(@($mirror.changed) -join '; ')], added [$(@($mirror.added) -join '; ')], removed [$(@($mirror.removed) -join '; ')]" }
+    }
+    $placed = @($documents.Values | Where-Object { $_.Placed -gt 0 })
+    $notExported = @($documents.Values | Where-Object { $_.Placed -eq 0 } | ForEach-Object { [ordered]@{ master_id = $_.Vault.master_id; model_state = $_.ModelState; reason = "a referenced document that no occurrence places (for example the base of a derived part)" } })
+    $openedVersions = @($inputs | ForEach-Object { [string]$_.version_id })
+    foreach ($listed in @($invJson.files | Where-Object { $openedVersions -notcontains [string]$_.version_id })) { $notExported += [ordered]@{ master_id = [string]$listed.master_id; model_state = $null; reason = "in the dependency inventory and not opened by Inventor with the root assembly" } }
+    $forbidden = @(@($env:COMPUTERNAME, $env:USERNAME, $env:USERPROFILE, $WorkspaceRoot) + @($ForbiddenTerm) + @($headerNames) | Where-Object { $_ } | Sort-Object -Unique)
+    if ($errors.Count -eq 0 -and $packageWritten -and $shutdown -and $shutdown.Succeeded) {
+        $repository = Split-Path -Parent $PSScriptRoot; $commit = $null; $modified = $null
+        try { $answer = @(cmd /c "git -C ""$repository"" rev-parse HEAD 2>nul"); if ($LASTEXITCODE -eq 0 -and "$($answer[0])" -match '^[a-f0-9]{40}$') { $commit = "$($answer[0])"; $state = @(cmd /c "git -C ""$repository"" status --porcelain 2>nul"); if ($LASTEXITCODE -eq 0) { $modified = ($state.Count -gt 0) } } } catch { $commit = $null }
+        # "counts" and "files" are filled by Complete-Package, which checks the package, writes package.json last,
+        # checks again, and removes package.json when anything fails after it was written
+        $manifest = [ordered]@{ schema_version = $PackageSchemaVersion; kind = $PackageKind; exported_at = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            exporter = [ordered]@{ name = "windows/Export-Package.ps1"; version = $commit; working_tree_modified = $modified; inventor = "$($session.Version) (build $($session.Build))" }
+            translator_options = $translatorOptions; vault_id = $vaultId
+            root = [ordered]@{ master_id = $rootRecord.Vault.master_id; version_id = $rootRecord.Vault.version_id; model_state = $rootRecord.ModelState }
+            acquisition = [ordered]@{ captured_at = [string]$invJson.captured_at; acquired_at = [string]$acqJson.acquired_at; method = [string]$acqJson.method }
+            counts = $null; not_exported = $notExported; translator_outputs = $rawOutputs; files = $null }
+        $expectParts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; $expectAssemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; $expectOccurrences = @($script:context).Count
+        $completion = Complete-Package -Directory $OutputDirectory -Manifest $manifest -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance -ExpectParts $expectParts -ExpectAssemblies $expectAssemblies -ExpectOccurrences $expectOccurrences
+        if ($completion.ok) {
+            Add-PackageGuardCheck $guards "package_checked_before_package_json"; Add-PackageGuardCheck $guards "package_checked_with_package_json"
+            $status = Resolve-RunStatus -Status "complete" -Dialogs $dialogs
+            if (Test-PackageRunStatus $status) { Add-PackageGuardCheck $guards "run_status_allows_a_complete_package" }
+            else { $withheld = "the run ended '$status': the watchdog dismissed a dialog, and what it acknowledged is only in this receipt, which stays on the workstation; package.json is withheld"; $warnings += $withheld }
+        } else {
+            if ($completion.stage -ne "before package.json") { Add-PackageGuardCheck $guards "package_checked_before_package_json" }
+            $errors += "the package failed its check ($($completion.stage)): $(@($completion.failures) -join '; ')"
+        }
+    }
+} catch { $errors += "after Inventor was closed: $($_.Exception.Message)"; $status = "FAILED" }
+# only a run that ended "complete" leaves package.json
+try {
+    if (-not (Test-PackageRunStatus $status)) { if (-not (Remove-PackageManifest $OutputDirectory)) { $errors += "package.json could not be taken away" } }
+    $packageComplete = (Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json"))
+} catch { $errors += "package.json could not be taken away: $($_.Exception.Message)"; $status = "FAILED" }
+# the receipt: always written; if it cannot be written in full the run is not recorded and its package is not complete
+try {
+    $receipt = [ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = $status; errors = $errors; warnings = $warnings
+        package = $OutputDirectory; package_complete = $packageComplete; package_withheld_because = $withheld; work_directory = $WorkDirectory
+        inventor = $(if ($session) { "$($session.Version) build $($session.Build)" } else { $null }); host = $env:COMPUTERNAME; interactive_desktop = [Environment]::UserInteractive; interop_assembly = $interopPath
+        session = $(if ($session) { [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids
+                shutdown = $(if ($shutdown) { [ordered]@{ succeeded = $shutdown.Succeeded; exited = $shutdown.Exited; attempted = $shutdown.Attempted; observed = $shutdown.Observed; unexpected_survivors = @($shutdown.UnexpectedSurvivors); notes = @($shutdown.Notes) } } else { $null }) } } else { $null })
+        project = $(if ($project) { [ordered]@{ file = $project.ProjectFile; entry_pre_existed = $project.EntryPreExisted; entry_added_by_run = $project.AddedEntry; entry_removed_by_run = $(if ($shutdown) { $shutdown.ProjectEntryRemoved } else { $null }); previous_active = $project.PreviousActive; previous_restored = $(if ($shutdown) { $shutdown.PreviousProjectRestored } else { $null }) } } else { $null })
+        input_binding = [ordered]@{ mode = "strict acquisition binding"; opened_documents = @($inputs).Count; verified = @($inputs | Where-Object verified).Count; changed_on_disk_after_run = $changed; inputs = $inputs }
+        mirror = $(if ($mirror) { [ordered]@{ hashed = "every file under the workspace root, before Inventor started and after it had exited"; files_before = $mirror.files_before; files_after = $mirror.files_after; changed = @($mirror.changed); added = @($mirror.added); removed = @($mirror.removed); unchanged = $mirror.unchanged } } else { $null })
+        records = [ordered]@{ acquisition = $Acquisition; inventory = $Inventory; vault_facts_from = "the acquisition record (hash) and the dependency inventory of the same acquisition (version number, revision, lifecycle state, check-in date); no Vault request" }
+        guards_note = "the number of times each guard was evaluated and let the run pass; 0 means the run did not reach it. Guard queries fail closed: an exception, nothing, a collection or another type than asked for stops the run"
+        guards = $guards
+        tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length_cm = $lengthTolerance }
+        counts = [ordered]@{ documents = $documents.Count; exported_parts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; exported_assemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; not_exported = @($notExported).Count
+            occurrences = @($script:context).Count; occurrences_that_differ_from_definition = @($script:context | Where-Object { $_.differs_from_definition }).Count
+            occurrences_whose_flags_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count; feature_values_not_read = $script:PackageOptionalReadFailures }
+        display_names_that_are_not_the_file_name = @($documents.Values | Where-Object { $_.DisplayName -and $_.DisplayName -ne $_.Name -and [IO.Path]::GetFileNameWithoutExtension($_.DisplayName) -ne $_.Name } | ForEach-Object { [ordered]@{ file = $_.What; display_name = $_.DisplayName } })
+        flags_that_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 } | ForEach-Object { [ordered]@{ occurrence = ($_.path -join "/"); flags = $_.flags_that_differ_from_definition } })
+        timings = $timings; parts = $partTimings; translator_options = $translatorOptions; translator_outputs = $rawOutputs; exported_more_than_once = $retried; maximum_attempts = $maximumAttempts; header_names_found_in_translator_output = @($headerNames | Sort-Object -Unique)
+        forbidden_terms_checked = @($forbidden).Count; validation = $(if ($completion) { [ordered]@{ ok = $completion.ok; stage = $completion.stage; failures = @($completion.failures); summary = $completion.summary } } else { [ordered]@{ ok = $false; stage = "not reached"; failures = @("the package was not checked") } })
+        dialogs = $(if ($dialogs) { [ordered]@{ policy = $dialogs.Policy; log = "dialogs.log"; polls = $dialogs.Polls; seen = $dialogs.Events.Count; dismissed = $dialogs.Dismissed; left_alone = $dialogs.Left; events = @($dialogs.Events); errors = @($dialogs.Errors); remaining_at_stop = @($dialogs.Remaining) } } else { $null }) }
+    ConvertTo-Json -InputObject $receipt -Depth 12 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8
+} catch {
+    $problem = $_.Exception.Message; $status = "FAILED"; $packageComplete = $false
+    try { [void](Remove-PackageManifest $OutputDirectory) } catch { }
+    try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = (Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json")) }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
+    Write-Output "ERROR: the receipt could not be written in full: $problem"
+}
+try { Log "Package status: $status; package.json $(if ($packageComplete) { 'written' } else { 'not left' }) ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context)" } catch { }
+if (-not $packageComplete -or $status -cne "complete") { exit 1 }
