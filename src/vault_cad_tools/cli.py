@@ -30,13 +30,9 @@ def parser():
     download = sub.add_parser("download", help="Download an exact file version, without overwriting")
     download.add_argument("version_id")
     download.add_argument("--output", required=True)
-    imp = sub.add_parser("import-step", help="Earlier layout only: import a verified export and record its provenance")
-    imp.add_argument("source")
-    imp.add_argument("--receipt", required=True)
-    imp.add_argument("--as", dest="relative", required=True, help="references/... relative path")
     publish = sub.add_parser("prepare-publish", help="Package a committed STEP for a future Windows uploader; does not upload")
-    publish.add_argument("relative", help="designs/parts/<key>/part.step (earlier layout: step/...)")
-    publish.add_argument("--name", help="File name in Vault (default: <key>.step; earlier layout: the file's own name)")
+    publish.add_argument("relative", help="designs/parts/<key>/part.step")
+    publish.add_argument("--name", help="File name in Vault (default: <key>.step)")
     publish.add_argument("--vault-folder", required=True)
     publish.add_argument("--exchange", required=True)
     verify = sub.add_parser("verify-request", help="Validate a publication request without uploading")
@@ -77,7 +73,7 @@ def parser():
     snapshot = sub.add_parser("catalog-snapshot", help="Save a READ-ONLY catalog snapshot (vault identity, folders, files) for offline planning")
     snapshot.add_argument("--output", required=True)
     snapshot.add_argument("--folder", action="append", required=True, help="Vault folder path ($/...), repeatable")
-    ingest = sub.add_parser("import-publish-result", help="Record a verified results/UUID.json in the project (the part's vault.json and the index; earlier layout: the lock) after re-checking it against its request (never reads the journal)")
+    ingest = sub.add_parser("import-publish-result", help="Record a verified results/UUID.json in the project (the part's vault.json and the index) after re-checking it against its request (never reads the journal)")
     ingest.add_argument("result", help="results/UUID.json at the exchange root")
     ingest.add_argument("--exchange", help="Exchange root (default: inferred from the result path)")
     bom = sub.add_parser("bom-audit-summary", help="Join a native BOM audit, exporter snapshot and Vault discovery into reviewable facts (offline)")
@@ -86,9 +82,9 @@ def parser():
     bom.add_argument("--joints", help="joint-audit.json with Linux candidate joints (optional)")
     bom.add_argument("--discovery", help="Directory written by windows/Discover-VaultAssociations.ps1 (optional)")
     bom.add_argument("--output", required=True)
-    layout = sub.add_parser("import-snapshot", help="PROVISIONAL: write an exporter package into the layout with one directory per Vault file; offline. "
+    layout = sub.add_parser("import-snapshot", help="Write an exporter package into the layout with one directory per Vault file; offline. "
                             "The earlier package (native-snapshot.json, scene.json, assets/) goes into a new directory; "
-                            "the package with package.json and files/ goes into a new directory or an existing project, keeping its keys")
+                            "the package with package.json and files/ (a draft format) goes into a new directory or an existing project, keeping its keys")
     layout.add_argument("package", help="Directory with package.json and files/, or with native-snapshot.json, scene.json, export-receipt.json and assets/")
     layout.add_argument("--into", required=True, help="Where references/ and vault-lock.json are written: a new or empty directory, or (package.json only) a project")
     layout.add_argument("--run", required=True, help="Name under which the exporter's records are kept (references/receipts/<run>/)")
@@ -171,8 +167,6 @@ def execute(args):
     if args.command == "import-publish-result":
         from .publication import import_publication_result
         return import_publication_result(project, args.result, exchange=args.exchange)
-    if args.command == "import-step":
-        return project.import_step(args.source, args.relative, args.receipt)
     if args.command == "prepare-publish":
         return prepare_publication(project, args.relative, args.vault_folder, args.exchange, name=args.name)
     client = VaultClient(project.vault["base_url"])

@@ -14,10 +14,11 @@ import warnings
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from vault_cad_tools.api import VaultClient, session
 from vault_cad_tools.exchange import prepare_publication, verify_request
-from vault_cad_tools.project import ExchangeError, Project, atomic_json, digest, portable_path
+from vault_cad_tools.project import ExchangeError, Project, atomic_json, contained_path, digest, portable_path, read_json
 
 
 STEP = b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n"
+NEW_PART = "designs/parts/new-part/part.step"
 
 
 class ProjectFixture(unittest.TestCase):
@@ -36,188 +37,85 @@ name = "Test Vault"
 id = "28"
 root_assembly = "$/Projects/Enclosure.iam"
 ''', encoding="utf-8")
-        atomic_json(self.root / "vault-lock.json", {"schema_version": 1, "references": {}, "publications": []})
-        self.payload = self.base / "export.step"
-        self.payload.write_bytes(STEP)
-        self.receipt_path = self.base / "export.json"
-        self.receipt = {
-            "schema_version": 1,
-            "source": {"vault_id": "28", "master_id": "10", "version_id": "101", "path": "$/Projects/part.ipt"},
-            "exporter": {"name": "test fixture", "version": "1", "model_state": "Primary", "protocol": "AP214"},
-            "sha256": digest(self.payload),
-        }
-        atomic_json(self.receipt_path, self.receipt)
+        atomic_json(self.root / "vault-lock.json", {"schema_version": 2, "components": [], "publications": []})
 
     def project(self):
         return Project(self.root)
-
-    def import_payload(self, name="references/part.step"):
-        return self.project().import_step(self.payload, name, self.receipt_path)
-
-    def update_receipt(self, version="102"):
-        self.receipt["sha256"] = digest(self.payload)
-        self.receipt["source"]["version_id"] = version
-        atomic_json(self.receipt_path, self.receipt)
 
     def git(self, *args):
         result = subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, check=True)
         return result.stdout.decode().strip()
 
+    def describe(self, part):
+        """The receipt of an authored part: the build's record of the file it wrote."""
+        atomic_json(part.parent / "receipt.json", {"schema_version": 1, "key": part.parent.name,
+                                                   "step": {"sha256": digest(part)}})
+
     def committed_part(self):
-        (self.root / "step").mkdir()
-        part = self.root / "step" / "new-part.step"
+        """An authored part, designs/parts/new-part, built and committed."""
+        part = self.root / NEW_PART
+        part.parent.mkdir(parents=True)
         part.write_bytes(STEP)
+        self.describe(part)
         (self.root / ".gitattributes").write_text("*.step -text -diff -merge\n", encoding="utf-8")
         self.git("init", "-q")
-        self.git("add", ".gitattributes", "step/new-part.step")
+        self.git("add", "-A")
         self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                  "-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
         return part
 
 
-class ImportTests(ProjectFixture):
-    def test_retains_dependency_and_validation_evidence(self):
-        self.receipt.update({
-            "dependencies": [{"version_id": "202", "native_sha256": "a" * 64}],
-            "dependency_count": 1,
-            "validation": {"native_body_count": 503, "reimport_body_count": 479},
-            "output_bytes": len(STEP),
-        })
-        atomic_json(self.receipt_path, self.receipt)
-        self.import_payload()
-        saved = self.project().lock["references"]["references/part.step"]
-        for key in ("dependencies", "dependency_count", "validation", "output_bytes"):
-            self.assertEqual(saved[key], self.receipt[key])
-        before = (self.root / "vault-lock.json").read_bytes()
-        self.assertFalse(self.import_payload()["changed"])
-        self.assertEqual((self.root / "vault-lock.json").read_bytes(), before)
+class ProjectTests(ProjectFixture):
+    """What every command rests on: the lock that is read, managed paths, JSON from Windows, the operation lock."""
 
-    def test_records_exact_provenance_and_is_idempotent(self):
-        result = self.import_payload()
-        self.assertTrue(result["changed"])
-        lock_before = (self.root / "vault-lock.json").read_bytes()
-        self.assertEqual(self.project().status()["references"][0]["source"]["version_id"], "101")
-        self.assertFalse(self.import_payload()["changed"])
-        self.assertEqual((self.root / "vault-lock.json").read_bytes(), lock_before)
+    def test_the_earlier_lock_is_refused_with_the_reason(self):
+        atomic_json(self.root / "vault-lock.json", {"schema_version": 1, "references": {}, "publications": []})
+        with self.assertRaisesRegex(ExchangeError, "earlier lock"):
+            self.project()
 
-    def test_update_clean_reference(self):
-        self.import_payload()
-        self.payload.write_bytes(STEP.replace(b"DATA;", b"DATA; /* changed */"))
-        self.update_receipt()
-        self.import_payload()
-        self.assertEqual(self.project().status()["references"][0]["source"]["version_id"], "102")
-        self.assertEqual(digest(self.root / "references/part.step"), digest(self.payload))
-
-    def test_modified_reference_survives_refresh(self):
-        self.import_payload()
-        target = self.root / "references/part.step"
-        target.write_bytes(STEP + b"local modification")
-        with self.assertRaisesRegex(ExchangeError, "locally modified"):
-            self.import_payload()
-        self.assertTrue(target.read_bytes().endswith(b"local modification"))
-        self.assertEqual(self.project().status()["references"][0]["state"], "modified")
-
-    def test_untracked_reference_is_not_overwritten(self):
-        target = self.root / "references/part.step"
-        target.parent.mkdir()
-        target.write_bytes(STEP)
-        with self.assertRaisesRegex(ExchangeError, "untracked"):
-            self.import_payload()
-
-    def test_wrong_checksum_has_no_side_effect(self):
-        self.receipt["sha256"] = "0" * 64
-        atomic_json(self.receipt_path, self.receipt)
-        with self.assertRaisesRegex(ExchangeError, "checksum"):
-            self.import_payload()
-        self.assertFalse((self.root / "references").exists())
-
-    def test_wrong_vault_is_rejected(self):
-        self.receipt["source"]["vault_id"] = "29"
-        atomic_json(self.receipt_path, self.receipt)
-        with self.assertRaisesRegex(ExchangeError, "another vault"):
-            self.import_payload()
-
-    def test_reference_identity_cannot_be_reassigned(self):
-        self.import_payload()
-        self.receipt["source"]["master_id"] = "99"
-        atomic_json(self.receipt_path, self.receipt)
-        with self.assertRaisesRegex(ExchangeError, "another Vault file"):
-            self.import_payload()
-
-    def test_windows_case_collision(self):
-        self.import_payload()
-        with self.assertRaisesRegex(ExchangeError, "collides"):
-            self.import_payload("references/PART.step")
-
-    def test_rejects_paths_outside_reference_area(self):
-        for name in ("references/../../escape.step", "references/C:/escape.step", "step/authored.step", "/absolute.step"):
+    def test_reserved_windows_names(self):
+        for name in ("references/NUL.step", "references/COM1.step", "references/file. ", "references/a\\b.step",
+                     "references/../../escape.step", "references/C:/escape.step", "/absolute.step"):
             with self.subTest(name=name), self.assertRaises(ExchangeError):
-                self.import_payload(name)
+                portable_path(name)
 
-    def test_rejects_symlink(self):
+    def test_a_symlink_in_a_managed_path_is_refused(self):
         outside = self.base / "outside"
         outside.mkdir()
         try:
-            (self.root / "references").symlink_to(outside, target_is_directory=True)
+            (self.root / "designs").symlink_to(outside, target_is_directory=True)
         except OSError:
             self.skipTest("Symlink creation requires privileges on this host")
         with self.assertRaisesRegex(ExchangeError, "Symlink"):
-            self.import_payload()
-        self.assertEqual(list(outside.iterdir()), [])
+            contained_path(self.root, "designs/parts/new-part")
+        with self.assertRaisesRegex(ExchangeError, "Symlink"):
+            self.project().authored_part(NEW_PART)
 
-    def test_rejects_non_step_content(self):
-        self.payload.write_bytes(b"<html>login screen</html>")
-        self.update_receipt()
-        with self.assertRaisesRegex(ExchangeError, "envelope"):
-            self.import_payload()
+    def test_json_with_a_byte_order_mark_is_read(self):
+        path = self.base / "from-windows.json"
+        path.write_text(json.dumps({"a": 1}), encoding="utf-8-sig")
+        self.assertEqual(read_json(path), {"a": 1})
 
-    def test_manifest_failure_restores_existing_file(self):
-        self.import_payload()
-        self.payload.write_bytes(STEP.replace(b"DATA;", b"DATA; /* newer */"))
-        self.update_receipt()
-        with patch("vault_cad_tools.project.atomic_json", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                self.import_payload()
-        self.assertEqual((self.root / "references/part.step").read_bytes(), STEP)
-        self.assertEqual(self.project().status()["references"][0]["state"], "clean")
+    def test_the_operation_lock_refuses_a_second_operation_and_is_removed_after_the_first(self):
+        project = self.project()
+        with project.transaction():
+            with self.assertRaisesRegex(ExchangeError, "Another operation"):
+                with self.project().transaction():
+                    pass
         self.assertFalse((self.root / ".vault-cad-operation.lock").exists())
-
-    def test_manifest_failure_removes_new_import(self):
-        with patch("vault_cad_tools.project.atomic_json", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                self.import_payload()
-        self.assertFalse((self.root / "references/part.step").exists())
-        self.assertEqual(self.project().status()["references"], [])
-
-    def test_operation_lock_refuses_concurrent_import(self):
-        (self.root / ".vault-cad-operation.lock").write_text("another process")
-        with self.assertRaisesRegex(ExchangeError, "Another operation"):
-            self.import_payload()
-
-    def test_missing_reference_status(self):
-        self.import_payload()
-        (self.root / "references/part.step").unlink()
-        self.assertEqual(self.project().status()["references"][0]["state"], "missing")
-
-    def test_windows_bom_receipt(self):
-        self.receipt_path.write_text(json.dumps(self.receipt), encoding="utf-8-sig")
-        self.assertTrue(self.import_payload()["changed"])
-
-    def test_reserved_windows_names(self):
-        for name in ("references/NUL.step", "references/COM1.step", "references/file. ", "references/a\\b.step"):
-            with self.subTest(name=name), self.assertRaises(ExchangeError):
-                portable_path(name)
 
 
 class PublicationTests(ProjectFixture):
     def prepare(self):
-        return prepare_publication(self.project(), "step/new-part.step", "$/Projects/Incoming", self.base / "exchange")
+        return prepare_publication(self.project(), NEW_PART, "$/Projects/Incoming", self.base / "exchange")
 
     def test_only_packages_committed_bytes(self):
         self.committed_part()
         result = self.prepare()
         request = verify_request(result["directory"])
         self.assertEqual(request["provenance"]["git_commit"], self.git("rev-parse", "HEAD"))
+        self.assertEqual(request["provenance"]["project_path"], NEW_PART)
+        self.assertEqual(request["destination"]["name"], "new-part.step")
         self.assertEqual(request["destination"]["if_exists"], "fail")
         self.assertEqual(request["operation"], "add_step_file")
         self.assertEqual(self.project().lock["publications"], [])
@@ -226,9 +124,19 @@ class PublicationTests(ProjectFixture):
     def test_uncommitted_modification_is_refused(self):
         part = self.committed_part()
         part.write_bytes(STEP + b"changed")
+        with self.assertRaisesRegex(ExchangeError, "build the part again"):
+            self.prepare()
+        self.describe(part)
         with self.assertRaisesRegex(ExchangeError, "Commit this STEP"):
             self.prepare()
         self.assertFalse((self.base / "exchange").exists())
+
+    def test_a_file_that_is_not_step_is_refused(self):
+        part = self.committed_part()
+        part.write_bytes(b"<html>login screen</html>")
+        self.describe(part)
+        with self.assertRaisesRegex(ExchangeError, "envelope"):
+            self.prepare()
 
     def test_corrupt_payload_is_refused(self):
         self.committed_part()
@@ -248,15 +156,16 @@ class PublicationTests(ProjectFixture):
         with self.assertRaises(ExchangeError):
             verify_request(result["directory"])
 
-    def test_reference_cannot_be_published(self):
-        self.import_payload()
-        with self.assertRaisesRegex(ExchangeError, "authored"):
-            prepare_publication(self.project(), "references/part.step", "$/Projects", self.base / "exchange")
+    def test_only_an_authored_part_can_be_published(self):
+        self.committed_part()
+        for relative in ("references/parts/pin/part.step", "step/new-part.step", "designs/parts/new-part/other.step"):
+            with self.subTest(relative=relative), self.assertRaisesRegex(ExchangeError, "designs/parts/<key>/part.step"):
+                prepare_publication(self.project(), relative, "$/Projects", self.base / "exchange")
 
     def test_unsafe_destination_is_refused(self):
         self.committed_part()
         with self.assertRaises(ExchangeError):
-            prepare_publication(self.project(), "step/new-part.step", "$/../other", self.base / "exchange")
+            prepare_publication(self.project(), NEW_PART, "$/../other", self.base / "exchange")
 
 
 class RestTests(unittest.TestCase):
@@ -360,7 +269,7 @@ name = "Test Vault"
 id = "28"
 root_assembly = "$/Projects/Enclosure.iam"
 ''', encoding="utf-8")
-            atomic_json(root / "vault-lock.json", {"schema_version": 1, "references": {}, "publications": []})
+            atomic_json(root / "vault-lock.json", {"schema_version": 2, "components": [], "publications": []})
             with patch.dict(os.environ, {"VAULT_CAD_TOKEN": "external-token"}):
                 args = cli.parser().parse_args(["--project", str(root), "search", "Enclosure Frame", "--limit", "5"])
                 result = cli.execute(args)

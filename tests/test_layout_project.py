@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from test_publication import EXECUTION  # noqa: E402
 from test_workflow import ProjectFixture, STEP  # noqa: E402
+from vault_cad_tools import layout_import  # noqa: E402
 from vault_cad_tools.cli import main  # noqa: E402
 from vault_cad_tools.exchange import prepare_publication, verify_request  # noqa: E402
 from vault_cad_tools.layout_import import write_json  # noqa: E402
@@ -75,17 +77,10 @@ class LayoutFixture(ProjectFixture):
 
 class IndexTests(LayoutFixture):
     def test_the_index_is_read_and_the_directories_agree_with_it(self):
-        project = self.project()
-        self.assertTrue(project.layout)
-        status = project.status()
+        status = self.project().status()
         self.assertEqual(self.states(), {FRAME: "clean", PIN: "clean"})
         self.assertEqual((status["publication_count"], status["publications"]), (0, []))
         self.assertEqual(main(["--project", str(self.root), "status"]), 0)
-
-    def test_the_earlier_lock_is_still_read(self):
-        ProjectFixture.setUp(self)
-        self.assertFalse(self.project().layout)
-        self.assertEqual(self.project().status()["references"], [])
 
     def test_a_changed_missing_or_unindexed_reference_is_reported(self):
         (self.root / PIN / "part.step").write_bytes(STEP + b" ")
@@ -116,11 +111,6 @@ class IndexTests(LayoutFixture):
                 self.lock = good
                 write_json(self.root / "vault-lock.json", self.lock)
         self.project()
-
-    def test_import_step_belongs_to_the_earlier_layout(self):
-        with self.assertRaisesRegex(ExchangeError, "earlier layout"):
-            self.import_payload("references/part.step")
-        self.assertFalse((self.root / "references/part.step").exists())
 
 
 class PrepareTests(LayoutFixture):
@@ -229,6 +219,24 @@ class RecordTests(LayoutFixture):
             import_publication_result(self.project(), first)
         states = {r["path"]: r["state"] for r in self.project().status()["references"]}
         self.assertEqual(states["vault-lock.json"], "modified")             # the index no longer repeats the record
+
+    def test_a_failure_to_write_the_index_leaves_no_record_behind(self):
+        _, result = self.published()
+        before = (self.root / "vault-lock.json").read_bytes()
+        real = layout_import.write_json
+
+        def failing(path, data):
+            if Path(path).name == "vault-lock.json":
+                raise OSError("disk full")
+            return real(path, data)
+
+        with patch.object(layout_import, "write_json", side_effect=failing):
+            with self.assertRaises(OSError):
+                import_publication_result(self.project(), result)
+        self.assertFalse((self.root / BRACKET / "vault.json").exists())
+        self.assertEqual((self.root / "vault-lock.json").read_bytes(), before)
+        self.assertFalse((self.root / ".vault-cad-operation.lock").exists())
+        self.assertTrue(import_publication_result(self.project(), result)["changed"])
 
     def test_a_working_file_that_is_gone_is_reported_not_refused(self):
         request, result = self.published()

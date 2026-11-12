@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import tempfile
 import tomllib
 from urllib.parse import urlsplit
@@ -16,11 +15,10 @@ class ExchangeError(Exception):
     """A user-actionable failure, safe to display without a traceback."""
 
 
-# vault-lock.json comes in two shapes. The earlier one (1) lists imported STEP files by path, with their evidence,
-# and the publications with theirs. The index (2) belongs to the layout specified in mechanical-cad: one directory
-# per Vault file under references/, authored parts under designs/parts/, and a lock that only repeats what those
-# directories say. A project is in one layout or the other; the earlier one goes when the last project has moved.
-LOCK_EARLIER = 1
+# vault-lock.json is the index (schema 2) of the layout specified in mechanical-cad: one directory per Vault file
+# under references/, authored parts under designs/parts/, and a lock that only repeats what those directories say.
+# The earlier lock (schema 1: single STEP files under references/, deliverables under step/) is no longer read;
+# the last commit of this repository that reads it is a66ca5a.
 LOCK_INDEX = 2
 SHA256 = re.compile(r"[a-f0-9]{64}")
 KEY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:@[a-z0-9]+(?:-[a-z0-9]+)*)?")
@@ -124,27 +122,13 @@ class Project:
         if not isinstance(self.lock, dict) or not isinstance(self.lock.get("publications"), list):
             raise ExchangeError("Invalid vault-lock.json schema")
         version = self.lock.get("schema_version")
-        if version == LOCK_INDEX and isinstance(self.lock.get("components"), list):
-            self.layout = True
-            self._check_index()
-            return
-        if version != LOCK_EARLIER or not isinstance(self.lock.get("references"), dict):
+        if version == 1 and isinstance(self.lock.get("references"), dict):
+            raise ExchangeError("vault-lock.json is the earlier lock (schema 1), which these tools no longer read. "
+                                "Convert the project to one directory per Vault file first "
+                                "(mechanical-cad/docs/layout-specification.md)")
+        if version != LOCK_INDEX or not isinstance(self.lock.get("components"), list):
             raise ExchangeError("Invalid vault-lock.json schema")
-        self.layout = False
-        seen = set()
-        for path, record in self.lock["references"].items():
-            rel = portable_path(path)
-            if rel.parts[0] != "references" or path.casefold() in seen:
-                raise ExchangeError("Invalid or case-colliding reference paths in lock file")
-            contained_path(self.root, path)
-            if not isinstance(record, dict) or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("sha256", ""))):
-                raise ExchangeError(f"Invalid checksum for reference {path}")
-            source = record.get("source")
-            if not isinstance(source, dict) or not all(
-                    isinstance(source.get(key), str) and source[key]
-                    for key in ("vault_id", "master_id", "version_id", "path")):
-                raise ExchangeError(f"Invalid source provenance for reference {path}")
-            seen.add(path.casefold())
+        self._check_index()
 
     def _check_index(self):
         """The index is data another command wrote; check its shape before anything is built on it."""
@@ -199,7 +183,7 @@ class Project:
                             "step_sha256": p.get("step_sha256"), "git_commit": p.get("git_commit")})
         return out
 
-    def _index_status(self):
+    def status(self):
         """Do the directories still say what the index says? Nothing is read from Vault."""
         records = []
         indexed = set()
@@ -254,93 +238,3 @@ class Project:
             yield
         finally:
             path.unlink()
-
-    def status(self):
-        if self.layout:
-            return self._index_status()
-        records = []
-        for name, entry in sorted(self.lock["references"].items()):
-            path = contained_path(self.root, name)
-            state = "missing" if not path.is_file() else (
-                "clean" if digest(path) == entry["sha256"] else "modified")
-            records.append({"path": name, "state": state,
-                            "source": entry.get("source", {})})
-        return {"project": self.config.get("project", {}).get("name"),
-                "root_assembly": self.vault["root_assembly"], "references": records,
-                "publication_count": len(self.lock["publications"])}
-
-    def import_step(self, source, relative, receipt_path):
-        if self.layout:
-            raise ExchangeError("import-step writes the earlier layout. This project keeps one directory per Vault "
-                                "file; its references are written by import-snapshot")
-        source = Path(source).resolve()
-        require_step(source)
-        target = contained_path(self.root, relative)
-        if portable_path(relative).parts[0] != "references" or target.suffix.lower() not in (".step", ".stp"):
-            raise ExchangeError("Imported STEP files must live under references/ with a STEP extension")
-        receipt = read_json(receipt_path)
-        if not isinstance(receipt, dict) or receipt.get("schema_version") != 1:
-            raise ExchangeError("Unsupported export receipt")
-        meta, exporter = receipt.get("source", {}), receipt.get("exporter", {})
-        if not isinstance(meta, dict) or not isinstance(exporter, dict):
-            raise ExchangeError("Invalid export receipt metadata")
-        for key in ("vault_id", "master_id", "version_id", "path"):
-            if not isinstance(meta.get(key), str) or not meta[key]:
-                raise ExchangeError(f"Export receipt requires source.{key}")
-        if meta["vault_id"] != self.vault["id"] or not meta["path"].startswith("$/"):
-            raise ExchangeError("Export receipt belongs to another vault or has an invalid Vault path")
-        for key in ("name", "version", "model_state", "protocol"):
-            if not isinstance(exporter.get(key), str) or not exporter[key]:
-                raise ExchangeError(f"Export receipt requires exporter.{key}")
-        sha = digest(source)
-        if sha != receipt.get("sha256"):
-            raise ExchangeError("Export receipt checksum does not match the STEP file")
-        # Keep receipt extensions, including assembly dependencies and geometry
-        # observations. Dropping these loses the evidence for the frozen snapshot.
-        # Preserved observations are data, not a claim that geometry was validated.
-        entry = {key: value for key, value in receipt.items() if key != "schema_version"}
-        with self.transaction():
-            for name in self.lock["references"]:
-                if name.casefold() == relative.casefold() and name != relative:
-                    raise ExchangeError("Reference path collides on Windows")
-            old = self.lock["references"].get(relative)
-            if target.exists():
-                if old is None or digest(target) != old["sha256"]:
-                    raise ExchangeError("Refusing to overwrite an untracked or locally modified reference")
-            if old and (old["source"]["master_id"] != meta["master_id"]):
-                raise ExchangeError("Reference path is already assigned to another Vault file")
-            if old == entry and target.exists():
-                return {"path": relative, "changed": False, "sha256": sha}
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # Stage bytes and verify the actual copy before replacing a managed file.
-            fd, tmp_name = tempfile.mkstemp(prefix=".vault-cad-", dir=target.parent)
-            os.close(fd)
-            tmp = Path(tmp_name)
-            backup = None
-            installed = False
-            try:
-                shutil.copyfile(source, tmp)
-                if digest(tmp) != sha:
-                    raise ExchangeError("STEP source changed while being copied")
-                if target.exists():
-                    fd, backup_name = tempfile.mkstemp(prefix=".vault-cad-backup-", dir=target.parent)
-                    os.close(fd)
-                    backup = Path(backup_name)
-                    shutil.copyfile(target, backup)
-                os.replace(tmp, target)
-                installed = True
-                self.lock["references"][relative] = entry
-                atomic_json(self.lock_path, self.lock)
-            except Exception:
-                if installed:
-                    if backup is not None:
-                        os.replace(backup, target)
-                    else:
-                        target.unlink(missing_ok=True)
-                self.lock = read_json(self.lock_path)
-                raise
-            finally:
-                tmp.unlink(missing_ok=True)
-                if backup is not None:
-                    backup.unlink(missing_ok=True)
-        return {"path": relative, "changed": True, "sha256": sha}

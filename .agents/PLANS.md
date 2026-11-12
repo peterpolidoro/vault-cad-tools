@@ -16,8 +16,8 @@ Demonstrated, each once, on the enclosure pilot:
 - Vault to repository: `Get-VaultDependencySnapshot.ps1` freezes and downloads
   the exact versions of one root assembly; `Export-PartAssets.ps1` exports one
   STEP per part document plus the instance, placement and BOM records, with
-  every opened document bound to its acquired hash; `import-step` records
-  provenance in the project's `vault-lock.json`. Result: 37 parts, 155
+  every opened document bound to its acquired hash; `import-step`, since
+  removed, recorded provenance in the project's `vault-lock.json`. Result: 37 parts, 155
   occurrences, 479 solids reconstructed in FreeCAD.
 - Repository to Vault: one new-file add (`plan-publish`,
   `Publish-StepToVault.ps1 -Live`, `record-publish`, `import-publish-result`),
@@ -143,6 +143,29 @@ yet reviewed on Linux):
   ends `complete_with_dialogs` leaves no `package.json`. The same holds in
   `Invoke-AssemblyStepProbe.ps1`. The package written afterwards has every
   file but `package.json` byte for byte as before.
+
+Imported and merged on 2026-11-12: the package of
+`2026-11-12-windows-package-findings-01` went into the enclosure (44
+directories rewritten, keys kept, 44 overrides derived) and Peter merged the
+branch, so `main` of the enclosure (7a1af68) is in the layout with one
+directory per Vault file, with AP242 part files. A second import of the same
+Vault versions (the first package) into a clone of `main` leaves all 44
+directories untouched and adds only its receipts directory. What `main` gives
+on Linux is in the shared evidence `2026-11-12-linux-main-baseline-01`.
+
+Removed that day, uncommitted until Peter commits: `import-step`, the earlier
+lock (schema 1) and publishing from `step/`, with their tests. No project is
+left in the earlier layout. `Project` reads the index only and refuses the
+earlier lock with the reason; `prepare-publish` and `import-publish-result`
+take an authored part's `designs/parts/<key>/part.step` only. What the import
+tests showed of the shared helpers is kept (portable paths, symlinks in a
+managed path, JSON with a byte-order mark, the operation lock), and a test
+now shows that a failure to write the index leaves no `vault.json` behind.
+102 tests pass; `status` on the enclosure's `main` is byte for byte what it
+was. The last commit that reads the earlier lock is a66ca5a. Still there:
+`layout_import.py`, which reads the package `Export-PartAssets.ps1` writes,
+and on Windows the scripts of that package and of the single-file export;
+the Windows agent has been asked for a list of them, with no deletion.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -275,15 +298,18 @@ Directives:
    derived (32 and 12), and after `step_facts.py` the copy validates, its
    flattened scene equals the branch's with no placement differing, and it
    matches Inventor's own STEP export of the root assembly solid for solid.
-   Next: the same import into the branch itself, when Peter says so. Not
-   built: removing what
-   a package no longer has. When the enclosure's branch `layout-conversion`
-   is merged, no project is left in the earlier layout: then remove
-   `import-step`, the schema 1 lock and publishing from `step/`, with their
-   tests.
-3. Compare the re-exported enclosure with the branch (`compare-scenes`, and
-   `compare_step_exports.py` for the parts), then make AP242 and the new
-   package the exporter's default.
+   The same import went into the branch itself on 2026-11-12 and is merged
+   (see the current state). Not built: removing what a package no longer
+   has.
+3. Asked of the Windows agent on 2026-11-12
+   (`to-windows/20261112T181749Z-...`): the checks on the new layout on
+   Windows (the tests, `status`, `mechanical_cad validate`, a repeat import
+   that changes nothing), the six remarks, `Export-Package.ps1` described as
+   the exporter, a list of the scripts that serve only the earlier package
+   or layout, one run of the changed exporter, and Inventor reading the STEP
+   file of the whole enclosure that FreeCAD built on Linux. When its list is
+   there and Peter has seen it: remove `layout_import.py`'s reading of the
+   earlier package and the Windows scripts on the list.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
    (`vault-cad sync-status`, written to `sync-status.json`, never into the

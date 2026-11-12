@@ -38,7 +38,7 @@ import zlib
 
 from .api import component
 from .exchange import verify_request
-from .project import ExchangeError, atomic_json, contained_path, digest, now, portable_path, read_json
+from .project import ExchangeError, atomic_json, contained_path, digest, now, read_json
 
 JOURNAL_SCHEMA = 1
 PLAN_SCHEMA = 1
@@ -600,10 +600,9 @@ REQUIRED_RESULT_CHECKS = ("folder_resolved", "version_listed_in_folder", "listed
 def import_publication_result(project, result_path, exchange=None):
     """Record a `verified` publication result in the project.
 
-    In the layout with one directory per Vault file the record goes into the authored
-    part's `vault.json` and the index in `vault-lock.json` is derived again; the
-    evidence of the publication stays in the result file, which the request id names.
-    In the earlier layout the record, with its evidence, goes into the lock.
+    The record goes into the authored part's `vault.json` and the index in
+    `vault-lock.json` is derived again; the evidence of the publication stays in the
+    result file, which the request id names.
 
     The result file is data from another host. Before anything is recorded it is
     re-checked here: schema and status, the request directory it names (re-verified,
@@ -670,13 +669,7 @@ def import_publication_result(project, result_path, exchange=None):
         if not execution.get(key):
             raise ExchangeError(f"Execution record lacks {key}")
     provenance = request["provenance"]
-    rel = portable_path(provenance["project_path"])
-    part_dir = None
-    if project.layout:
-        key, part_dir = project.authored_part(provenance["project_path"])
-    elif rel.parts[0] != "step":
-        raise ExchangeError("Published deliverables come from step/")
-    contained_path(project.root, provenance["project_path"])
+    key, part_dir = project.authored_part(provenance["project_path"])
     try:
         blob = subprocess.run(["git", "-C", str(project.root), "cat-file", "blob", f"{provenance['git_commit']}:{provenance['project_path']}"],
                               capture_output=True, check=True).stdout
@@ -684,36 +677,8 @@ def import_publication_result(project, result_path, exchange=None):
         raise ExchangeError("The provenance commit or path is not in this project's Git history") from None
     if hashlib.sha256(blob).hexdigest() != payload["sha256"]:
         raise ExchangeError("The committed deliverable at the provenance commit does not hash to the payload")
-    working = project.root / provenance["project_path"]
-    if part_dir is not None:
-        return _record_in_part(project, key, part_dir, {
-            "request_id": request_id, "master_id": vault["master_id"], "version_id": vault["version_id"],
-            "git_commit": provenance["git_commit"], "step_sha256": payload["sha256"]},
-            working.is_file() and digest(working) == payload["sha256"])
-    entry = {
-        "request_id": request_id, "operation": "add_step_file", "project_path": provenance["project_path"],
-        "sha256": payload["sha256"], "bytes": payload["bytes"], "git_commit": provenance["git_commit"],
-        "vault": {"id": vault["id"], "name": vault["name"], "master_id": vault["master_id"], "version_id": vault["version_id"],
-                  "version": execution.get("server_version_number")},
-        "destination": {"folder": destination["folder"], "folder_id": folder_id, "name": destination["name"]},
-        "executed_at": execution["executed_at"], "executed_by_host": execution["executed_by_host"],
-        "comment_sent": execution.get("comment_sent"), "verified_at": result.get("verified_at"),
-        "fingerprint": result["fingerprint"], "result_sha256": digest(result_path),
-        "working_tree_matches_at_import": working.is_file() and digest(working) == payload["sha256"],
-    }
-    with project.transaction():
-        publications = project.lock["publications"]
-        for existing in publications:
-            if not isinstance(existing, dict):
-                raise ExchangeError("Corrupt publications list in vault-lock.json")
-            if existing.get("request_id") == request_id:
-                same = {k: v for k, v in existing.items() if k != "imported_at"} == entry
-                if same:
-                    return {"request_id": request_id, "changed": False, "vault": entry["vault"]}
-                raise ExchangeError(f"Request {request_id} is already recorded with different data; refusing to overwrite")
-            ev = existing.get("vault") or {}
-            if ev.get("id") == vault["id"] and ev.get("version_id") == vault["version_id"]:
-                raise ExchangeError(f"Vault version {vault['version_id']} is already recorded under request {existing.get('request_id')}")
-        publications.append(dict(entry, imported_at=now()))
-        atomic_json(project.lock_path, project.lock)
-    return {"request_id": request_id, "changed": True, "vault": entry["vault"], "project_path": entry["project_path"]}
+    working = contained_path(project.root, provenance["project_path"])
+    return _record_in_part(project, key, part_dir, {
+        "request_id": request_id, "master_id": vault["master_id"], "version_id": vault["version_id"],
+        "git_commit": provenance["git_commit"], "step_sha256": payload["sha256"]},
+        working.is_file() and digest(working) == payload["sha256"])

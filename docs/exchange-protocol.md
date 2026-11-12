@@ -4,44 +4,26 @@ This protocol is exercised locally and with Windows Inventor STEP exports.
 Vault publication (one gated add, qualified 2026-10-22) and publication-result ingestion are implemented; updates/check-ins are not. Request directories are
 data, not executable instructions. Use a separate checkout on each machine.
 
-## Export receipt
+## Imports
 
-`import-step` accepts one STEP payload plus a JSON receipt:
+A project's references are written by `import-snapshot` from the exporter's
+package (`mechanical-cad/docs/exporter-package.md`): one directory per Vault
+file and model state with its `source.json`, and a `package.json` that lists
+the hash of every other file. The command checks the whole package against
+that list and against the project before it writes anything, and it leaves a
+directory alone whose Vault version, native hash, STEP bytes and exported
+record are what the project holds. It does not validate geometry;
+`mechanical-cad` measures every imported `part.step` afterwards.
 
-```json
-{
-  "schema_version": 1,
-  "source": {
-    "vault_id": "28",
-    "master_id": "ACTUAL_MASTER_ID",
-    "version_id": "ACTUAL_VERSION_ID",
-    "path": "$/ACTUAL/VAULT/PATH.ipt"
-  },
-  "exporter": {
-    "name": "Autodesk Inventor Server",
-    "version": "ACTUAL_TRANSLATOR_BUILD",
-    "model_state": "ACTUAL_MODEL_STATE",
-    "protocol": "ACTUAL_STEP_PROTOCOL"
-  },
-  "sha256": "ACTUAL_64_CHARACTER_SHA256"
-}
-```
+Until 2026-11-12 a single STEP file could be imported with `import-step` and a
+receipt of its own (source ids, exporter, model state, protocol, SHA-256),
+recorded by path in the earlier lock. That command and that lock are gone.
+`windows/New-ExportReceipt.ps1` still writes such a receipt; nothing on Linux
+reads it.
 
-Values above are placeholders explaining the schema, not test results. IDs are
-strings. All receipt fields except the envelope's `schema_version` are preserved
-in the reference lock entry, including top-level `dependencies`, `validation`,
-and additional `source`/`exporter` fields. An assembly
-receipt must include its resolved dependency versions and component
-states; the importer currently cannot verify dependency completeness itself.
 The Windows worker must establish the source/output relationship from actual
 job results and file associations or exact-version acquisition and local export
-records, not just a filename search. Preserving validation observations does not
-mean the importer verifies their geometry or their dependency completeness.
-
-`vault-lock.json` maps relative paths to checksums and this provenance. Reimports
-of the same bytes and metadata are no-ops. Locally edited managed references
-cause a conflict. To recover after an interrupted import, inspect the reference
-checksum and receipt before repairing the lock; never silently accept mismatches.
+records, not just a filename search.
 
 ## Publication request
 
@@ -137,7 +119,7 @@ without opening a connection.
 ## Publication result ingestion (implemented 2026-10-22)
 
 `vault-cad --project DIR import-publish-result results/UUID.json [--exchange ROOT]` is the only
-Linux step that touches the project lock. It accepts a result only when: schema 1,
+step of a publication that writes into the project. It accepts a result only when: schema 1,
 operation `add_step_file`, status `verified`; the request directory `requests/UUID`
 exists and re-verifies (payload re-hashed); the fingerprint recomputed from that request
 equals the result's; payload and re-download hashes/sizes equal the request; destination
@@ -145,16 +127,14 @@ equals the result's; payload and re-download hashes/sizes equal the request; des
 and the Vault master/version ids are present; every verification check is true (none
 false, the six listing/byte checks present); the execution record is typed and names the
 executing host and time; and the blob at `provenance.git_commit:project_path` in the
-project's Git history hashes to the payload. In a project with one directory per Vault
-file (lock schema 2) the deliverable is `designs/parts/<key>/part.step`, and the command
+project's Git history hashes to the payload. The deliverable is
+`designs/parts/<key>/part.step`, and the command
 appends `request_id`, `master_id`, `version_id`, `git_commit` and `step_sha256` to that
 part's `vault.json`, then derives the `publications` of `vault-lock.json` again from the
-`vault.json` files; a Vault version already recorded under another request is refused. In
-the earlier layout (lock schema 1, deliverables under `step/`) it appends one record to
-`vault-lock.json` `publications` (request id, path, hash, size, commit, Vault ids and
-version, destination with folder id, execution host/time/comment, verified time,
-fingerprint, result file hash, whether the working-tree file still matches) under the
-project operation lock. Re-importing an identical result is a no-op; a different result
+`vault.json` files, under the project operation lock; a Vault version already recorded
+under another request is refused. The evidence of the publication (destination with
+folder id, execution host, time and comment, verified time, fingerprint) stays in the
+result file. Re-importing an identical result is a no-op; a different result
 under the same request id, or the same Vault version under another request, is refused.
 The journal is never read.
 
@@ -164,7 +144,7 @@ Write `results/UUID.json` atomically with request ID, operation status, payload
 SHA-256, destination, and actual Vault master/version IDs. Record the Git commit
 in the Vault check-in comment where supported. Successful results must be checked
 against the request and a re-downloaded Vault file before recording a publication
-in the project lock. Merely preparing a request must never add a publication entry.
+in the project. Merely preparing a request must never add a publication entry.
 
 Credentials and session tokens remain on the executing host. Use per-request
 evidence and bounded error messages without secrets. Keep code/long-term plans

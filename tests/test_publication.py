@@ -9,7 +9,7 @@ import zlib
 from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from test_workflow import ProjectFixture, STEP  # noqa: E402
+from test_workflow import NEW_PART, ProjectFixture, STEP  # noqa: E402
 from vault_cad_tools.api import VaultClient  # noqa: E402
 from vault_cad_tools.exchange import prepare_publication, verify_request  # noqa: E402
 from vault_cad_tools.project import ExchangeError, atomic_json  # noqa: E402
@@ -28,7 +28,7 @@ class PlanningFixture(ProjectFixture):
         super().setUp()
         self.committed_part()
         self.exchange = self.base / "exchange"
-        self.result = prepare_publication(self.project(), "step/new-part.step", "$/Projects/Incoming", self.exchange)
+        self.result = prepare_publication(self.project(), NEW_PART, "$/Projects/Incoming", self.exchange)
         self.request_dir = Path(self.result["directory"])
         self.request = verify_request(self.request_dir)
         self.rid = self.request["request_id"]
@@ -284,7 +284,7 @@ class ResultTests(PlanningFixture):
         with self.assertRaisesRegex(ExchangeError, "server_file_size_matches_download"):
             record_result(self.request_dir, self.after_upload_catalog(), self.journal, {"master_id": "900", "version_id": "901"}, self.workdir)
         # a fresh request for the checksum case
-        other = prepare_publication(self.project(), "step/new-part.step", "$/Projects/Incoming", self.exchange)
+        other = prepare_publication(self.project(), NEW_PART, "$/Projects/Incoming", self.exchange)
         other_dir = Path(other["directory"])
         rid = other["request_id"]
         plan_publication(other_dir, self.catalog(), self.journal)
@@ -409,19 +409,13 @@ class IngestTests(PlanningFixture):
     def test_import_records_publication_from_result_and_request(self):
         path = self.verified_result_path()
         out = import_publication_result(self.project(), path)
-        self.assertTrue(out["changed"])
-        pubs = self.project().lock["publications"]
-        self.assertEqual(len(pubs), 1)
-        rec = pubs[0]
-        self.assertEqual(rec["request_id"], self.rid)
-        self.assertEqual(rec["vault"], {"id": "28", "name": "Test Vault", "master_id": "900", "version_id": "901", "version": 1})
-        self.assertEqual(rec["project_path"], "step/new-part.step")
-        self.assertEqual(rec["git_commit"], self.request["provenance"]["git_commit"])
-        self.assertEqual(rec["destination"], {"folder": "$/Projects/Incoming", "folder_id": "77", "name": "new-part.step"})
-        self.assertEqual(rec["executed_by_host"], "test-host")
-        self.assertEqual(rec["fingerprint"], fingerprint(self.request))
-        self.assertTrue(rec["working_tree_matches_at_import"])
-        self.assertTrue(rec["imported_at"])
+        self.assertTrue(out["changed"] and out["part_step_matches_publication"])
+        self.assertEqual(out["vault"], {"master_id": "900", "version_id": "901"})
+        record = {"request_id": self.rid, "master_id": "900", "version_id": "901",
+                  "git_commit": self.request["provenance"]["git_commit"], "step_sha256": self.request["payload"]["sha256"]}
+        recorded = json.loads((self.root / "designs/parts/new-part/vault.json").read_text(encoding="utf-8"))
+        self.assertEqual(recorded, {"schema_version": 1, "publications": [record]})
+        self.assertEqual(self.project().lock["publications"], [dict(key="new-part", path="designs/parts/new-part", **record)])
         self.assertEqual(self.project().status()["publication_count"], 1)
 
     def test_reimport_of_identical_result_is_a_no_op(self):
@@ -484,16 +478,9 @@ class IngestTests(PlanningFixture):
             import_publication_result(self.project(), path)
         self.assertEqual(self.project().lock["publications"], [])
 
-    def test_conflicting_record_and_reused_vault_version_are_refused(self):
+    def test_a_stale_operation_lock_refuses_the_import(self):
         path = self.verified_result_path()
-        import_publication_result(self.project(), path)
-        self.edit_result(path, lambda d: d["execution"].__setitem__("executed_by_host", "another-host"))
-        with self.assertRaisesRegex(ExchangeError, "different data"):
+        (self.root / ".vault-cad-operation.lock").write_text("another process")
+        with self.assertRaisesRegex(ExchangeError, "Another operation"):
             import_publication_result(self.project(), path)
-        project = self.project()
-        project.lock["publications"][0]["request_id"] = "11111111-1111-4111-8111-111111111111"
-        atomic_json(project.lock_path, project.lock)
-        self.edit_result(path, lambda d: d["execution"].__setitem__("executed_by_host", "test-host"))
-        with self.assertRaisesRegex(ExchangeError, "already recorded under request"):
-            import_publication_result(self.project(), path)
-        self.assertEqual(len(self.project().lock["publications"]), 1)
+        self.assertFalse((self.root / "designs/parts/new-part/vault.json").exists())

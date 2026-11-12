@@ -1,12 +1,13 @@
-"""Write an exporter package into the proposed repository layout.
+"""Write the earlier exporter package into the repository layout.
 
-PROVISIONAL. The layout (one directory per Vault file, a manifest per assembly)
-is a proposal kept in the sibling `mechanical-cad` repository
-(`docs/layout-proposal.md`, `docs/layout-specification.md`); Peter has not
-accepted it. This module is the first form of the import command that proposal
-describes. It reads the package `windows/Export-PartAssets.ps1` writes today
-(`native-snapshot.json`, `scene.json`, `export-receipt.json`, `assets/`) and
-writes `references/` and the derived `vault-lock.json` into a new directory.
+The layout (one directory per Vault file, a manifest per assembly) is
+specified in the sibling `mechanical-cad` repository
+(`docs/layout-specification.md`); Peter decided its choices on 2026-11-11.
+This module is the first form of the import command. It reads the package
+`windows/Export-PartAssets.ps1` writes (`native-snapshot.json`, `scene.json`,
+`export-receipt.json`, `assets/`) and writes `references/` and the derived
+`vault-lock.json` into a new directory. The package with `package.json` is
+read by `package_import.py`, which also shares this module's helpers.
 The validator in `mechanical-cad` is the reference for what it must produce.
 
 It never guesses: a Vault fact the package does not carry is written as null,

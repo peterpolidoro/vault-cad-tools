@@ -28,15 +28,15 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 87 portable tests pass in the Guix environment (2026-11-10). The Windows
+The 102 portable tests pass in the Guix environment (2026-11-12). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
-exporter and importer are to write, are kept in the sibling `mechanical-cad`
-repository (`docs/direction.md`, `docs/layout-proposal.md`). That layout is a
-proposal. If it is accepted, the exporter's output, the lock and the planned
-metadata file described below change. One command already writes it,
-provisionally: see "Convert an exported snapshot into the proposed layout".
+exporter and importer write, are kept in the sibling `mechanical-cad`
+repository (`docs/direction.md`, `docs/layout-specification.md`). Peter
+decided the layout's choices on 2026-11-11, and the enclosure has been in it
+since 2026-11-12. The exporter's package is specified there as a draft
+(`docs/exporter-package.md`) that Peter has not reviewed.
 
 ## Environments
 
@@ -472,44 +472,27 @@ offline suites, mechanical guard harness) and
 `.../2026-10-22-windows-review-fixes-vault-dryrun-01/` (lifecycle, harness-ownership
 and null-guard corrections; Vault SDK discovery and the offline publication dry run).
 
-## Two project layouts
+## The project layout
 
-A project's `vault-lock.json` says which layout it is in, and the commands
-here read both:
+A project keeps one directory per Vault file, as specified in
+`mechanical-cad/docs/layout-specification.md`: imported files under
+`references/parts/<key>/` and `references/assemblies/<key>/`, written by
+`import-snapshot`; authored parts under `designs/parts/<key>/`, whose
+`part.step` is the deliverable. `vault-lock.json` (schema 2) is an index of
+those directories. `status` reports whether each directory still says what the
+index says, and whether each published part is still the file that was
+published.
 
-- **One directory per Vault file** (lock schema 2), specified in
-  `mechanical-cad/docs/layout-specification.md`: imported files under
-  `references/parts/<key>/` and `references/assemblies/<key>/`, written by
-  `import-snapshot`; authored parts under `designs/parts/<key>/`, whose
-  `part.step` is the deliverable. The lock is an index of those directories.
-  `status` reports whether each directory still says what the index says, and
-  whether each published part is still the file that was published.
-- **The earlier layout** (lock schema 1): single STEP files under
-  `references/`, imported with `import-step`, and deliverables under `step/`.
-  It stays readable until the last project has been converted, then goes.
-
-`import-step` refuses a project in the first layout, and a request cannot be
-prepared from `step/` there.
-
-## Import a Windows-generated STEP (earlier layout)
-
-Create an export receipt according to `docs/exchange-protocol.md`, using actual
-source IDs, settings, and a SHA-256 of the output. Then:
-
-```sh
-python3 run.py --project ../free-standing-tank-enclosure import-step /path/to/part.step --receipt /path/to/part.export.json --as references/part.step
-```
-
-The importer validates the checksum and STEP envelope, refuses to overwrite
-untracked/modified references, records provenance, and rejects Windows filename
-collisions and paths outside `references/`. It does **not** validate CAD geometry.
-Inspect the result in FreeCAD before accepting it. Commit models and lock-file
-updates together. Keep edits in project `designs/` and authored exports in `step/`.
+The earlier layout (lock schema 1: single STEP files under `references/`,
+imported with `import-step`, and deliverables under `step/`) is no longer
+read. It went on 2026-11-12, when the enclosure, the one project in it, had
+been converted. The commands refuse such a lock and say why; the last commit
+that reads it is a66ca5a.
 
 ## Convert an exported snapshot into one directory per Vault file
 
 ```sh
-python3 run.py import-snapshot ../free-standing-tank-enclosure/references/enclosure \
+python3 run.py import-snapshot /path/to/the/earlier/package \
     --into /path/to/a/new/directory --run legacy-snapshot-991056 \
     [--inventory dependency-inventory.json] [--acquisition acquisition.json]
 ```
@@ -604,8 +587,7 @@ The request is refused unless `part.step` is committed and is the file the
 part's `receipt.json` describes (build the part again if it is not). Every
 deliverable is called `part.step`, so the file is named `KEY.step` in Vault
 unless `--name` gives another name; the name a part has in Vault is Peter's to
-settle, and this default is provisional. In the earlier layout the path is
-`step/NAME.step` and the file keeps its name.
+settle, and this default is provisional.
 
 Planning, journal and verification are implemented offline or READ-ONLY against
 Vault (details in `docs/exchange-protocol.md`):
@@ -649,8 +631,7 @@ at the provenance commit must hash to the payload) before it records anything; i
 reads the executor journal. The record goes into the part's `designs/parts/KEY/vault.json`
 (request id, master id, version id, Git commit, STEP hash), and the `publications` of the
 index in `vault-lock.json` are derived again from those files; the evidence of the
-publication stays in the result file. In the earlier layout the record, with its evidence,
-is appended to the lock's `publications`. Identical re-imports are no-ops; conflicting
+publication stays in the result file. Identical re-imports are no-ops; conflicting
 ones, and a Vault version already recorded under another request, are refused. First qualified live add: 2026-10-22, request `e1caf6c0-...`, Vault
 version 994252 (`vault-cad-exchange/evidence/2026-10-22-windows-vault-pilot-01/`).
 

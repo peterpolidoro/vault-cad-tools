@@ -25,7 +25,7 @@ target workflow in `.agents/PLANS.md` and the synchronisation design in
   exported `scene.json` (occurrence ids, part ids, world transforms, units, up axis),
   never a single monolithic assembly STEP as the source.
 - Every authored STEP is re-imported with FreeCAD and compared with the generator's
-  expected volume and extents before it is accepted (`import-step` provenance and the
+  expected volume and extents before it is accepted (the import's records and the
   validation receipts already do this for exported parts).
 
 ## 2. Inventor is not an authoring tool
