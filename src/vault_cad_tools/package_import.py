@@ -2,10 +2,18 @@
 
 PROVISIONAL, like the package itself. The package is specified by a draft in
 the sibling `mechanical-cad` repository (`docs/exporter-package.md`): a
-`package.json` and, under `files/`, one directory per exported Vault file and
-model state with `source.json` and `part.step` or `assembly.json`. The
-exporter identifies a file by its Vault master id and model state and never
-writes a key. This module finds or assigns the key and writes `references/`.
+`package.json`, `occurrences.json` and, under `files/`, one directory per
+exported Vault file and model state with `source.json` and `part.step` or
+`assembly.json`. The exporter identifies a file by its Vault master id and
+model state and never writes a key. This module finds or assigns the key and
+writes `references/`.
+
+The exporter states two things about placements, because Inventor states
+those two: each assembly document's own children (`assembly.json`) and every
+occurrence in the context of the root (`occurrences.json`). Where the two
+differ, a flexible sub-assembly has been posed in its parent. The layout
+records that as an override on the flexible instance, and deriving it is this
+module's work (`_read_occurrences`): the exporter writes no override.
 
 Unlike `layout_import.import_snapshot`, which converts the earlier package
 into a new directory, this reads into a project that may already hold the
@@ -30,8 +38,8 @@ import re
 import tomllib
 from pathlib import Path
 
-from .layout_import import (LAYOUT_SCHEMA_VERSION, LOCK_SCHEMA_VERSION, _Keys, _read_json, _sha, data_sha256,
-                            write_json)
+from .layout_import import (LAYOUT_SCHEMA_VERSION, LOCK_SCHEMA_VERSION, _deviation, _Keys, _read_json, _sha,
+                            data_sha256, write_json)
 from .project import COMPONENT_ROOT, KEY, ExchangeError
 
 OPERATION_LOCK = ".vault-cad-operation.lock"        # the lock file Project.transaction uses
@@ -39,6 +47,9 @@ OPERATION_LOCK = ".vault-cad-operation.lock"        # the lock file Project.tran
 PACKAGE_SCHEMA_VERSION = 2
 PACKAGE_KIND = "vault-cad-export-package"
 PACKAGE_FILE = re.compile(r"files/([^/]+)/(source\.json|part\.step|assembly\.json)")
+OCCURRENCES = "occurrences.json"
+OCCURRENCES_SCHEMA_VERSION = 1
+TOP_LEVEL = ("package.json", OCCURRENCES, "files")
 SHA256 = re.compile(r"[a-f0-9]{64}")
 RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -91,18 +102,23 @@ def _read_package(package):
 
     base = package / "files"
     present = {p.relative_to(package).as_posix() for p in base.rglob("*") if p.is_file()} if base.is_dir() else set()
+    present.update(p.name for p in package.iterdir() if p.name not in ("package.json", "files"))
     for rel in sorted(set(listed) ^ present):
         raise ExchangeError(f"{rel} is " + ("listed in package.json and missing" if rel in listed else
                                             "in the package and not listed in package.json"))
+    if OCCURRENCES not in listed:
+        raise ExchangeError(f"the package has no {OCCURRENCES}: the placements of every occurrence in the root's context")
     directories = {}
     for rel, rec in sorted(listed.items()):
         m = PACKAGE_FILE.fullmatch(rel)
-        if not m:
-            raise ExchangeError(f"{rel}: a package holds files/<directory>/source.json, part.step or assembly.json only")
+        if not m and rel != OCCURRENCES:
+            raise ExchangeError(f"{rel}: a package holds {OCCURRENCES} and files/<directory>/source.json, part.step or "
+                                "assembly.json only")
         data = (package / rel).read_bytes()
         if not isinstance(rec, dict) or _sha(data) != rec.get("sha256") or len(data) != rec.get("bytes"):
             raise ExchangeError(f"{rel} does not match package.json; the package is not the one that was exported")
-        directories.setdefault(m.group(1), {})[m.group(2)] = data
+        if m:
+            directories.setdefault(m.group(1), {})[m.group(2)] = data
 
     files = {}
     for name, held in sorted(directories.items()):
@@ -171,7 +187,8 @@ def _read_package(package):
             "assemblies": sum(e["kind"] == "assembly" for e in files.values())}
     if counts != have:
         raise ExchangeError(f"package.json counts {counts}; the package holds {have}")
-    return manifest, files, root_identity
+    overrides = _read_occurrences(package, files, root_identity)
+    return manifest, files, root_identity, overrides
 
 
 def _check_assembly(entry, files, not_exported):
@@ -210,12 +227,123 @@ def _check_assembly(entry, files, not_exported):
             raise ExchangeError(f"{at}: transform must be 4 by 4 numbers")
         if not isinstance(child.get("bom_structure"), str) or any(not isinstance(child.get(f), bool) for f in CHILD_FLAGS):
             raise ExchangeError(f"{at}: an exported child states its BOM structure and all five flags")
-        overrides = child.get("overrides", [])
-        if not isinstance(overrides, list) or any(
-                not isinstance(o, dict) or set(o) != {"path", "transform"} or not _matrix(o["transform"])
-                or not isinstance(o["path"], list) or not o["path"] or any(not isinstance(n, str) for n in o["path"])
-                for o in overrides):
-            raise ExchangeError(f"{at}: an override is a path of occurrence names and a transform")
+        if "overrides" in child:
+            raise ExchangeError(f"{at}: the exporter writes no overrides; {OCCURRENCES} states the placements in context")
+
+
+def _multiply(a, b):
+    return [[sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)] for r in range(4)]
+
+
+def _read_occurrences(package, files, root_identity):
+    """Check occurrences.json against the assembly documents and derive the overrides.
+
+    Returns {identity of an assembly document: {child name: [{"path", "transform"}]}}: for each flexible
+    child, the placements below it that are not the ones the documents define, as the layout records them.
+
+    Each occurrence is placed in its parent by `transform` and in the root by `transform_root`, and says
+    whether it differs from what its parent's document defines. The exporter decides that, with the
+    tolerance the file states; this checks that the statement, the definitions and the two placements agree
+    within that tolerance, and attaches each difference to the nearest flexible occurrence above it. What the
+    layout cannot record is refused: flags that differ in context, a difference with no flexible occurrence
+    above it, and instances of one document that would need different overrides.
+    """
+    data = _read_json(package / OCCURRENCES)
+    if not isinstance(data, dict) or data.get("schema_version") != OCCURRENCES_SCHEMA_VERSION:
+        raise ExchangeError(f"{OCCURRENCES}: schema_version must be {OCCURRENCES_SCHEMA_VERSION}")
+    root = data.get("root")
+    if not isinstance(root, dict) or (root.get("master_id"), root.get("model_state")) != root_identity:
+        raise ExchangeError(f"{OCCURRENCES} is of another root assembly than package.json names")
+    tolerance = data.get("tolerance")
+    limits = [tolerance.get(k) if isinstance(tolerance, dict) else None for k in ("rotation_cell", "length")]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 for v in limits):
+        raise ExchangeError(f"{OCCURRENCES}: tolerance must state rotation_cell and length")
+    rotation, length = limits
+    listed = data.get("occurrences")
+    if not isinstance(listed, list):
+        raise ExchangeError(f"{OCCURRENCES}: occurrences must be a list")
+    definitions = {}
+    for identity, entry in files.items():
+        if entry["kind"] != "assembly":
+            continue
+        if entry["assembly"].get("length_unit") != data.get("length_unit"):
+            raise ExchangeError(f"{OCCURRENCES} is in {data.get('length_unit')!r} and {entry['where']}/assembly.json in "
+                                f"{entry['assembly'].get('length_unit')!r}; the import does not convert placements")
+        definitions[identity] = {child["name"]: child for child in entry["assembly"]["children"]}
+
+    def close(a, b):
+        rot, tra = _deviation(a, b)
+        return rot <= rotation and tra <= length
+
+    identity_matrix = [[1.0 if r == c else 0.0 for c in range(4)] for r in range(4)]
+    seen = {(): {"kind": "assembly", "identity": root_identity, "world": identity_matrix, "flexible": False,
+                 "children": set()}}
+    for o in listed:
+        path = tuple(o["path"]) if isinstance(o, dict) and isinstance(o.get("path"), list) else ()
+        if not path or any(not isinstance(n, str) or not n for n in path):
+            raise ExchangeError(f"{OCCURRENCES}: an occurrence has a path of occurrence names")
+        at = f"{OCCURRENCES} {'/'.join(path)}"
+        if not _matrix(o.get("transform")) or not _matrix(o.get("transform_root")) \
+                or not isinstance(o.get("differs_from_definition"), bool):
+            raise ExchangeError(f"{at}: an occurrence states transform, transform_root and differs_from_definition")
+        parent = seen.get(path[:-1])
+        if path in seen or parent is None or parent["kind"] != "assembly":
+            raise ExchangeError(f"{at}: " + ("is listed twice" if path in seen else
+                                             "is listed before the assembly occurrence that holds it, or has none"))
+        child = definitions[parent["identity"]].get(path[-1])
+        if child is None:
+            raise ExchangeError(f"{at}: the document of the occurrence above defines no child of that name")
+        if (o.get("master_id"), o.get("model_state")) != (child["master_id"], child.get("model_state")) \
+                or o.get("kind") != child["kind"]:
+            raise ExchangeError(f"{at}: is not the component its parent's document places under that name")
+        if o.get("bom_structure") != child["bom_structure"] or any(o.get(f) != child[f] for f in CHILD_FLAGS):
+            raise ExchangeError(f"{at}: its BOM structure or a flag differs in context from its parent's document; "
+                                "the layout records these once, in the document")
+        if close(o["transform"], child["transform"]) == o["differs_from_definition"]:
+            raise ExchangeError(f"{at}: differs_from_definition is {str(o['differs_from_definition']).lower()} and its "
+                                "placement says otherwise")
+        if not close(_multiply(parent["world"], o["transform"]), o["transform_root"]):
+            raise ExchangeError(f"{at}: transform_root is not its parent's placement in the root times its own")
+        parent["children"].add(path[-1])
+        seen[path] = {"kind": o["kind"], "identity": (o["master_id"], o.get("model_state")), "world": o["transform_root"],
+                      "flexible": o["flexible"], "children": set(), "differs": o["differs_from_definition"],
+                      "transform": o["transform"]}
+
+    for path, rec in seen.items():
+        if rec["kind"] == "assembly" and rec["children"] != set(definitions[rec["identity"]]):
+            missing = sorted(set(definitions[rec["identity"]]) - rec["children"])
+            raise ExchangeError(f"{OCCURRENCES} {'/'.join(path) or 'the root'}: the occurrence lacks {missing[0]}, "
+                                "which its document defines")
+    counts = data.get("counts")
+    if isinstance(counts, dict) and counts.get("occurrences") not in (None, len(listed)):
+        raise ExchangeError(f"{OCCURRENCES} counts {counts.get('occurrences')} occurrences and lists {len(listed)}")
+
+    # each difference goes to the nearest flexible occurrence above it, in the document that places that occurrence
+    posed = {}      # (document that holds the flexible child, child name) -> {instance of that document: {path: transform}}
+    for path, rec in seen.items():
+        if not rec.get("differs"):
+            continue
+        k = len(path) - 1
+        while k > 0 and not seen[path[:k]]["flexible"]:
+            k -= 1
+        if k == 0:
+            raise ExchangeError(f"{OCCURRENCES} {'/'.join(path)}: it is not where its document puts it and no occurrence "
+                                "above it is flexible")
+        holder = seen[path[:k - 1]]
+        posed.setdefault((holder["identity"], path[k - 1]), {}).setdefault(path[:k - 1], {})[path[k:]] = rec["transform"]
+
+    overrides = {}
+    for (document, name), by_instance in posed.items():
+        instances = [p for p, rec in seen.items() if rec["kind"] == "assembly" and rec["identity"] == document]
+        first = by_instance.get(instances[0], {})
+        for instance in instances[1:]:
+            other = by_instance.get(instance, {})
+            if set(other) != set(first) or any(not close(other[p], first[p]) for p in first):
+                raise ExchangeError(f"{OCCURRENCES} {'/'.join(instance + (name,))}: two instances of one document pose "
+                                    f"{name} differently; that needs an override on an outer instance, which this "
+                                    "import does not write")
+        overrides.setdefault(document, {})[name] = [{"path": list(p), "transform": m} for p, m in first.items()]
+    return overrides
 
 
 def _read_project(dest):
@@ -304,7 +432,7 @@ def import_package(package, dest, run):
     package, dest = Path(package), Path(dest)
     if not RUN.fullmatch(run or ""):
         raise ExchangeError("the run name must be a plain directory name")
-    manifest, files, root_identity = _read_package(package)
+    manifest, files, root_identity, overrides = _read_package(package)
     if dest.exists() and not dest.is_dir():
         raise ExchangeError(f"{dest} is not a directory")
     project = _read_project(dest) if dest.exists() else None
@@ -338,9 +466,13 @@ def import_package(package, dest, run):
         entry["write_source"] = _ordered(source, SOURCE_ORDER)
         if entry["kind"] == "assembly":
             children = []
+            posed = overrides.get(identity, {})
             for child in entry["assembly"]["children"]:
                 target = files[(child["master_id"], child.get("model_state"))]
-                children.append(_ordered(dict(child, component=target["key"]), CHILD_ORDER))
+                record = dict(child, component=target["key"])
+                if posed.get(child["name"]):
+                    record["overrides"] = posed[child["name"]]
+                children.append(_ordered(record, CHILD_ORDER))
             manifest_out = {"schema_version": LAYOUT_SCHEMA_VERSION, "key": entry["key"], "name": entry["assembly"].get("name")}
             manifest_out.update({k: entry["assembly"][k] for k in ("length_unit", "frame") if k in entry["assembly"]})
             manifest_out["children"] = children
@@ -384,7 +516,8 @@ def import_package(package, dest, run):
         for top in COMPONENT_ROOT.values():
             dest.joinpath(*top.split("/")).mkdir(parents=True, exist_ok=True)
         receipts.mkdir(parents=True)
-        (receipts / "package.json").write_bytes((package / "package.json").read_bytes())
+        for name in ("package.json", OCCURRENCES):        # the exporter's two statements about the whole, unchanged
+            (receipts / name).write_bytes((package / name).read_bytes())
         to_measure = []
         for entry in files.values():
             if entry["state"] == "unchanged":
@@ -412,6 +545,7 @@ def import_package(package, dest, run):
         "destination": str(dest), "run": run, "root": files[root_identity]["key"],
         "parts": sum(e["kind"] == "part" for e in files.values()),
         "assemblies": sum(e["kind"] == "assembly" for e in files.values()),
+        "overrides": sum(len(found) for posed in overrides.values() for found in posed.values()),
         **{state: sorted(found) for state, found in outcome.items()},
         "not_in_package": sorted(set(project["components"]) - in_package) if project else [],
         "to_measure": sorted(to_measure),

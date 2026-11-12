@@ -131,7 +131,12 @@ class PackageImportTests(unittest.TestCase):
         self.assertEqual((root["key"], root["frame"]["up_axis"], root["length_unit"]), ("root", "+Y", "cm"))
         self.assertEqual([(c["name"], c["component"], c["master_id"]) for c in root["children"]],
                          [("A:1", "a", "100"), ("SUB:1", "sub", "300"), ("SUB:2", "sub", "300")])
+        # the exporter states B:1 below SUB:2 in context; the override on the flexible instance is derived from that
         self.assertEqual(root["children"][2]["overrides"], [{"path": ["B:1"], "transform": matrix(3)}])
+        self.assertNotIn("overrides", root["children"][1])
+        self.assertEqual(result["overrides"], 1)
+        self.assertEqual((self.dest / "references/receipts/run-1/occurrences.json").read_bytes(),
+                         (package / "occurrences.json").read_bytes())
         self.assertEqual(self.load("references/assemblies/sub/source.json")["export"], {"run": "run-1"})
         lock = self.load("vault-lock.json")
         self.assertEqual((lock["schema_version"], lock["publications"]), (2, []))
@@ -165,6 +170,7 @@ class PackageImportTests(unittest.TestCase):
         after = tree(self.dest)
         changed = sorted(k for k in after if before.get(k) != after[k])
         self.assertEqual(changed, ["references/parts/b/part.step", "references/parts/b/source.json",
+                                   "references/receipts/run-2/occurrences.json",
                                    "references/receipts/run-2/package.json", "vault-lock.json"])
         source = self.load("references/parts/b/source.json")
         self.assertEqual((source["key"], source["name"], source["vault"]["version_number"], source["export"]["run"]),
@@ -277,11 +283,12 @@ class PackageImportTests(unittest.TestCase):
                 (lambda c: c.update(kind="assembly"), "kind is 'assembly' and the component is a part"),
                 (lambda c: c.update(transform=[[1, 0, 0, 0]]), "transform must be 4 by 4 numbers"),
                 (lambda c: c.pop("grounded"), "states its BOM structure and all five flags"),
-                (lambda c: c.update(name="B:1"), "occurrence names are unique"),
-                (lambda c: c.update(overrides=[{"path": [], "transform": matrix()}]), "an override is a path")):
+                (lambda c: c.update(name="B:1"), "occurrence names are unique")):
             held = files()
             change(held["sub"]["assembly"]["children"][0])
             self.refused(message, held, run="run-1")
+        self.refused("SUB:2: the exporter writes no overrides; occurrences.json states the placements in context",
+                     run="run-1", strip_overrides=False)
         held = files()
         held["sub"]["assembly"]["key"] = "sub"
         self.refused("assembly.json: the exporter does not write a key", held, run="run-1")
@@ -322,6 +329,74 @@ class PackageImportTests(unittest.TestCase):
         self.refused("vault-lock.json is not the index", held)
         (self.dest / "vault-lock.json").unlink()
         self.refused("has references/ and no vault-lock.json", held)
+
+    def occurrence(self, data, *path):
+        return next(o for o in data["occurrences"] if o["path"] == list(path))
+
+    def test_the_placements_in_context_have_to_agree_with_the_documents(self):
+        def edited(change):
+            def edit(data):
+                change(data)
+                return data
+            return edit
+
+        cases = (
+            (lambda d: None, "the package has no occurrences.json", None),
+            (lambda d: d.update(schema_version=2), "occurrences.json: schema_version must be 1", None),
+            (lambda d: d["root"].update(master_id="300"), "is of another root assembly than package.json names", None),
+            (lambda d: d.pop("tolerance"), "tolerance must state rotation_cell and length", None),
+            (lambda d: d.update(length_unit="mm"), "occurrences.json is in 'mm' and files/.*/assembly.json in 'cm'", None),
+            (lambda d: d["occurrences"].pop(), "SUB:2: the occurrence lacks B:1, which its document defines", None),
+            (lambda d: d["occurrences"].append(dict(d["occurrences"][0])), "A:1: is listed twice", None),
+            (lambda d: d["occurrences"].insert(0, d["occurrences"].pop()), "SUB:2/B:1: is listed before the assembly", None),
+            (lambda d: self.occurrence(d, "A:1").update(master_id="200"), "A:1: is not the component", None),
+            (lambda d: self.occurrence(d, "SUB:1", "A:1").update(visible=False), "SUB:1/A:1: its BOM structure or a flag", None),
+            (lambda d: self.occurrence(d, "SUB:1", "B:1").update(differs_from_definition=True),
+             "SUB:1/B:1: differs_from_definition is true and its placement says otherwise", None),
+            (lambda d: self.occurrence(d, "SUB:2", "B:1").update(differs_from_definition=False),
+             "SUB:2/B:1: differs_from_definition is false and its placement says otherwise", None),
+            (lambda d: self.occurrence(d, "SUB:1", "A:1").update(transform_root=matrix(99)),
+             "SUB:1/A:1: transform_root is not its parent's placement in the root times its own", None),
+            (lambda d: d["counts"].update(occurrences=3), "counts 3 occurrences and lists 7", None),
+        )
+        for change, message, _ in cases:
+            if message.startswith("the package has no"):
+                self.refused(message, run="run-1", edit_occurrences=lambda d: None)
+            else:
+                self.refused(message, run="run-1", edit_occurrences=edited(change))
+
+    def test_a_placement_that_differs_needs_a_flexible_occurrence_above_it(self):
+        held = files()
+        held["root"]["assembly"]["children"][2]["flexible"] = False          # the helper still states B:1 as posed
+        self.refused("SUB:2/B:1: it is not where its document puts it and no occurrence above it is flexible",
+                     held, run="run-1")
+
+    def test_instances_of_one_document_that_are_posed_differently_are_refused(self):
+        # Root places Mid twice; Mid places Sub flexibly; only in MID:1 is Sub's B:1 moved: Mid's manifest
+        # cannot say that for one of its instances, and an override on an outer instance is not written
+        held = files()
+        held["mid"] = assembly("Mid", "500", [child("SUB:1", "assembly", "300", matrix(4), flexible=True)])
+        held["root"] = assembly("Root", "900", [child("MID:1", "assembly", "500", matrix(10)),
+                                                child("MID:2", "assembly", "500", matrix(20))])
+
+        def pose_one(data):
+            moved = self.occurrence(data, "MID:1", "SUB:1", "B:1")
+            moved.update(transform=matrix(3), transform_root=matrix(17), differs_from_definition=True)
+            return data
+
+        self.refused("MID:2/SUB:1: two instances of one document pose SUB:1 differently", held, run="run-1",
+                     edit_occurrences=pose_one)
+
+        def pose_both(data):
+            for mid, at in (("MID:1", 17), ("MID:2", 27)):
+                self.occurrence(data, mid, "SUB:1", "B:1").update(transform=matrix(3), transform_root=matrix(at),
+                                                                   differs_from_definition=True)
+            return data
+
+        result = import_package(self.package(held, edit_occurrences=pose_both), self.dest, "run-1")
+        self.assertEqual(result["overrides"], 1)                              # once, in Mid's manifest
+        mid = self.load("references/assemblies/mid/assembly.json")
+        self.assertEqual(mid["children"][0]["overrides"], [{"path": ["B:1"], "transform": matrix(3)}])
 
     def test_command_line(self):
         package = self.package()

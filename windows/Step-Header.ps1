@@ -12,7 +12,9 @@ Dot-source from a script in the same folder:
 Get-StepFileInfo returns the three text identities and the header fields: sha256 of the file, data_sha256 (the
 bytes from the DATA keyword to the end of the file), bytes, data_offset, the FILE_NAME fields (name, time_stamp,
 author, organization, preprocessor_version, originating_system, authorisation), FILE_DESCRIPTION, FILE_SCHEMA and
-the protocol it names, and the header text itself.
+the protocol it names, and the header text itself. FILE_SCHEMA can name several schemas: "schema" and "protocol"
+are those of the first name, "schemas" is every name. Inventor's translator has been seen to put a second,
+unrelated name in front of the AP242 one, for a data section that was the usual one.
 
 Set-StepFileHeader replaces the FILE_NAME statement and nothing else. With its defaults it writes the normalised
 header: name "part.step", time stamp 1970-01-01T00:00:00, empty author, organization and authorisation; the
@@ -26,7 +28,9 @@ bytes from the same input. Bytes are handled as ISO 8859-1 text so that a charac
 
 Data-section helpers (text level, no kernel):
   Get-StepEntityCounts -Path FILE [-Type NAME,...]   how many instances of each entity type (default
-                                                      MANIFOLD_SOLID_BREP, INVISIBILITY, CAMERA_MODEL_D3)
+                                                      MANIFOLD_SOLID_BREP, BREP_WITH_VOIDS, INVISIBILITY,
+                                                      CAMERA_MODEL_D3; a solid is either of the first two)
+  Split-StepElements TEXT                             the top-level elements of a parenthesised list
   Get-StepEntities -Path FILE                         every instance: id -> Type and Body
   Get-StepInvisibility -Path FILE                     what the file marks invisible and whether the mark has the
                                                       one form mechanical-cad's visible_only understands
@@ -156,7 +160,7 @@ function Get-StepHeaderFields {
     # The header fields of an already parsed file; missing fields are $null.
     param($Entities)
     $fields = [ordered]@{ name = $null; time_stamp = $null; author = $null; organization = $null; preprocessor_version = $null; originating_system = $null; authorisation = $null
-        description = $null; implementation_level = $null; schema = $null; protocol = $null }
+        description = $null; implementation_level = $null; schema = $null; protocol = $null; schemas = @() }
     if ($Entities.ContainsKey("FILE_NAME")) {
         $fileName = @($Entities["FILE_NAME"].Params) + @($null, $null, $null, $null, $null, $null, $null)
         $fields.name = $fileName[0]; $fields.time_stamp = $fileName[1]
@@ -170,7 +174,7 @@ function Get-StepHeaderFields {
     if ($Entities.ContainsKey("FILE_SCHEMA")) {
         $schemaList = Get-StepListValue (@($Entities["FILE_SCHEMA"].Params) + @($null))[0]
         if ($schemaList.Count -gt 0) {
-            $fields.schema = $schemaList[0]
+            $fields.schema = $schemaList[0]; $fields.schemas = @($schemaList)   # schema and protocol: the FIRST name; schemas: every name
             foreach ($pair in $StepProtocols) { if ($fields.schema.ToUpperInvariant().Contains($pair[0])) { $fields.protocol = $pair[1]; break } }
         }
     }
@@ -260,8 +264,9 @@ function Get-StepDataText {
 }
 
 function Get-StepEntityCounts {
-    # How many instances of each named entity type the data section holds (simple instances only).
-    param([Parameter(Mandatory = $true)][string]$Path, [string[]]$Type = @("MANIFOLD_SOLID_BREP", "INVISIBILITY", "CAMERA_MODEL_D3"))
+    # How many instances of each named entity type the data section holds (simple instances only). A solid
+    # with an internal void is a BREP_WITH_VOIDS and not a MANIFOLD_SOLID_BREP instance: count both.
+    param([Parameter(Mandatory = $true)][string]$Path, [string[]]$Type = @("MANIFOLD_SOLID_BREP", "BREP_WITH_VOIDS", "INVISIBILITY", "CAMERA_MODEL_D3"))
     $data = Get-StepDataText -Path $Path
     $counts = [ordered]@{}
     foreach ($name in $Type) { $counts[$name] = [regex]::Matches($data, "#\d+\s*=\s*" + [regex]::Escape($name) + "\s*\(").Count }
@@ -281,47 +286,91 @@ function Get-StepEntities {
     return $entities
 }
 
+function Split-StepElements {
+    <# The top-level elements of the parenthesised list a text opens with: "('a,b',(#1,#2),#3)" gives three texts.
+       A comma inside a string or inside a nested list does not separate, and an empty last element is dropped
+       (as mechanical_cad/stepfile.py, _elements). $null when the text does not open with "(" or the list is
+       not closed. #>
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+    $list = $Text.TrimStart()
+    if (-not $list.StartsWith("(")) { return $null }
+    $elements = New-Object 'System.Collections.Generic.List[string]'
+    $depth = 0; $begin = 1; $inString = $false
+    for ($index = 0; $index -lt $list.Length; $index++) {
+        $character = $list[$index]
+        if ($inString) { if ($character -eq "'") { $inString = $false }; continue }   # '' closes and reopens the string
+        if ($character -eq "'") { $inString = $true; continue }
+        if ($character -eq "(") { $depth++; continue }
+        if ($character -eq ")") {
+            $depth--
+            if ($depth -eq 0) { $last = $list.Substring($begin, $index - $begin).Trim(); if ($last.Length -gt 0) { $elements.Add($last) }; return ,$elements.ToArray() }
+            continue
+        }
+        if ($character -eq "," -and $depth -eq 1) { $elements.Add($list.Substring($begin, $index - $begin).Trim()); $begin = $index + 1 }
+    }
+    return $null
+}
+
 function Get-StepInvisibility {
     <# What a file marks invisible, and whether the mark has the one form mechanical-cad understands
-       (mechanical_cad/stepfile.py, visible_only): an INVISIBILITY whose members are STYLED_ITEMs (or
-       OVER_RIDING_STYLED_ITEMs), each styling an item that is used, apart from its styled items, only in the
-       item list of representations, and is in at least one. Anything else is listed under problems. #>
+       (mechanical_cad/stepfile.py, _visibility_edits): an INVISIBILITY with one parameter, a list of references
+       to STYLED_ITEMs or OVER_RIDING_STYLED_ITEMs; the item each of them styles is its THIRD parameter (the
+       fourth of an OVER_RIDING_STYLED_ITEM is the style it over-rides, not an item); every such item is used,
+       apart from its styled items, only in the item list (the second parameter) of representations, is in at
+       least one, and no representation loses every item. Anything else is listed under problems. #>
     param([Parameter(Mandatory = $true)][string]$Path)
     $result = [ordered]@{ invisibility_entities = 0; hidden_items = @(); form_understood = $true; problems = @() }
     $data = Get-StepDataText -Path $Path
     if (-not $data.Contains("INVISIBILITY")) { return $result }
     $entities = Get-StepEntities -Path $Path
     $styled = @("STYLED_ITEM", "OVER_RIDING_STYLED_ITEM")
+    $oneReference = '^#(\d+)$'; $stringLiteral = "'(?:[^']|'')*'"
     $hidden = @{}; $problems = @(); $count = 0
     foreach ($entity in $entities.get_Values()) {
         if ($entity.Type -ne "INVISIBILITY") { continue }
         $count++
-        $inner = [regex]::Match($entity.Body, '^\(\s*\(([^()]*)\)\s*\)$')
-        if (-not $inner.Success) { $problems += "#$($entity.Id) INVISIBILITY does not have one list of members"; continue }
-        foreach ($reference in [regex]::Matches($inner.Groups[1].Value, '#(\d+)')) {
+        $parameters = Split-StepElements $entity.Body
+        if ($null -eq $parameters -or $parameters.Count -ne 1) { $problems += "#$($entity.Id) INVISIBILITY does not have one parameter"; continue }
+        $members = Split-StepElements $parameters[0]
+        if ($null -eq $members) { $problems += "#$($entity.Id) INVISIBILITY: its parameter is not a list"; continue }
+        foreach ($memberText in $members) {
+            $reference = [regex]::Match($memberText, $oneReference)
+            if (-not $reference.Success) { $problems += "#$($entity.Id) INVISIBILITY holds something that is not a reference ($memberText)"; continue }
             $member = $null; [void]$entities.TryGetValue([int]$reference.Groups[1].Value, [ref]$member)
             if ($null -eq $member -or $styled -notcontains $member.Type) { $problems += "#$($entity.Id) INVISIBILITY hides #$($reference.Groups[1].Value), which is not a STYLED_ITEM ($(if ($member) { $member.Type } else { 'missing' }))"; continue }
-            $item = [regex]::Match($member.Body, '#(\d+)\s*\)$')
-            if (-not $item.Success) { $problems += "#$($member.Id) $($member.Type) does not name the item it styles"; continue }
+            $fields = Split-StepElements $member.Body
+            $item = $(if ($null -ne $fields -and $fields.Count -ge 3) { [regex]::Match($fields[2], $oneReference) } else { $null })
+            if ($null -eq $item -or -not $item.Success) { $problems += "#$($member.Id) $($member.Type) does not name the item it styles"; continue }
             $hidden[[int]$item.Groups[1].Value] = [ordered]@{ invisibility = $entity.Id; styled_item = $member.Id; styled_item_type = $member.Type; representations = @() }
         }
     }
     $result.invisibility_entities = $count
     if ($hidden.Count -gt 0) {
+        # One pattern for "refers to any hidden item", so that the instances that do not are passed over quickly.
+        $anyHiddenPattern = "#(?:" + ((@($hidden.Keys) | Sort-Object | ForEach-Object { [string]$_ }) -join "|") + ")(?!\d)"
+        $anyHidden = New-Object System.Text.RegularExpressions.Regex -ArgumentList $anyHiddenPattern
         foreach ($entity in $entities.get_Values()) {
             if ($entity.Type -eq "INVISIBILITY" -or $styled -contains $entity.Type) { continue }
-            if (-not $entity.Body.Contains("#")) { continue }
-            $bare = [regex]::Replace($entity.Body, "'(?:[^']|'')*'", "''")   # a "#12" inside a string is not a reference
-            $used = @([regex]::Matches($bare, '#(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) })
+            if (-not $anyHidden.IsMatch($entity.Body)) { continue }
+            $bare = [regex]::Replace($entity.Body, $stringLiteral, "''")   # a "#12" inside a string is not a reference
+            $used = @([regex]::Matches($bare, '#(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) } | Sort-Object -Unique)
             if ($used.Count -eq 0) { continue }
             $typeName = $(if ($entity.Type) { $entity.Type } else { "a complex instance" })
-            $items = [regex]::Match($bare, "^\(\s*''\s*,\s*\(([^()]*)\)")
-            if (-not $entity.Type.EndsWith("REPRESENTATION") -or -not $items.Success) { $problems += "#$($used[0]) is marked invisible and is used by #$($entity.Id) ($typeName); only items listed directly in a representation can be left out"; continue }
-            $listed = @([regex]::Matches($items.Groups[1].Value, '#(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) })
-            if ($listed.Count -ne $used.Count) { $problems += "#$($entity.Id) $typeName uses an invisible item outside its list of items" }
-            foreach ($itemId in ($listed | Sort-Object -Unique)) { $hidden[$itemId].representations += "#$($entity.Id) $typeName" }
+            $label = "#$($entity.Id) $typeName"
+            $fields = $(if ($entity.Type.EndsWith("REPRESENTATION")) { Split-StepElements $entity.Body } else { $null })
+            if ($null -eq $fields -or $fields.Count -lt 2) { $problems += "#$($used[0]) is marked invisible and is used by #$($entity.Id) ($typeName); only items listed directly in a representation can be left out"; continue }
+            $items = Split-StepElements $fields[1]
+            if ($null -eq $items) { $problems += "the items of $label are not a list"; continue }
+            $itemIds = @(); $notReferences = 0
+            foreach ($itemText in $items) { $itemReference = [regex]::Match($itemText, $oneReference); if ($itemReference.Success) { $itemIds += [int]$itemReference.Groups[1].Value } else { $notReferences++ } }
+            if ($notReferences -gt 0) { $problems += "the items of $label hold something that is not a reference"; continue }
+            $outside = $false
+            for ($index = 0; $index -lt $fields.Count; $index++) { if ($index -ne 1 -and $anyHidden.IsMatch([regex]::Replace($fields[$index], $stringLiteral, "''"))) { $outside = $true } }
+            if ($outside) { $problems += "$label uses an invisible item outside its list of items"; continue }
+            foreach ($itemId in @($itemIds | Where-Object { $hidden.ContainsKey($_) } | Sort-Object -Unique)) { $hidden[$itemId].representations += $label }
+            if (@($itemIds | Where-Object { -not $hidden.ContainsKey($_) }).Count -eq 0) { $problems += "every item of $label is marked invisible" }
         }
-        foreach ($itemId in ($hidden.Keys | Sort-Object)) {
+        foreach ($itemId in (@($hidden.Keys) | Sort-Object)) {
             $itemEntity = $null; [void]$entities.TryGetValue([int]$itemId, [ref]$itemEntity)
             if (@($hidden[$itemId].representations).Count -eq 0) { $problems += "#$itemId is marked invisible but is not an item of any representation" }
             $result.hidden_items += [ordered]@{ item = [int]$itemId; item_type = $(if ($itemEntity) { $itemEntity.Type } else { $null }); styled_item = $hidden[$itemId].styled_item; styled_item_type = $hidden[$itemId].styled_item_type

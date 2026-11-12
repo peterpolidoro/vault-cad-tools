@@ -257,10 +257,14 @@ Measurement and native authoring (added for the command-line pilot):
     parameter only by case, functions shadowed by built-ins, one variable spelled
     with different casing in the same scope; every run first proves these checks on
     nine built-in snippets and fails if they cannot find their own target),
-    `Test-StepHeader.ps1` (21 cases on synthetic STEP text: header fields, the
+    `Test-StepHeader.ps1` (27 cases on synthetic STEP text: header fields, the
     data-section hash, the normalised header, refusals; entity counts, the form of
-    an INVISIBILITY mark, entity differences and whether a difference is confined
-    to the saved view), `Get-VaultFileFacts.ps1
+    an INVISIBILITY mark, entity differences, whether a difference is confined
+    to the saved view, a `FILE_SCHEMA` that names two schemas),
+    `Test-PackageFormat.ps1` (17 cases: the package's JSON, directory names and
+    Vault block, and the check of a written package on synthetic ones: the
+    manifest, `source.json`, `part.step`, `assembly.json`, `occurrences.json`,
+    forbidden text, two runs compared), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
@@ -344,6 +348,11 @@ Measurement and native authoring (added for the command-line pilot):
     form `mechanical-cad` understands), `Compare-StepEntities` (instances that differ
     between two files) and `Test-StepViewBlockConfinement` (whether two exports differ
     only in the saved view, that is in what `CAMERA_MODEL_D3` reaches).
+    `Get-StepEntityCounts` counts `BREP_WITH_VOIDS` beside `MANIFOLD_SOLID_BREP` by
+    default. `Get-StepInvisibility` follows the reference in every case it has: the item
+    a styled item styles is its third parameter, and a representation that would lose
+    every item is refused. `Get-StepFileInfo` returns every name of `FILE_SCHEMA` in
+    `schemas`; `schema` and `protocol` are those of the first.
 20. `Invoke-StepExportProbe.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW [-Variant @{label; protocol; open; camera; options; properties; output_name},...] [-ViaAssembly REL -Inventory dependency-inventory.json] [-WorkOnCopies]`
     exports parts in ONE owned Inventor instance per call, in named variants (application
     protocol, translator options, iProperties changed in memory only and only on copies),
@@ -374,6 +383,41 @@ Measurement and native authoring (added for the command-line pilot):
     standalone file is used by none and uses nothing, parents outside the scope are
     recorded as `external_parents` and never disqualify. `discovery.json` holds the files
     with their roles and the closure of every root.
+25. `Invoke-AssemblyStepProbe.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputDirectory NEW`
+    has Inventor's STEP translator write a whole assembly as ONE file (AP242 unless told
+    otherwise), from the root opened and bound exactly as the exporter opens it, without
+    changing a representation and without saving. The receipt holds the active
+    representations, Inventor's occurrence tree with every flag and placement, the
+    translator's options, the file's entity counts and the hash of every file of the
+    mirror before and after. Such a file is evidence for a comparison with the recorded
+    placements; it is not part of any package.
+26. `Export-Package.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputDirectory PACKAGE -WorkDirectory WORK`
+    writes the package of `mechanical-cad/docs/exporter-package.md` (draft 3), strict
+    binding only: `files/<master id>_<state>/` with `source.json` and `part.step` (AP242,
+    header normalised) or `assembly.json` (the children as the document defines them),
+    `occurrences.json` (every occurrence in the root's context: its placement in its parent
+    and in the root, whether it differs from its definition, its flags) and, last and only
+    when every check passed, `package.json`. It is a mode of its own:
+    `Export-PartAssets.ps1`, its output and its default protocol are unchanged. Every file
+    but `package.json` is the same bytes when the same versions are exported again, and no
+    file carries a workstation path or a host or account name (checked before
+    `package.json` is written). The translator's own files, the run's receipt and the logs
+    go to WORK and stay on the workstation. Besides the exporter's refusals it stops when
+    a document has a view, when a file marks items invisible in a form that is not
+    understood, on a suppressed occurrence, and when a placement differs from its
+    definition under no flexible occurrence. The translator sometimes names a second,
+    unrelated schema in a file's `FILE_SCHEMA`: such a file is neither delivered nor
+    repaired, the part is exported again (three attempts at most, the same data section
+    required each time) and every attempt is recorded. Draft 3 of the specification follows the exporter
+    in two things draft 2 had otherwise: the placements of flexible instances are not
+    written as `overrides` (the import command derives them from `occurrences.json`),
+    and the hash of the translator's file is in `package.json`, because it changes with
+    every export.
+27. `Package-Format.ps1` (dot-sourced): the package's JSON writer (two spaces, LF, keys in
+    the order given, a double written so that it reads back the same), directory names,
+    the nine vault fields from the two records of the acquisition, `Test-PackageOutputs`
+    (a written package against itself), `Find-PackageForbiddenText` and
+    `Compare-PackageRuns`.
 
 REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
@@ -381,7 +425,9 @@ by name, so following it repeats and skips rows. A listing that does not fit is 
 The results of items 19 to 24 on the enclosure are in
 `vault-cad-exchange/evidence/2026-11-10-windows-layout-tests-01/`; the AP242 tests of
 2026-11-11 (stability, the saved view, the translator's options, all 37 parts) are in
-`.../2026-11-11-windows-ap242-tests-01/`.
+`.../2026-11-11-windows-ap242-tests-01/`. Inventor's own STEP export of the root assembly
+(item 25) is in `.../2026-11-12-windows-assembly-step-01/`, and the first two packages
+written by item 26 are in `.../2026-11-12-windows-package-01/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,
@@ -475,11 +521,27 @@ python3 run.py import-snapshot /path/to/package --into ../free-standing-tank-enc
 
 Provisional. When the package directory holds a `package.json`, the command
 reads the package specified in `mechanical-cad/docs/exporter-package.md`
-(draft 2): one directory per Vault file and model state under `files/`, with
+(draft 3): one directory per Vault file and model state under `files/`, with
 `source.json` and `part.step` or `assembly.json`, every file identified by
-master id and model state and none by a key. No exporter writes this package
-yet; `tests/exporter_package.py` writes one for the tests, by hand or from
-what a project holds.
+master id and model state and none by a key, and `occurrences.json` beside
+`package.json` with every occurrence in the root's context.
+`windows/Export-Package.ps1` writes it since 2026-11-12 (item 26 of the
+Windows route). `tests/exporter_package.py` writes such a package for the
+tests, by hand or from what a project holds.
+
+The exporter writes no overrides: `assembly.json` has each document's own
+children, and `occurrences.json` says where every occurrence is in context
+and whether that differs from its document. This command derives the
+layout's overrides from the two. Each occurrence that differs becomes an
+override on the nearest flexible occurrence above it, in the manifest of the
+document that places that occurrence. Before that it checks that the
+occurrences are the children the documents define, that
+`differs_from_definition` and `transform_root` agree with the placements
+within the tolerance the file states, and that every assembly occurrence has
+all its document's children. It refuses what the layout cannot record: a
+flag or BOM structure that differs in context, a difference with no flexible
+occurrence above it, instances of one document that would need different
+overrides, and a child entry that carries `overrides`.
 
 `--into` is a project with an index, or a new or empty directory. The whole
 package and the project are checked before anything is written:
@@ -499,7 +561,8 @@ touched and keeps naming the run it came from; unchanged means the same
 version id, native hash and STEP bytes and the same exported record
 (`source.json` without its `export` block; for an assembly also its children).
 What the project holds and the package does not is reported and kept.
-`package.json` is copied to `references/receipts/<run>/`, the index is derived
+`package.json` and `occurrences.json` are copied to
+`references/receipts/<run>/`, the index is derived
 again with its publications kept, and the result names the parts whose
 `part.step` changed, which `mechanical-cad/tools/step_facts.py` has to measure
 before the project validates. `--inventory` and `--acquisition` belong to the

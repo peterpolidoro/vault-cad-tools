@@ -36,11 +36,63 @@ def powershell_json(obj):
     return BOM + json.dumps(obj, indent=2).replace("\n", "\r\n").encode()
 
 
-def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:00Z", not_exported=()):
+TOLERANCE = {"rotation_cell": 1e-09, "length": 1e-07}
+
+
+def _multiply(a, b):
+    return [[sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)] for r in range(4)]
+
+
+def occurrences_of(files, root):
+    """What the exporter states in occurrences.json: every occurrence in the context of the root.
+
+    A child given here with "overrides" (the layout's way to say that a flexible instance poses what is
+    below it) is expanded into the placements in context; the outermost statement holds, as in the layout.
+    Records that are not well formed are passed over: a test may hand in a broken package.
+    """
+    by_identity = {(f["source"]["vault"].get("master_id"), f["source"].get("model_state")): f for f in files}
+    out = []
+
+    def walk(identity, path, world, stated):
+        holder = by_identity.get(identity)
+        for child in (holder or {}).get("assembly", {}).get("children", []):
+            name, local = child.get("name"), child.get("transform")
+            if not isinstance(name, str) or not isinstance(local, list) or len(local) != 4 or any(len(r) != 4 for r in local):
+                continue
+            differs = (name,) in stated
+            local = stated.get((name,), local)
+            placed = _multiply(world, local)
+            record = {"path": path + [name], "kind": child.get("kind"), "master_id": child.get("master_id"),
+                      "model_state": child.get("model_state"), "transform": local, "transform_root": placed,
+                      "differs_from_definition": differs, "bom_structure": child.get("bom_structure")}
+            record.update({flag: child.get(flag) for flag in ("visible", "suppressed", "grounded", "flexible", "mirrored")})
+            out.append(record)
+            target = by_identity.get((child.get("master_id"), child.get("model_state")))
+            if child.get("kind") == "assembly" and target is not None and "assembly" in target:
+                below = {tuple(o["path"]): o["transform"] for o in child.get("overrides", [])
+                         if isinstance(o, dict) and o.get("path")}
+                below.update({p[1:]: m for p, m in stated.items() if p[0] == name and len(p) > 1})
+                walk((child.get("master_id"), child.get("model_state")), path + [name], placed, below)
+
+    walk(tuple(root), [], [[1.0 if r == c else 0.0 for c in range(4)] for r in range(4)], {})
+    return {"schema_version": 1, "root": {"master_id": root[0], "model_state": root[1]}, "length_unit": "cm",
+            "tolerance": dict(TOLERANCE),
+            "counts": {"occurrences": len(out), "parts": sum(o["kind"] == "part" for o in out),
+                       "assemblies": sum(o["kind"] == "assembly" for o in out),
+                       "differ_from_definition": sum(o["differs_from_definition"] for o in out)},
+            "occurrences": out}
+
+
+def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:00Z", not_exported=(),
+                  edit_occurrences=None, strip_overrides=True):
     """files: a list of {"source": {...}, "step": bytes} or {"source": {...}, "assembly": {...}}.
 
     A file may name its "directory"; otherwise it is <master id>_<state>, as the exporter names it.
     root: (master id, model state) of the root assembly. Returns the package directory.
+
+    The exporter writes no overrides: a child's "overrides" here become placements in occurrences.json and
+    are left out of assembly.json (strip_overrides=False keeps them, for a package the import must refuse).
+    edit_occurrences(data) may change occurrences.json before it is written; None returned leaves it out.
     """
     out = Path(out)
     listed = {}
@@ -59,9 +111,18 @@ def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:
         if source["kind"] == "part":
             put(f"files/{name}/part.step", f["step"])
         else:
-            put(f"files/{name}/assembly.json", powershell_json(f["assembly"]))
+            manifest = f["assembly"]
+            if strip_overrides and isinstance(manifest.get("children"), list):
+                manifest = dict(manifest, children=[{k: v for k, v in c.items() if k != "overrides"} if isinstance(c, dict)
+                                                    else c for c in manifest["children"]])
+            put(f"files/{name}/assembly.json", powershell_json(manifest))
         if (source["vault"]["master_id"], source["model_state"]) == tuple(root):
             root_version = source["vault"]["version_id"]
+    stated = occurrences_of(files, root)
+    if edit_occurrences is not None:
+        stated = edit_occurrences(stated)
+    if stated is not None:
+        put("occurrences.json", powershell_json(stated))
     manifest = {
         "schema_version": 2, "kind": "vault-cad-export-package", "exported_at": exported_at,
         "exporter": {"name": "tests/exporter_package.py", "version": "test", "inventor": None},

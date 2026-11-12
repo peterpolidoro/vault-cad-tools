@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-11
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-12
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,73 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — the export package as a new mode of the exporter (2026-11-12)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-12-windows-package-01/` (report `REPORT.md`, which records the
+commits it ran from and reviews the draft section by section). Requested by
+`to-windows/20261111T180429Z-linux-ap242-tests-accepted-next-the-export-package.md`. No Vault access; no
+document saved; every opened mirror file re-hashed and unchanged. `Export-PartAssets.ps1`, its output and its
+default protocol are untouched.
+
+- `Export-Package.ps1` (new, with `Package-Format.ps1`) writes the package of
+  `mechanical-cad/docs/exporter-package.md` (draft 2) for the enclosure: 37 parts and 7 assemblies in
+  `files/<master id>_<state>/`, 125 children in the seven `assembly.json`, 171 occurrences in
+  `occurrences.json`, 44 of them differing from their definition (32 under `CAMERA FRAME:1`, 12 under
+  `FREE STANDING FRAME:1`). Two runs in two Inventor instances: all 89 files other than `package.json` are
+  byte-identical.
+- The 37 `part.step` are, byte for byte, the 37 normalised AP242 files of 2026-11-11, which Linux had compared
+  with the tracked parts. The placements in context, in the root and as defined are, to the last bit, those of
+  the tracked snapshot of 2026-10-21.
+- The split with the import command: an assembly document is written once, from its own component definition;
+  what a flexible instance does to its descendants is not written as overrides but as the occurrences in the
+  root's context, each marked when it differs from its definition. The committed reader accepts the package
+  without `occurrences.json` (37 parts, 7 assemblies), and its override rule applied to `occurrences.json`
+  gives the 44 overrides.
+- All nine vault fields come from the two records of the acquisition (`acquisition.json`,
+  `dependency-inventory.json`); they agree with the REST read of 2026-11-10 for all 44 files.
+- Parameters, hole features and the mirror features that repeat them are read for every part in about
+  4 s: 187 parameters on 22 parts, 16 hole features on 10 parts (4 tapped, 1 counterbore, 12
+  clearance holes, 42 centres), 2 mirror features. A tapped hole has no hole diameter; its size is in the
+  thread data, in the unit of its standard.
+- Found: the STEP translator sometimes names a second, unrelated schema in `FILE_SCHEMA`, in front of the AP242
+  one, for the usual data section (four files in 215 exports over eight runs of the new script; none in 203
+  exports by the other scripts). The cause is not known. The exporter exports such a part again, accepts only
+  a file that names the AP242 schema alone and never repairs a header. In the final two runs it happened once, at the tenth part of the second run: the second attempt was accepted, with the same data section.
+- Occurrence reference keys (`GetReferenceKey`) read from PowerShell without marking a document dirty and are
+  the same in two sessions, but the two instances of `TANK SUPPORT FRAME` at the root share one key, so a key
+  does not name one occurrence.
+- Corrected on the way: a COM collection that leaves a script block arrives as an array; a cast of a null API
+  value invents 0, False or an empty text; a relative name cut out of an 8.3 path is wrong.
+- The three findings of the Linux review of 2026-11-11 on the text-level helpers are corrected
+  (`BREP_WITH_VOIDS` in the default counts, the third parameter of a styled item, a representation whose
+  every item is invisible).
+- Suites: hygiene over 38 scripts with a 9-case self-test, 37 session mock cases, 3 watchdog, 12 snapshot, 10
+  STEP unit, 11 receipt, 27 STEP header and entity cases, 17 package format cases, 7 Vault facts and 8 folder
+  discovery cases; 112 Python tests under Pixi.
+
+## Result — Inventor's own STEP export of the root assembly (2026-11-12)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-12-windows-assembly-step-01/` (report `REPORT.md`). Requested by
+`to-windows/20261111T204948Z-linux-first-a-step-export-of-the-root-assembly-as-a-check.md`, at Peter's wish, to
+check the recorded placements against a file Inventor writes itself. No Vault access; no document saved; no
+representation changed; the mirror's 45 files hashed before and after, unchanged.
+
+- `Invoke-AssemblyStepProbe.ps1` (new) opens the root as the exporter does, binds the 44 documents, reads the
+  occurrence tree and has the STEP translator write the assembly document as one AP242 file: 21.7 MB in 25.6 s.
+  The translator reports the same eight options for an assembly as for a part.
+- Inventor's counts: 155 part and 16 sub-assembly occurrences (`AllLeafOccurrences` 155, read through
+  `InvokeMember`), none suppressed, invisible or excluded, two flexible (`CAMERA FRAME:1`,
+  `FREE STANDING FRAME:1`); the same 171 paths and placements, to the last bit, as the tracked snapshot.
+- The file: one product per document (44) and one usage per child of each assembly document (125), not one per
+  occurrence; each product in its document's length unit (all seven assemblies in inches; 45 unit contexts: 29
+  inch, 15 mm, 1 cm), so the file has no single unit; 105 solid instances, each part's once; one
+  `INVISIBILITY` in the understood form, which lists each of its three styled items twice.
+- Read as text and converted to centimetres, all 125 usages equal Inventor's placement in context for every
+  instance (171 occurrences; at most 2e-14 in a rotation cell and 2e-11 mm). 44 usages differ from the
+  sub-assembly's own definition, by 2.2 to 18.3 mm: exactly the 44 occurrences the snapshot marks as
+  overridden. Inventor writes a flexible sub-assembly's product with the positions it has in the assembly; that
+  can only work while a flexible document has one instance, as both have here.
 
 ## Result — three read-only AP242 tests (2026-11-11)
 

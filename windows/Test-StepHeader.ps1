@@ -117,7 +117,7 @@ try {
         "#52=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#80)) REPRESENTATION_CONTEXT('a;b','3D'));")
     Case "H12 entity counts: only instances are counted, not a type name inside a string" {
         $counts = Get-StepEntityCounts -Path $hiddenBodies
-        Assert ($counts["MANIFOLD_SOLID_BREP"] -eq 4 -and $counts["INVISIBILITY"] -eq 1 -and $counts["CAMERA_MODEL_D3"] -eq 1) "counts: $($counts | ConvertTo-Json -Compress)"
+        Assert ($counts["MANIFOLD_SOLID_BREP"] -eq 4 -and $counts["BREP_WITH_VOIDS"] -eq 0 -and $counts["INVISIBILITY"] -eq 1 -and $counts["CAMERA_MODEL_D3"] -eq 1) "counts: $($counts | ConvertTo-Json -Compress)"
         $more = Get-StepEntityCounts -Path $hiddenBodies -Type "STYLED_ITEM", "VIEW_VOLUME"
         Assert ($more["STYLED_ITEM"] -eq 3 -and $more["VIEW_VOLUME"] -eq 0) "other counts: $($more | ConvertTo-Json -Compress)"
     }
@@ -181,6 +181,45 @@ try {
         Assert (-not $extra.confined_to_view_block -and $extra.only_in_other_count -eq 1) "extra instance: $($extra | ConvertTo-Json -Compress -Depth 5)"
         $shared = Test-StepViewBlockConfinement -FirstPath (New-ViewFile "shared-a.step" "0.,0.,5." "2.,2." "1.,2.,3." "`n#700=VERTEX_POINT('',#561);") -OtherPath (New-ViewFile "shared-b.step" "3.,4.,5." "2.,2." "1.,2.,3." "`n#700=VERTEX_POINT('',#561);")
         Assert (-not $shared.confined_to_view_block -and (@($shared.referenced_from_outside) -join ';') -match '#700 VERTEX_POINT -> #561') "shared point: $($shared | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H22 the default counts take BREP_WITH_VOIDS: a solid with an internal void is not a MANIFOLD_SOLID_BREP instance" {
+        $voids = New-Data "voids.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#11=BREP_WITH_VOIDS('Solid2',#101,(#102));", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#11),#70);")
+        $counts = Get-StepEntityCounts -Path $voids
+        Assert ($counts["MANIFOLD_SOLID_BREP"] -eq 1 -and $counts["BREP_WITH_VOIDS"] -eq 1 -and $counts["INVISIBILITY"] -eq 0 -and $counts["CAMERA_MODEL_D3"] -eq 0) "counts: $($counts | ConvertTo-Json -Compress)"
+    }
+    Case "H23 list elements: a comma in a string or in a nested list does not separate; an unclosed list is refused" {
+        $elements = Split-StepElements "('a,b''(c',(#1,#2), #3 ,.T.)"
+        Assert ($elements.Count -eq 4 -and $elements[0] -eq "'a,b''(c'" -and $elements[1] -eq "(#1,#2)" -and $elements[2] -eq "#3" -and $elements[3] -eq ".T.") "elements: $($elements -join ' | ')"
+        Assert ((Split-StepElements "()").Count -eq 0 -and (Split-StepElements "(#1,)").Count -eq 1) "an empty list or an empty last element"
+        Assert ($null -eq (Split-StepElements "(#1,(#2)") -and $null -eq (Split-StepElements "#1")) "an unclosed list or a bare value was accepted"
+    }
+    Case "H24 a hidden OVER_RIDING_STYLED_ITEM: the item it styles is its third parameter, not the style it over-rides" {
+        $overRiding = New-Data "overriding.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#11=MANIFOLD_SOLID_BREP('Solid2',#101);", "#20=STYLED_ITEM('',(#30),#10);", "#22=OVER_RIDING_STYLED_ITEM('',(#30),#11,#20);",
+            "#40=INVISIBILITY((#22));", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#11),#70);")
+        $found = Get-StepInvisibility -Path $overRiding
+        Assert ($found.form_understood -and @($found.hidden_items).Count -eq 1 -and $found.hidden_items[0].item -eq 11 -and $found.hidden_items[0].styled_item_type -eq "OVER_RIDING_STYLED_ITEM" -and $found.hidden_items[0].representations[0] -eq "#50 ADVANCED_BREP_SHAPE_REPRESENTATION") "result: $($found | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H25 a representation whose every item is marked invisible is not the understood form" {
+        $allHidden = New-Data "allhidden.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#11=MANIFOLD_SOLID_BREP('Solid2',#101);", "#20=STYLED_ITEM('',(#30),#10);", "#21=STYLED_ITEM('',(#30),#11);", "#40=INVISIBILITY((#20,#21));",
+            "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#11),#70);")
+        $found = Get-StepInvisibility -Path $allHidden
+        $text = @($found.problems) -join ';'
+        Assert (-not $found.form_understood -and @($found.problems).Count -eq 1 -and $text -match 'every item of #50 ADVANCED_BREP_SHAPE_REPRESENTATION is marked invisible') "problems: $text"
+    }
+    Case "H26 an INVISIBILITY with a second parameter, a member that is not a reference, or a styled item without an item is refused" {
+        $second = New-Data "second.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#20=STYLED_ITEM('',(#30),#10);", "#40=INVISIBILITY((#20),#99);", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#12),#70);")
+        Assert ((@((Get-StepInvisibility -Path $second).problems) -join ';') -match '#40 INVISIBILITY does not have one parameter') "a second parameter was accepted"
+        $notReference = New-Data "notreference.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#20=STYLED_ITEM('',(#30),#10);", '#40=INVISIBILITY((#20,$));', "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#12),#70);")
+        Assert ((@((Get-StepInvisibility -Path $notReference).problems) -join ';') -match 'holds something that is not a reference') "a member that is not a reference was accepted"
+        $noItem = New-Data "noitem.step" @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#20=STYLED_ITEM('',(#30,#10));", "#40=INVISIBILITY((#20));", "#50=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#10,#12),#70);")
+        Assert ((@((Get-StepInvisibility -Path $noItem).problems) -join ';') -match '#20 STYLED_ITEM does not name the item it styles') "a styled item without a third parameter was accepted"
+    }
+    Case "H27 FILE_SCHEMA with two names: every name is returned; schema and protocol are those of the first" {
+        $two = New-Step "twoschemas.step" ($head.Replace("FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));", "FILE_SCHEMA (('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }','AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));") + "DATA;`n#1=X();`nENDSEC;`nEND-ISO-10303-21;`n")
+        $info = Get-StepFileInfo -Path $two
+        Assert (@($info.header.schemas).Count -eq 2 -and $info.header.schemas[0] -eq "AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }" -and $info.header.schemas[1].StartsWith("AP242_MANAGED") -and $info.header.protocol -eq "AP214") "schemas: $(@($info.header.schemas) -join ' | '), protocol $($info.header.protocol)"
+        $one = Get-StepFileInfo -Path $inventorFile
+        Assert (@($one.header.schemas).Count -eq 1 -and $one.header.schemas[0] -eq $one.header.schema) "one schema: $(@($one.header.schemas) -join ' | ')"
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count

@@ -9,7 +9,7 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 (`docs/direction.md`). Finished checkpoints, with their evidence runs, are in
 .agents/HISTORY.md and windows/HISTORY.md.
 
-## Current state (2026-11-11)
+## Current state (2026-11-12)
 
 Demonstrated, each once, on the enclosure pilot:
 
@@ -70,19 +70,23 @@ untouched; the same package with the 37 AP242 files of the Windows tests
 rewrites the 37 parts and no assembly, and the result, measured again,
 validates in `mechanical-cad` and flattens to the branch's scene apart from
 the STEP files. Who derives the overrides of flexible instances, the
-exporter or this command, is put to the Windows agent; the reader follows
-the draft (the exporter does) until it answers.
+exporter or this command, was put to the Windows agent; the reader follows
+the draft (the exporter does). The answer of 2026-11-12 is below: the
+exporter writes the occurrences in context and this command derives them.
 
 Tests: 112 portable tests pass in the Guix environment (run 2026-11-11; 12 of
 them are new, for the package, in `tests/test_package_import.py`, 13 are for
 the index, in `tests/test_layout_project.py`, and 10 are for the earlier
 package). On Windows 87 passed under Pixi on 2026-11-11, from
 the commit before the index was added; the 25 newer ones have not been run
-there. On Windows the offline suites pass (run 2026-11-11: script hygiene over
-34 scripts with a 9-case self-test of the checks, 37 session mock cases, 3
-watchdog, 12 snapshot, 10 STEP unit, 11 receipt, 21 STEP header and entity
-cases, 7 Vault facts and 8 folder discovery cases). `import-snapshot` itself
-has not been run on Windows.
+there. On Windows all 112 passed under Pixi on 2026-11-12, and the offline
+suites pass (run 2026-11-12: script hygiene over 38 scripts with a 9-case
+self-test of the checks, 37 session mock cases, 3 watchdog, 12 snapshot, 10
+STEP unit, 11 receipt, 27 STEP header and entity cases, 17 package format
+cases, 7 Vault facts and 8 folder discovery cases). The package reader was
+run on Windows that day on a copy of the exporter's first package
+(`import_package` into an empty directory); `import-snapshot` on a project
+has not been run there.
 
 Added on 2026-11-11 by the Windows side, with its three read-only AP242 tests
 (record in `windows/HISTORY.md`; reviewed and applied on Linux):
@@ -99,9 +103,36 @@ changes; no translator option leaves out the hidden bodies or the saved view;
 of the 37 parts one has an `INVISIBILITY`, in the understood form. Linux
 compared the 37 AP242 files with the tracked AP214 parts by measured geometry
 that day: 37 of 37 the same (`mechanical-cad/docs/layout-proposal.md`,
-"Windows tests of 2026-11-11"). The exporter is untouched: its default is
-still AP214, it does not normalise headers, and it writes the earlier
-package.
+"Windows tests of 2026-11-11"). `Export-PartAssets.ps1` is untouched: its
+default is still AP214, it does not normalise headers, and it writes the
+earlier package.
+
+Added on 2026-11-12 by the Windows side (record in `windows/HISTORY.md`; not
+yet reviewed on Linux):
+
+- `Invoke-AssemblyStepProbe.ps1`: Inventor's own STEP export of the root
+  assembly as one file, as evidence. Read as text, every placement of the file
+  equals Inventor's placement in context for all 171 occurrences, and the 44
+  that differ from a sub-assembly's own definition are exactly the 44
+  overridden occurrences of the snapshot. The recorded placements, the
+  derived overrides included, are confirmed by a file Inventor wrote itself.
+- `Export-Package.ps1` with `Package-Format.ps1`: the package of draft 2 as a
+  mode of its own. Run twice on the enclosure with strict binding: 37 parts,
+  7 assemblies, 171 occurrences, every file but `package.json` byte-identical
+  between the runs; the 37 `part.step` are the files Linux compared on
+  2026-11-11. It differs from draft 2 where Inventor does: an assembly's
+  children are written as the document defines them and what a flexible
+  instance does to its descendants is in `occurrences.json` (every
+  occurrence in the root's context, marked when it differs from its
+  definition), not in `overrides`; the hash of the translator's file is in
+  `package.json`, because it changes with every export; a suppressed
+  occurrence stops the run. The committed reader refuses the package for
+  `occurrences.json` and accepts it without that file.
+- The STEP translator sometimes names a second, unrelated schema in
+  `FILE_SCHEMA` (rule in `windows/README.md`). The new exporter exports such
+  a part again and never repairs a header.
+- The three findings of the Linux review of 2026-11-11 on `Step-Header.ps1`
+  are corrected.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -212,21 +243,24 @@ Directives:
 
 ## Next work
 
-1. Windows, when Peter starts it (asked on 2026-11-11): review the draft of
-   the exporter's package (`mechanical-cad/docs/exporter-package.md`, draft 2)
-   against what Inventor and Vault give, and write the package as a new mode
-   of the exporter that leaves today's output and default unchanged: AP242,
-   headers normalised with `Set-StepFileHeader`, one directory per Vault file
-   and model state, no workstation paths or names of people, and a stop when
-   a document has a view or a file marks something invisible in a form that
-   is not understood. Run read-only on the enclosure. Peter decided on
-   2026-11-11 that files exported from Inventor are AP242, with two roots and
-   readable keys (`mechanical-cad/docs/direction.md`, "Decided").
-2. Linux: the import command reads that package into an existing project,
-   keeps existing keys and refuses a package that is behind the project
-   (built 2026-11-11 against packages written on Linux). When Windows
-   reports: correct the reader where the real package differs from the
-   draft, and import it into the enclosure's branch. Not built: removing what
+1. Reviewed on Linux on 2026-11-12 (evidence
+   `2026-11-12-linux-windows-package-review-01/REVIEW.md`), and the draft is
+   now draft 3: the exporter writes `occurrences.json` and no overrides, and
+   the import command derives them; the hash of the translator's file stays
+   in `package.json`; a suppressed occurrence stops the export until a
+   project has one to try; a file whose `FILE_SCHEMA` names a second schema
+   is exported again and never delivered or repaired. The review's findings
+   on `Export-Package.ps1` (a guard that a cast can defeat, what happens when
+   a step after the export fails) are with the Windows agent. Peter has not
+   reviewed the draft.
+2. The import command reads the real package since 2026-11-12
+   (`_read_occurrences` in `package_import.py`). Tried that day on a copy of
+   the enclosure's branch: 44 files rewritten, all keys kept, 44 overrides
+   derived (32 and 12), and after `step_facts.py` the copy validates, its
+   flattened scene equals the branch's with no placement differing, and it
+   matches Inventor's own STEP export of the root assembly solid for solid.
+   Next: the same import into the branch itself, when Peter says so. Not
+   built: removing what
    a package no longer has. When the enclosure's branch `layout-conversion`
    is merged, no project is left in the earlier layout: then remove
    `import-step`, the schema 1 lock and publishing from `step/`, with their
@@ -265,6 +299,16 @@ Directives:
   session they were qualified in until they are moved.
 - The material and appearance claim per part and body
   (`docs/authoring-and-materials.md` 4.1) is not recorded by the exporter.
+- `Export-Package.ps1` stops on a suppressed occurrence: Inventor does not
+  load its document, and no project has one to test on. Its stops for a
+  document with a view and for an `INVISIBILITY` in another form have not
+  fired on real data. Not met on real data either: a flexible instance inside
+  a flexible instance, two instances of one document flexed differently,
+  thread features, patterns of holes other than a mirror.
+- Why the STEP translator sometimes names a second schema in `FILE_SCHEMA` is
+  not known; it has only been seen in runs of `Export-Package.ps1`.
+- The Vault paths of the enclosure run through folders named after labs, so
+  `vault.path` in every `source.json` carries those names.
 - Design document revision 3: fold in findings R1 to R4 and the layout; correct
   3.2 (the ENCLOSURE folder has two roots under R1, not one) and 3.1 (a REST
   listing is reliable only as a single page of up to 1000 rows).
@@ -304,6 +348,6 @@ returned cursor preserved. ByRef COM calls (`CreateGeometryProxy`, translator
 `Open`) are made through the compiled C# helper; `Inspect-StepInInventor.ps1`
 still falls back to `Documents.Open` defaults. Export metadata counts come from
 an explicit occurrence-tree walk; `AllLeafOccurrences` is not enumerable from
-PowerShell. `SurfaceBody.Volume()` is not callable from PowerShell; volumes come
+PowerShell (its count reads through `InvokeMember`). `SurfaceBody.Volume()` is not callable from PowerShell; volumes come
 from `MassProperties.Volume`. All Windows automation ran in an interactive
 desktop session; unattended service mode is unqualified.

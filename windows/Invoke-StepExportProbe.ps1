@@ -42,7 +42,8 @@ they are closed with SkipSave, and every opened file is re-hashed afterwards (a 
 
 Per export the receipt records: size, SHA-256, the data-section SHA-256 (from DATA to the end), the FILE_SCHEMA
 statement and protocol, every FILE_NAME field, the header lines, the detected length unit, the counts of
-MANIFOLD_SOLID_BREP, INVISIBILITY, CAMERA_MODEL_D3, VIEW_VOLUME, PLANAR_BOX and DRAUGHTING_MODEL entities, the
+MANIFOLD_SOLID_BREP, BREP_WITH_VOIDS, INVISIBILITY, CAMERA_MODEL_D3, VIEW_VOLUME, PLANAR_BOX and DRAUGHTING_MODEL
+entities (the log line's solids are the first two together), the
 translator options before and after the export (including "Translation Result"), the number of views, the camera
 before and after a camera change, and the document's dirty flag at each step. Per part it records Inventor's
 body counts and the summary, document-summary and design-tracking iProperties (scalar values).
@@ -139,7 +140,7 @@ $log = Join-Path $OutputDirectory "probe.log"
 function Log($s) { $line = "$(Utc) $s"; Add-Content -LiteralPath $log -Value $line; Write-Output $s }
 $kPart = 12290; $kFileBrowseIOMechanism = 13059; $stepTranslatorClsid = "{90AF7F40-0C01-11D5-8E83-0010B541CD80}"
 $lengthUnitNames = @{ 11268 = "cm"; 11269 = "mm"; 11270 = "m"; 11271 = "micron"; 11272 = "in"; 11273 = "ft" }
-$countedEntities = @("MANIFOLD_SOLID_BREP", "INVISIBILITY", "CAMERA_MODEL_D3", "VIEW_VOLUME", "PLANAR_BOX", "DRAUGHTING_MODEL")
+$countedEntities = @("MANIFOLD_SOLID_BREP", "BREP_WITH_VOIDS", "INVISIBILITY", "CAMERA_MODEL_D3", "VIEW_VOLUME", "PLANAR_BOX", "DRAUGHTING_MODEL")
 function Get-MapName($map, $i) { $map.GetType().InvokeMember("Name", [Reflection.BindingFlags]::GetProperty, $null, $map, @($i)) }
 function Get-MapValue($map, $k) { $map.GetType().InvokeMember("Value", [Reflection.BindingFlags]::GetProperty, $null, $map, @($k)) }
 function Set-MapValue($map, $k, $v) { [void]$map.GetType().InvokeMember("Value", [Reflection.BindingFlags]::SetProperty, $null, $map, @($k, $v)) }
@@ -258,7 +259,7 @@ function Invoke-VariantExport($doc, $b, $v, $views) {
         $entry.entity_counts = Get-StepEntityCounts -Path $outPath -Type $countedEntities
         if ($info.header.protocol -ne $protocolNames[$v.protocol]) { $entryErrors += "the file's schema says $($info.header.protocol), requested $($protocolNames[$v.protocol])" }
         if (-not $unit.ok) { $entryErrors += "length unit rejected: $($unit.reason)" }
-        $logLine = ("{0,-22} {1,-10} {2,-56} {3,9} bytes {4} data={5} solids={6} invisibility={7} camera={8} views={9} result={10}" -f $v.label, $v.open, $base, $info.bytes, $info.header.protocol, $info.data_sha256.Substring(0, 12), $entry.entity_counts["MANIFOLD_SOLID_BREP"], $entry.entity_counts["INVISIBILITY"], $entry.entity_counts["CAMERA_MODEL_D3"], $views, $entry.translator_options_after["Translation Result"])
+        $logLine = ("{0,-22} {1,-10} {2,-56} {3,9} bytes {4} data={5} solids={6} invisibility={7} camera={8} views={9} result={10}" -f $v.label, $v.open, $base, $info.bytes, $info.header.protocol, $info.data_sha256.Substring(0, 12), ($entry.entity_counts["MANIFOLD_SOLID_BREP"] + $entry.entity_counts["BREP_WITH_VOIDS"]), $entry.entity_counts["INVISIBILITY"], $entry.entity_counts["CAMERA_MODEL_D3"], $views, $entry.translator_options_after["Translation Result"])
     } else { $entryErrors += "export failed: $exportError"; $logLine = "EXPORT FAILED $($v.label) $base : $exportError" }
     if ($propertyErrors.Count) { $entryErrors += $propertyErrors }
     if ($optionErrors.Count) { $entryErrors += "option errors: $($optionErrors -join '; ')" }

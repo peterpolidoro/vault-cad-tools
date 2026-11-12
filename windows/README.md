@@ -36,8 +36,8 @@ parameters.
 Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 `Test-InventorSession.ps1`, `Test-DialogWatchdog.ps1`, `Test-StepLengthUnit.ps1`,
 `Test-SnapshotOutputs.ps1 -SelfTest`, `Test-StepHeader.ps1`,
-`Get-VaultFileFacts.ps1 -SelfTest`, `Discover-VaultFolder.ps1 -SelfTest`,
-`Test-ScriptHygiene.ps1`.
+`Test-PackageFormat.ps1`, `Get-VaultFileFacts.ps1 -SelfTest`,
+`Discover-VaultFolder.ps1 -SelfTest`, `Test-ScriptHygiene.ps1`.
 
 ## Operating preconditions for live Vault writes
 
@@ -60,8 +60,9 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
   `Export-PartAssets.ps1`, `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
   `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
-  `Invoke-ExporterGuardChecks.ps1`, `Invoke-StepExportProbe.ps1` and
-  `Get-PartFeatureDump.ps1` do. `Export-InventorStep.ps1`,
+  `Invoke-ExporterGuardChecks.ps1`, `Invoke-StepExportProbe.ps1`,
+  `Get-PartFeatureDump.ps1`, `Invoke-AssemblyStepProbe.ps1` and
+  `Export-Package.ps1` do. `Export-InventorStep.ps1`,
   `Inspect-StepInInventor.ps1`, `Compare-NativeAndStepAssembly.ps1`,
   `Invoke-NativeAuthoringPilot.ps1` and `Invoke-NativeParameterPilot.ps1` do not
   yet: use them only in the single-user interactive session they were
@@ -91,6 +92,31 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   `INVISIBILITY` entity; no translator option leaves them or the saved view
   out. A solid with an internal void is a `BREP_WITH_VOIDS`, not a
   `MANIFOLD_SOLID_BREP`: count both when counting solids.
+- The STEP translator sometimes names a second, unrelated schema in
+  `FILE_SCHEMA`, in front of the AP242 one, for the usual data section. Seen on
+  2026-11-12 in four of the eight runs of `Export-Package.ps1` (four files in
+  215 exports: `AUTOMOTIVE_DESIGN` twice, `FEATURE_BASED_PROCESS_PLANNING`,
+  `PROCESS_PLANNING_SCHEMA`; the 25th, 13th, 26th and 10th export of their
+  runs), and in none of 203 exports by `Invoke-StepExportProbe.ps1`,
+  `Invoke-AssemblyStepProbe.ps1` and `Export-PartAssets.ps1` on three days.
+  Why is not known; writing all STEP files before anything else is read from
+  the documents did not remove it. `Export-Package.ps1` never delivers or
+  repairs such a file: it exports the part again, accepts only a file that
+  names the AP242 schema alone, requires every attempt to have the same data
+  section, and records every attempt. Wherever a file's protocol matters, look
+  at `schemas` of `Get-StepFileInfo`, not only at the first name.
+- Inventor's own STEP export of an assembly has one product per document and
+  one usage per child of each assembly document, each product in its
+  document's length unit, and it writes a flexible sub-assembly with the
+  positions it has in the assembly, not with those of its own document.
+- A COM collection that leaves a script block or a function is enumerated by
+  PowerShell and arrives as an array, or as its only element: assign it
+  directly (`$items = $feature.ParentFeatures`). A cast of `$null` invents a
+  value (`[double]$null` is 0, `[bool]$null` is False, `[string]$null` is ""):
+  test for `$null` before casting what an API may not return.
+- Build relative file names from the directory entries, not by cutting a
+  prefix off a full path: a directory given in its 8.3 form, as `%TEMP%` is
+  on this workstation, lists its files under their long names.
 - In PowerShell the comma binds tighter than arithmetic: write
   `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
   is case-insensitive and its dot access returns the value of a key named
