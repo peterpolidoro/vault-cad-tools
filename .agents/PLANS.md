@@ -153,7 +153,7 @@ Vault versions (the first package) into a clone of `main` leaves all 44
 directories untouched and adds only its receipts directory. What `main` gives
 on Linux is in the shared evidence `2026-11-12-linux-main-baseline-01`.
 
-Removed that day, uncommitted until Peter commits: `import-step`, the earlier
+Removed that day (e85c85e): `import-step`, the earlier
 lock (schema 1) and publishing from `step/`, with their tests. No project is
 left in the earlier layout. `Project` reads the index only and refuses the
 earlier lock with the reason; `prepare-publish` and `import-publish-result`
