@@ -339,7 +339,23 @@ Directives:
    read of a document's `Dirty` flag that fails stops the run, as the read
    of the length unit does again; the exporter's receipt becomes
    `schema_version` 3, because `validation.stage` has a value a reader of 2
-   does not know.
+   does not know. Windows made both changes the same day, each with an
+   offline case (P34, P35; 35 package format cases), ran the exporter once
+   (`complete`; 89 of 90 files those of the package in the project; a
+   repeat import `unchanged` 44) and read the STEP file with the names in
+   Inventor (evidence `2026-11-13-windows-step-names-01`, 144 files verified
+   on Linux; the patch is applied here). Its probe now measures a part's
+   bodies one by one (`-BodyVolumesOf`): Inventor leaves a body out of a
+   document's volume, without a message, when it cannot compute that body
+   at the accuracy asked, which is why the package's `native.volume_mm3` is
+   short for two parts of the enclosure. What the exporter should record
+   instead is open (`mechanical-cad/docs/exporter-package.md`).
+   Asked of Windows next (`to-windows/` of 2026-11-13, after Peter's commit
+   and the fast-forward of the shared clones): the eight offline suites and
+   the Python tests after the removal of the eight scripts, the comments in
+   four scripts that name a removed one, a `Dirty` flag that Inventor
+   returns as nothing stopping the run too, and Inventor reading the STEP
+   file with one product per sub-assembly.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
    (`vault-cad sync-status`, written to `sync-status.json`, never into the

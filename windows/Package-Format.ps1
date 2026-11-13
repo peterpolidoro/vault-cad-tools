@@ -47,6 +47,9 @@ $PackageSchemaVersion = 2
 $PackageKind = "vault-cad-export-package"
 $PackageLayoutSchemaVersion = 1
 $PackageOccurrencesSchemaVersion = 1
+# The exporter's receipt (export-package-receipt.json), which stays on the workstation. 3: it says whether package.json
+# is in the directory (package_json_present) and why a package was withheld, and validation.stage can be "withheld".
+$PackageReceiptSchemaVersion = 3
 $PackageVaultFields = @("vault_id", "master_id", "version_id", "version_number", "revision", "lifecycle_state", "checkin_date", "path", "native_sha256")
 $PackageStepFields = @("sha256", "data_sha256", "bytes", "protocol", "length_unit", "header_normalised", "received_sha256")
 $PackagePropertyNames = @("category", "description", "manufacturer", "material", "part_number", "stock_number", "title", "vendor")

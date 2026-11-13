@@ -8,6 +8,35 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — names in the STEP file from Linux, two changes of the exporter, a body missing from a volume (2026-11-13)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-13-windows-step-names-01/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261113T165633Z-...` after the Linux review
+`evidence/2026-11-13-linux-windows-new-layout-02-review-01/REVIEW.md`. No Vault access; no production document
+saved; the 45 files of the mirror unchanged.
+
+- The STEP file of the whole enclosure, built again on Linux with every usage's name also as its id and with the
+  47 names FreeCAD had numbered anew put back: Inventor shows the names. None of its 172 occurrence names is a
+  number, none was changed by Inventor, and below the level the file adds all 171 paths are paths of the
+  package's `occurrences.json`, so the occurrences are compared by path. Everything else is as in the read of
+  the earlier file: an assembly in mm, `Successful`, no dialog shown, 155 part occurrences, 17 sub-assembly
+  occurrences, 479 solid bodies, 37 part documents, every placement and every volume the same number.
+- `Export-Package.ps1`: a read of a document's `Dirty` flag after the export that fails stops the run
+  (`Get-GivenValue`, P34), and the receipt is `schema_version` 3 (`$PackageReceiptSchemaVersion`, P35).
+- The exporter, run once afterwards: `complete`; every file of the package but `package.json` is byte for byte
+  the file of the package that is imported into the project; imported into a fresh clone of the project it
+  changes nothing (44 unchanged).
+- `Invoke-StepImportProbe.ps1 -BodyVolumesOf` measures the bodies of a part document one by one. On
+  `MCMASTER 5537T429_T-Slotted Framing`, whose volume Inventor gives as 29 045 mm3 at its default accuracy and
+  as 25 799 mm3 at `k_VeryHigh`: the lower number is the document without its ninth body. That body is 3 245 mm3
+  at a precision of 0.1 to 0.005 percent; at 0.001 percent and finer Inventor cannot compute it (`E_FAIL`), and
+  the document's volume at `k_VeryHigh` is the sum of the other ten, to the last digit. At the default accuracy
+  the document's volume is the sum of all eleven. The native document lacks the same body at every accuracy
+  (measured on 2026-10-21, `evidence/2026-10-21-windows-exporter-hardening-02/part-bodies-coverage/`).
+- Suites: hygiene over 39 scripts with a 9-case self-test, 39 session mock cases, 3 watchdog, 12 snapshot, 10
+  STEP unit, 11 receipt, 27 STEP header and entity cases, 35 package format cases (two new), 7 Vault facts and 8
+  folder discovery cases; 102 Python tests under Pixi.
+
 ## Result — the new layout checked, a STEP file from Linux read by Inventor, six remarks corrected (2026-11-13)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-13-windows-new-layout-02/` (report `REPORT.md`, which records the

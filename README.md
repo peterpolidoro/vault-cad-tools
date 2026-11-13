@@ -234,7 +234,7 @@ Measurement and native authoring (added for the command-line pilot):
     data-section hash, the normalised header, refusals; entity counts, the form of
     an INVISIBILITY mark, entity differences, whether a difference is confined
     to the saved view, a `FILE_SCHEMA` that names two schemas),
-    `Test-PackageFormat.ps1` (33 cases: the package's JSON, directory names and
+    `Test-PackageFormat.ps1` (35 cases: the package's JSON, directory names and
     Vault block, and the check of a written package on synthetic ones: the
     manifest, `source.json`, `part.step`, `assembly.json`, `occurrences.json`,
     forbidden text, two runs compared; guard queries and optional reads, the
@@ -242,8 +242,9 @@ Measurement and native authoring (added for the command-line pilot):
     package with `package.json` written last and removed by whatever fails after
     it; a collection that must give as many items as it counts, a count that is
     handed its collection, a value that is given or nothing, a package withheld
-    before `package.json` is written, and what the file system says about
-    `package.json` after a removal that failed; and `Export-Package.ps1`,
+    before `package.json` is written, what the file system says about
+    `package.json` after a removal that failed, a dirty flag whose read fails
+    stopping the run, and the receipt's schema version; and `Export-Package.ps1`,
     `Invoke-AssemblyStepProbe.ps1` and `Invoke-StepImportProbe.ps1` read as syntax
     trees: no cast in a guard query, no count asked in one step, Inventor started
     inside the `try` whose `finally` stops it, nothing outside a `try` afterwards
@@ -395,8 +396,9 @@ Measurement and native authoring (added for the command-line pilot):
     decided before the file is written, so such a run writes none. What the receipt
     says about the file (`package_json_present`) is asked of the file system after the
     last attempt to remove it, and a `package.json` that is still there fails the run.
-    A read of a document's length unit that fails stops the run; null is for a unit
-    Inventor returns as nothing.
+    A read of a document's length unit, or of its dirty flag after the export, that
+    fails stops the run; null is for a value Inventor returns as nothing. The receipt
+    is `schema_version` 3 since 2026-11-13.
     Draft 3 of the specification follows the exporter
     in two things draft 2 had otherwise: the placements of flexible instances are not
     written as `overrides` (the import command derives them from `occurrences.json`),
@@ -417,7 +419,7 @@ Measurement and native authoring (added for the command-line pilot):
     a collection that is missing), `Get-GivenValue` (null for nothing, a read that fails
     stops the run), `Get-PackageOutcome` (whether `package.json` is there and whether that
     fits the run's status), and a ledger of the guards a run evaluated.
-28. `Invoke-StepImportProbe.ps1 -Step FILE -WorkDirectory WORK -OutputDirectory NEW [-ExpectedSha256 SHA] [-Convert]`
+28. `Invoke-StepImportProbe.ps1 -Step FILE -WorkDirectory WORK -OutputDirectory NEW [-ExpectedSha256 SHA] [-Convert] [-BodyVolumesOf NAME[,NAME]] [-PrecisionPercent P[,P]]`
     reads one STEP file that Inventor did not write (a whole assembly built with FreeCAD,
     for example) into an owned, invisible instance with the translator's `Open`, nothing
     written and every document closed without saving, under the dialog watchdog. The
@@ -426,7 +428,11 @@ Measurement and native authoring (added for the command-line pilot):
     of names and its placement, and for every part document its bodies and its volume at
     the default accuracy and at `k_VeryHigh`. With `-Convert` the file is read a second
     time so that Inventor writes native documents into WORK, a disposable copy, and the
-    files that appeared are listed. No Vault access.
+    files that appeared are listed. With `-BodyVolumesOf` the bodies of the part
+    documents named are measured one by one, each at every `-PrecisionPercent`, beside
+    the document's own volume at each accuracy: Inventor leaves a body out of a
+    document's volume, without a message, when it cannot compute that body at the
+    accuracy asked (seen on 2026-11-13 at `k_VeryHigh`). No Vault access.
 
 REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
@@ -441,7 +447,9 @@ review's findings on the script were corrected is in
 `.../2026-11-12-windows-package-findings-01/`. What Inventor makes of the STEP file of
 the whole enclosure that FreeCAD built on Linux (item 28), and the run of the exporter
 after the six remarks of the Linux review were corrected, are in
-`.../2026-11-13-windows-new-layout-02/`.
+`.../2026-11-13-windows-new-layout-02/`. The read of that file with the occurrences'
+names as usage ids, and one part's volume body by body, are in
+`.../2026-11-13-windows-step-names-01/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 (`native-snapshot.json` is a record of the earlier exporter, which is removed: nothing

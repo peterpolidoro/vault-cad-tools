@@ -30,6 +30,15 @@ With -Convert the file is read a second time with those options set to True and 
 -WorkDirectory are listed. Put the STEP file itself into -WorkDirectory for that: Inventor may save beside the
 source. The documents are a disposable copy.
 
+With -BodyVolumesOf NAME[,NAME] the bodies of those part documents are measured one by one, in the read in
+memory. A name is the part document's name as Inventor shows it, with or without ".ipt". Recorded under
+body_volumes: for the document, MassProperties.Volume at k_Low, k_Medium and k_High before k_VeryHigh is asked
+for the first time, and at the four accuracies again afterwards; for every body, its faces by kind of surface, its
+shells (void or not), SurfaceBody.Volume and FaceShell.Volume at each -PrecisionPercent, and
+SurfaceBody.MassProperties, which takes no accuracy. These values are descriptions: one that Inventor does not
+give is null, a volume that cannot be read is null with the reason beside it, and the reads that failed are
+counted. A name that no part document of the file has stops the run.
+
 Inventor is started inside the try whose finally stops it, and nothing after that runs outside a try: a receipt
 is always written. Outputs in -OutputDirectory: step-import-probe.json, probe.log, dialogs.log.
 Exit code 1 unless the status is complete.
@@ -41,6 +50,8 @@ param(
     [ValidatePattern('^([0-9a-f]{64})?$')][string]$ExpectedSha256 = "",
     [hashtable]$OpenOption = @{},
     [switch]$Convert,
+    [string[]]$BodyVolumesOf = @(),
+    [double[]]$PrecisionPercent = @(1.0, 0.01, 0.0001),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$ProjectName = "vault-cad-step-import",
     [string]$TemplateProject = "$env:PUBLIC\Documents\Autodesk\Inventor 2025\Default.ipj"
 )
@@ -67,6 +78,7 @@ $log = Join-Path $OutputDirectory "probe.log"
 function Log($line) { Add-Content -LiteralPath $log -Value "$(Utc) $line"; Write-Output $line }
 $sourceSha = Sha $source; $sourceBytes = (Get-Item -LiteralPath $source).Length; $nativeDirectory = Join-Path $WorkDirectory "native"
 if ($ExpectedSha256 -and $sourceSha -cne $ExpectedSha256) { throw "The STEP file has SHA-256 $sourceSha, expected $ExpectedSha256" }
+foreach ($precision in $PrecisionPercent) { if ($precision -le 0) { throw "A precision in percent must be greater than 0: $precision" } }
 
 $kPart = 12290; $kAssembly = 12291; $kFileBrowseIOMechanism = 13059; $stepTranslatorClsid = "{90AF7F40-0C01-11D5-8E83-0010B541CD80}"
 $lengthUnitNames = @{ 11268 = "cm"; 11269 = "mm"; 11270 = "m"; 11271 = "micron"; 11272 = "in"; 11273 = "ft" }
@@ -101,6 +113,105 @@ function Get-Box($box, [string]$what) {
     $lowCells = @((Get-RequiredValue "range box of $what" { $low.X } -Kind number), (Get-RequiredValue "range box of $what" { $low.Y } -Kind number), (Get-RequiredValue "range box of $what" { $low.Z } -Kind number))
     $highCells = @((Get-RequiredValue "range box of $what" { $high.X } -Kind number), (Get-RequiredValue "range box of $what" { $high.Y } -Kind number), (Get-RequiredValue "range box of $what" { $high.Z } -Kind number))
     return [ordered]@{ min = @($lowCells | ForEach-Object { [double]$_ }); max = @($highCells | ForEach-Object { [double]$_ }) }
+}
+$accuracyLevels = @("k_Low", "k_Medium", "k_High", "k_VeryHigh")
+function Format-Precision([double]$number) { return $number.ToString("R", [Globalization.CultureInfo]::InvariantCulture) }
+function Get-AccuracyName($code) { if ($null -eq $code) { return $null }; $name = [Enum]::GetName([Inventor.MassPropertiesAccuracyEnum], $code); if ($name) { return $name }; return "MassPropertiesAccuracyEnum $code" }
+function Get-ParameterisedValue($object, [string]$property, [double]$argument) {
+    # A property of the API that takes one number: SurfaceBody.Volume and FaceShell.Volume take a precision in percent.
+    return $object.GetType().InvokeMember($property, [Reflection.BindingFlags]::GetProperty, $null, $object, [object[]]@($argument))
+}
+function Get-InnermostMessage($exception) {
+    # InvokeMember wraps what COM answered: the innermost exception has the reason.
+    $innermost = $exception; while ($null -ne $innermost.InnerException) { $innermost = $innermost.InnerException }
+    return ("{0} (0x{1:X8})" -f $innermost.Message, $innermost.HResult)
+}
+function Read-VolumeAt($object, [double]$precision, $failures) {
+    # SurfaceBody.Volume or FaceShell.Volume at one precision, in cm3. Described, not a guard: nothing when the
+    # read fails or gives no number, and then the reason is filed under the precision in $failures.
+    $raw = $null
+    try { $raw = Get-ParameterisedValue $object "Volume" $precision } catch { $script:PackageOptionalReadFailures++; $failures[(Format-Precision $precision)] = (Get-InnermostMessage $_.Exception); return $null }
+    if ($null -eq $raw) { return $null }
+    if (-not (Test-PackageNumber $raw)) { $script:PackageOptionalReadFailures++; $failures[(Format-Precision $precision)] = "not a number: $($raw.GetType().Name)"; return $null }
+    return ($raw -as [double])
+}
+function Read-DocumentVolumes($properties, [string[]]$levels) {
+    # The document's MassProperties.Volume at each accuracy in the order given: what Inventor answers, the number
+    # the accuracy stands for, and the reason when the accuracy cannot be set.
+    $volumes = [ordered]@{}
+    foreach ($level in $levels) {
+        $rung = [ordered]@{ volume_cm3 = $null; accuracy_value = $null; failure = $null }
+        try {
+            $properties.Accuracy = [int][Enum]::Parse([Inventor.MassPropertiesAccuracyEnum], $level)
+            $rung.volume_cm3 = Get-OptionalValue { $properties.Volume } "double"; $rung.accuracy_value = Get-OptionalValue { $properties._AccuracyValue } "double"
+        } catch { $rung.failure = $_.Exception.Message }
+        $volumes[$level] = $rung
+    }
+    return $volumes
+}
+function Get-BodyRecord($body, [int]$index) {
+    # One body of a part document, described. Nothing here is a guard: a value Inventor does not give is null.
+    $record = [ordered]@{ index = $index; name = (Get-OptionalValue { $body.Name } "string"); is_solid = (Get-OptionalValue { $body.IsSolid } "bool") }
+    $faces = $body.Faces
+    $record.faces = Get-OptionalCount $faces
+    $tally = @{}
+    if ($null -ne $faces) {
+        foreach ($face in $faces) {
+            $code = Get-OptionalValue { $face.SurfaceType } "int"
+            $kind = "not read"
+            if ($null -ne $code) { $kind = [Enum]::GetName([Inventor.SurfaceTypeEnum], $code); if (-not $kind) { $kind = "SurfaceTypeEnum $code" } }
+            if ($tally.ContainsKey($kind)) { $tally[$kind]++ } else { $tally[$kind] = 1 }
+        }
+    }
+    $record.faces_by_surface = [ordered]@{}; foreach ($kind in ($tally.Keys | Sort-Object)) { $record.faces_by_surface[$kind] = $tally[$kind] }
+    $shells = $body.FaceShells
+    $record.shell_count = Get-OptionalCount $shells
+    $shellRecords = @(); $shellIndex = 0
+    if ($null -ne $shells) {
+        foreach ($shell in $shells) {
+            $shellIndex++; $shellFaces = $shell.Faces
+            $shellRecord = [ordered]@{ index = $shellIndex; is_void = (Get-OptionalValue { $shell.IsVoid } "bool"); is_closed = (Get-OptionalValue { $shell.IsClosed } "bool"); faces = (Get-OptionalCount $shellFaces); volume_cm3_at_precision_percent = [ordered]@{}; volume_not_read_because = [ordered]@{} }
+            foreach ($precision in $PrecisionPercent) { $shellRecord.volume_cm3_at_precision_percent[(Format-Precision $precision)] = Read-VolumeAt $shell $precision $shellRecord.volume_not_read_because }
+            $shellRecords += $shellRecord
+        }
+    }
+    $record.shells = @($shellRecords)
+    $record.volume_cm3_at_precision_percent = [ordered]@{}; $record.volume_not_read_because = [ordered]@{}
+    foreach ($precision in $PrecisionPercent) { $record.volume_cm3_at_precision_percent[(Format-Precision $precision)] = Read-VolumeAt $body $precision $record.volume_not_read_because }
+    $bodyProperties = Get-OptionalObject { $body.MassProperties }
+    $record.mass_properties_volume_cm3 = $null; $record.mass_properties_area_cm2 = $null
+    if ($null -ne $bodyProperties) { $record.mass_properties_volume_cm3 = Get-OptionalValue { $bodyProperties.Volume } "double"; $record.mass_properties_area_cm2 = Get-OptionalValue { $bodyProperties.Area } "double" }
+    $record.range_box_cm = $null
+    $box = Get-OptionalObject { $body.RangeBox }
+    if ($null -ne $box) { try { $record.range_box_cm = Get-Box $box "body $index" } catch { $script:PackageOptionalReadFailures++ } }
+    return $record
+}
+function Get-BodyVolumes($entry, $properties, $accuracyFound, $beforeVeryHigh) {
+    # The bodies of one part document measured one by one, then the document's own volume at every accuracy again.
+    # It is called after the document's two volumes were read, so the document has been at k_VeryHigh when the
+    # bodies are read. $beforeVeryHigh: the document's volumes as they were asked before that.
+    $failuresBefore = $script:PackageOptionalReadFailures
+    $result = [ordered]@{ document = $entry.document; first_occurrence = $entry.first_occurrence; occurrences = $entry.occurrences
+        accuracy_found = (Get-AccuracyName $accuracyFound); precision_percent = @($PrecisionPercent | ForEach-Object { Format-Precision $_ })
+        volume_cm3_default_accuracy = $entry.volume_cm3_default_accuracy; document_volume_before_very_high = $beforeVeryHigh; volume_cm3_very_high = $entry.volume_cm3_very_high }
+    $bodies = $entry.definition.SurfaceBodies
+    $records = @(); $index = 0
+    foreach ($body in @(Get-RequiredItems "bodies of '$($entry.document)'" $bodies)) { $index++; $records += (Get-BodyRecord $body $index) }
+    $result.bodies = $records.Count
+    $sums = [ordered]@{}
+    foreach ($precision in $PrecisionPercent) {
+        $key = Format-Precision $precision; $sum = 0.0; $missing = 0
+        foreach ($record in $records) { $value = $record.volume_cm3_at_precision_percent[$key]; if ($null -eq $value) { $missing++ } else { $sum += $value } }
+        $sums[$key] = $(if ($missing) { $null } else { $sum })
+    }
+    $result.sum_over_bodies_cm3_at_precision_percent = $sums
+    $sum = 0.0; $missing = 0
+    foreach ($record in $records) { if ($null -eq $record.mass_properties_volume_cm3) { $missing++ } else { $sum += $record.mass_properties_volume_cm3 } }
+    $result.sum_over_bodies_cm3_mass_properties = $(if ($missing) { $null } else { $sum })
+    $result.document_volume_after_very_high = $(if ($null -ne $properties) { Read-DocumentVolumes $properties $accuracyLevels } else { $null })
+    $result.reads_that_failed = $script:PackageOptionalReadFailures - $failuresBefore
+    $result.body_records = @($records)
+    return $result
 }
 $script:nodes = @(); $script:partDocuments = [ordered]@{}
 function Add-Nodes($occurrences, [string[]]$parentPath, [int]$depth) {
@@ -194,7 +305,7 @@ try {
 try { $text.entity_counts = Get-StepEntityCounts -Path $source -Type $countedEntities } catch { $text.errors += "entity counts: $($_.Exception.Message)" }
 
 $session = $null; $app = $null; $project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $status = "FAILED"
-$translatorInfo = $null; $import = $null; $rootRecord = $null; $counts = $null; $partRecords = @(); $conversion = $null; $timings = [ordered]@{}
+$translatorInfo = $null; $import = $null; $rootRecord = $null; $counts = $null; $partRecords = @(); $bodyVolumes = @(); $conversion = $null; $timings = [ordered]@{}
 try {
     $session = Start-IsolatedInventor
     $app = $session.App
@@ -240,16 +351,34 @@ try {
             $rootRecord.volume_cm3_default_accuracy = Get-OptionalValue { $definition.MassProperties.Volume } "double"
         }
         $timings.tree_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
-        # every part document once: its volume at the default accuracy and at k_VeryHigh
+        # every part document once: its volume at the default accuracy and at k_VeryHigh; the bodies of the part
+        # documents named with -BodyVolumesOf one by one
+        $documentNames = @($script:partDocuments.Keys)
+        foreach ($wantedName in $BodyVolumesOf) {
+            if (@($documentNames | Where-Object { $_ -ieq $wantedName -or [IO.Path]::GetFileNameWithoutExtension($_) -ieq $wantedName }).Count -eq 0) { throw "No part document of the file is named '$wantedName' (-BodyVolumesOf)" }
+        }
+        $bodySeconds = 0.0
         foreach ($entry in $script:partDocuments.Values) {
             $properties = $entry.definition.MassProperties
+            $isWanted = @($BodyVolumesOf | Where-Object { $entry.document -ieq $_ -or [IO.Path]::GetFileNameWithoutExtension($entry.document) -ieq $_ }).Count -gt 0
+            $accuracyFound = $null; $beforeVeryHigh = $null
+            if ($isWanted -and $null -ne $properties) { $accuracyFound = Get-OptionalValue { $properties.Accuracy } "int" }
             $entry.volume_cm3_default_accuracy = Get-OptionalValue { $properties.Volume } "double"
+            if ($isWanted -and $null -ne $properties) { $beforeVeryHigh = Read-DocumentVolumes $properties @("k_Low", "k_Medium", "k_High") }
             $entry.volume_cm3_very_high = $null
             if ($null -ne $properties) { try { $properties.Accuracy = $accuracyHigh; $entry.volume_cm3_very_high = Get-OptionalValue { $properties.Volume } "double" } catch { $warnings += "volume of '$($entry.document)' at k_VeryHigh: $($_.Exception.Message)" } }
+            if ($isWanted) {
+                $bodyClock = [Diagnostics.Stopwatch]::StartNew()
+                $measured = Get-BodyVolumes $entry $properties $accuracyFound $beforeVeryHigh
+                $bodySeconds += $bodyClock.Elapsed.TotalSeconds
+                $bodyVolumes += $measured
+                Log "Bodies of '$($measured.document)': $($measured.bodies), measured one by one; reads that failed: $($measured.reads_that_failed)"
+            }
             $entry.Remove("definition")
             $partRecords += $entry
         }
-        $timings.volumes_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1)
+        $timings.volumes_seconds = [Math]::Round($clock.Elapsed.TotalSeconds - $bodySeconds, 1)
+        if ($BodyVolumesOf.Count -gt 0) { $timings.body_volumes_seconds = [Math]::Round($bodySeconds, 1) }
         $partNodes = @($script:nodes | Where-Object { $_.kind -eq "part" -and -not $_.suppressed }); $assemblyNodes = @($script:nodes | Where-Object { $_.kind -eq "assembly" -and -not $_.suppressed })
         $unreadDefault = @($partRecords | Where-Object { $null -eq $_.volume_cm3_default_accuracy }).Count; $unreadHigh = @($partRecords | Where-Object { $null -eq $_.volume_cm3_very_high }).Count
         $sumDefault = 0.0; $sumHigh = 0.0
@@ -323,7 +452,7 @@ try {
         session = $(if ($session) { [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids
                 shutdown = $(if ($shutdown) { [ordered]@{ succeeded = $shutdown.Succeeded; exited = $shutdown.Exited; observed = $shutdown.Observed; failed_required = @($shutdown.FailedRequired); notes = @($shutdown.Notes) } } else { $null }) } } else { $null })
         project = $(if ($project) { [ordered]@{ file = $project.ProjectFile; entry_pre_existed = $project.EntryPreExisted; entry_added_by_run = $project.AddedEntry; created_file = $project.CreatedFile } } else { $null })
-        translator = $translatorInfo; import = $import; document = $rootRecord; counts = $counts; part_documents = $partRecords; occurrences = @($script:nodes); conversion = $conversion; timings = $timings
+        translator = $translatorInfo; import = $import; document = $rootRecord; counts = $counts; part_documents = $partRecords; body_volumes = @($bodyVolumes); occurrences = @($script:nodes); conversion = $conversion; timings = $timings
         dialogs = $(if ($dialogs) { [ordered]@{ policy = $dialogs.Policy; log = "dialogs.log"; polls = $dialogs.Polls; seen = $dialogs.Events.Count; dismissed = $dialogs.Dismissed; left_alone = $dialogs.Left; events = @($dialogs.Events); errors = @($dialogs.Errors) } } else { $null }) }
     ConvertTo-Json -InputObject $receipt -Depth 12 | Set-Content -LiteralPath (Join-Path $OutputDirectory "step-import-probe.json") -Encoding UTF8
 } catch {

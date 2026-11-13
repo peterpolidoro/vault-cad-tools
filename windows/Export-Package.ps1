@@ -59,8 +59,8 @@ written removes it. Only a run that ends "complete" leaves package.json: a run i
 dialog ends "complete_with_dialogs" and its package is withheld. That is decided before package.json is written,
 so such a run writes none. What the receipt says about package.json is asked of the file system after the last
 attempt to remove it; a package.json that could not be removed fails the run. A value Inventor returns as nothing
-is null; a read of a document's length unit that fails stops the run. Exit code 1 unless a complete package was
-left.
+is null; a read of a document's length unit, or of its dirty flag after the export, that fails stops the run.
+The receipt is schema_version 3 ($PackageReceiptSchemaVersion). Exit code 1 unless a complete package was left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$NativeAssembly,
@@ -582,11 +582,12 @@ try {
                 tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length = $lengthTolerance }
                 counts = [ordered]@{ occurrences = $occurrencesOut.Count; parts = @($occurrencesOut | Where-Object { $_.kind -eq "part" }).Count; assemblies = @($occurrencesOut | Where-Object { $_.kind -eq "assembly" }).Count; differ_from_definition = $differing }
                 occurrences = $occurrencesOut })
-        # a dirty flag that cannot be read is not "not dirty"
+        # A dirty flag that cannot be read is not "not dirty". A read that fails stops the run here, before the
+        # package is said to be written (Get-GivenValue); a flag Inventor returns as nothing is counted and warned of.
         $dirty = @(); $dirtyUnknown = 0
-        foreach ($held in $documents.Values) { $flag = Get-OptionalValue { $held.Document.Dirty } "bool"; if ($null -eq $flag) { $dirtyUnknown++ } elseif ($flag) { $dirty += $held.What } }
+        foreach ($held in $documents.Values) { $flag = Get-GivenValue "dirty flag of '$($held.What)' after the export" { $held.Document.Dirty } "bool"; if ($null -eq $flag) { $dirtyUnknown++ } elseif ($flag) { $dirty += $held.What } }
         if ($dirty.Count -gt 0) { $warnings += "dirty when the export ended (closed without saving): $($dirty -join '; ')" }
-        if ($dirtyUnknown -gt 0) { $warnings += "the dirty flag of $dirtyUnknown document(s) could not be read when the export ended (closed without saving)" }
+        if ($dirtyUnknown -gt 0) { $warnings += "Inventor gave no dirty flag for $dirtyUnknown document(s) when the export ended (closed without saving)" }
         $packageWritten = $true
     } finally { try { $asm.Close($true) } catch { $errors += "assembly close: $($_.Exception.Message)" } }
 } catch {
@@ -657,7 +658,7 @@ try {
 } catch { $errors += "the output directory could not be asked for package.json: $($_.Exception.Message)"; $status = "FAILED"; $packageComplete = $false }
 # the receipt: always written; if it cannot be written in full the run is not recorded and its package is not complete
 try {
-    $receipt = [ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = $status; errors = $errors; warnings = $warnings
+    $receipt = [ordered]@{ schema_version = $PackageReceiptSchemaVersion; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = $status; errors = $errors; warnings = $warnings
         package = $OutputDirectory; package_complete = $packageComplete; package_json_present = $manifestPresent; package_withheld_because = $withheld; work_directory = $WorkDirectory
         inventor = $(if ($session) { "$($session.Version) build $($session.Build)" } else { $null }); host = $env:COMPUTERNAME; interactive_desktop = [Environment]::UserInteractive; interop_assembly = $interopPath
         session = $(if ($session) { [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids
@@ -682,7 +683,7 @@ try {
     $problem = $_.Exception.Message; $status = "FAILED"; $packageComplete = $false
     try { [void](Remove-PackageManifest $OutputDirectory) } catch { }
     try { $manifestPresent = Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json") } catch { $manifestPresent = $null }
-    try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = $false; package_json_present = $manifestPresent }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
+    try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = $PackageReceiptSchemaVersion; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = $false; package_json_present = $manifestPresent }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
     Write-Output "ERROR: the receipt could not be written in full: $problem"
 }
 try { Log "Package status: $status; package.json $(if ($packageComplete) { 'written' } else { 'not left' }) ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context)" } catch { }

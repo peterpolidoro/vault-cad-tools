@@ -107,6 +107,11 @@ Offline suites, none of which needs Inventor or Vault:
   the last attempt to remove it (`Get-PackageOutcome`). A `package.json`
   that could not be removed is reported as present and fails the run: to
   whoever reads the directory it says "complete", whatever the receipt says.
+- The exporter's receipt, `export-package-receipt.json`, is `schema_version` 3
+  (`$PackageReceiptSchemaVersion` in `Package-Format.ps1`). Since 3 it says
+  whether `package.json` is in the directory (`package_json_present`), and
+  `validation.stage` can be `withheld`. `Test-PackageFormat.ps1` (P35) holds
+  both places where the exporter writes a receipt to that number.
 - Production documents are opened from the acquired mirror and never saved.
   Pilots that save anything work in a disposable copy of the mirror.
 - All automation so far ran in an interactive desktop session. Unattended
@@ -174,8 +179,11 @@ Offline suites, none of which needs Inventor or Vault:
 - "Inventor returns nothing" and "the read failed" are two things.
   `Get-OptionalValue` turns both into null and counts the failures; it is for
   what is only described. `Get-GivenValue` returns null for nothing and stops
-  the run when the read fails; the exporter reads a document's length unit
-  with it, so `native.length_unit: null` never stands for a failed read.
+  the run when the read fails. The exporter reads two things with it: a
+  document's length unit, so `native.length_unit: null` never stands for a
+  failed read, and every document's `Dirty` flag after the export, so a flag
+  that could not be read is never passed over. `Test-PackageFormat.ps1` (P34)
+  fails when the exporter reads `Dirty` in any other way.
 - Start Inventor inside the `try` whose `finally` stops it, and run nothing
   outside a `try` after it: the receipt is always written, and whatever fails
   after `package.json` was written removes it (`Complete-Package`). In that
@@ -195,7 +203,20 @@ Offline suites, none of which needs Inventor or Vault:
   attribute of its `NEXT_ASSEMBLY_USAGE_OCCURRENCE`, the id, and not after the
   second, the name; it names a document after its `PRODUCT`. When it writes
   native documents it puts them beside the STEP file, in a directory named
-  after it.
+  after it. A file whose usages carry the occurrence's name as their id shows
+  those names in Inventor unchanged, also where a name repeats under another
+  parent (the enclosure's file: 172 names, 125 distinct, none changed).
+- The volume of a document can leave a body out without saying so. Inventor
+  computes a volume to a precision. `SurfaceBody.Volume(percent)` fails with
+  `E_FAIL` when it cannot reach the precision asked for, and the document's
+  `MassProperties.Volume` at that accuracy is then the sum of the other
+  bodies. Seen on `MCMASTER 5537T429_T-Slotted Framing`: one of its 11 bodies
+  is missing from the volume at `k_VeryHigh` (0.0001 %), and in the native
+  document also at the default accuracy, `k_Low` (0.01 %). Once `k_VeryHigh`
+  has been asked, the document answers with that number at every accuracy.
+  So a part's volume is no check on its own, and a higher accuracy is not a
+  better number: measure the bodies one by one
+  (`Invoke-StepImportProbe.ps1 -BodyVolumesOf`, `Measure-PartBodies.ps1`).
 - In PowerShell the comma binds tighter than arithmetic: write
   `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
   is case-insensitive and its dot access returns the value of a key named

@@ -119,6 +119,32 @@ function Get-CountsAskedInOneStep([string]$Text) {
     }
     return $found   # bare: callers wrap with @(...)
 }
+function Get-MemberReads([string]$Text, [string]$Member) {
+    # Every read of a member of that name in a script, in the order of the text: the guard or optional-read function
+    # whose script block holds the read, or "(no query)" for a read that is made outside one.
+    $memberAst = [System.Management.Automation.Language.MemberExpressionAst]; $blockAst = [System.Management.Automation.Language.ScriptBlockExpressionAst]
+    $found = @()
+    foreach ($read in (Get-ScriptTree $Text).FindAll({ $args[0] -is $memberAst -and $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $args[0].Member.Value -eq $Member }, $true)) {
+        $by = "(no query)"; $node = $read.Parent
+        while ($null -ne $node) {
+            if ($node -is $blockAst -and $node.Parent -is $commandAst -and $queryFunctions -contains $node.Parent.GetCommandName()) { $by = $node.Parent.GetCommandName(); break }
+            $node = $node.Parent
+        }
+        $found += $by
+    }
+    return $found   # bare: callers wrap with @(...)
+}
+function Get-ReceiptSchemas([string]$Text) {
+    # The schema_version of every receipt a script writes, as the script's text has it. A receipt is a hash table
+    # written out with the keys schema_version and status; a file of the package has no status.
+    $found = @()
+    foreach ($table in (Get-ScriptTree $Text).FindAll({ $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $true)) {
+        $pairs = @{}
+        foreach ($pair in @($table.KeyValuePairs)) { if ($pair.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $pairs[$pair.Item1.Value] = $pair.Item2.Extent.Text } }
+        if ($pairs.ContainsKey("schema_version") -and $pairs.ContainsKey("status")) { $found += $pairs["schema_version"] }
+    }
+    return $found   # bare: callers wrap with @(...)
+}
 function Get-FinallyProblems([string]$Text) {
     # The finally of the try that owns the Inventor instance: each of its statements must be a try, or an if whose
     # statements are all try statements. Anything else can throw and skip what follows (the watchdog's stop).
@@ -490,6 +516,29 @@ try {
             $problems = @(Get-FinallyProblems ([IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))))
             Assert ($problems.Count -eq 0) "$scriptName`: $($problems -join '; ')"
         }
+    }
+    # ---- the two changes of the Linux review of 2026-11-13 ----
+    Case "P34 a document's dirty flag after the export: False is False, nothing is nothing, a read that fails stops the run; the exporter reads it no other way" {
+        $held = [pscustomobject]@{ Clean = $false; Changed = $true; None = $null }
+        $clean = Get-GivenValue "dirty flag of 'PLATE.ipt' after the export" { $held.Clean } "bool"
+        Assert ($clean -is [bool] -and -not $clean) "a flag that is False came back as '$clean': a clean document would be counted as one without a flag"
+        Assert ((Get-GivenValue "dirty flag" { $held.Changed } "bool") -eq $true -and $null -eq (Get-GivenValue "dirty flag" { $held.None } "bool")) "the flag is wrong"
+        Assert (Throws { Get-GivenValue "dirty flag of 'PLATE.ipt' after the export" { throw "RPC_E_DISCONNECTED" } "bool" } "dirty flag of 'PLATE.ipt' after the export.*RPC_E_DISCONNECTED") "a dirty flag that could not be read was passed over"
+        $sample = 'Get-OptionalValue { $held.Document.Dirty } "bool"; $flag = $doc.Dirty; Get-GivenValue "flag" { $doc.Dirty } "bool"; Get-RequiredValue "flag" { $doc.Dirty }'
+        Assert ((@(Get-MemberReads $sample "Dirty") -join ",") -ceq "Get-OptionalValue,(no query),Get-GivenValue,Get-RequiredValue") "the check does not say how a member is read: $(@(Get-MemberReads $sample "Dirty") -join ',')"
+        $exporter = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1"))
+        $reads = @(Get-MemberReads $exporter "Dirty")
+        Assert ($reads.Count -ge 1 -and @($reads | Where-Object { $_ -cne "Get-GivenValue" }).Count -eq 0) "Export-Package.ps1 reads the dirty flag of a document with: $($reads -join ', ')"
+        # a read that throws must leave the run without a package: it comes before the line that says the files are written
+        $read = $exporter.IndexOf('Get-GivenValue "dirty flag of '); $written = $exporter.IndexOf('$packageWritten = $true')
+        Assert ($read -ge 0 -and $written -gt $read) "the dirty flags are not read before the package is said to be written (read at $read, written at $written)"
+    }
+    Case "P35 the exporter's receipt names schema 3 wherever it is written, the receipt of a run that could not write it in full included" {
+        Assert ($PackageReceiptSchemaVersion -is [int] -and $PackageReceiptSchemaVersion -eq 3) "the schema of the receipt is '$PackageReceiptSchemaVersion'"
+        $sample = '$receipt = [ordered]@{ schema_version = 2; status = $status }; $manifest = [ordered]@{ schema_version = $PackageSchemaVersion; kind = $PackageKind }; $short = [ordered]@{ schema_version = $PackageReceiptSchemaVersion; status = "FAILED" }'
+        Assert ((@(Get-ReceiptSchemas $sample) -join ",") -ceq '2,$PackageReceiptSchemaVersion') "the check does not find the receipts of a script: $(@(Get-ReceiptSchemas $sample) -join ',')"
+        $written = @(Get-ReceiptSchemas ([IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1"))))
+        Assert ($written.Count -eq 2 -and @($written | Where-Object { $_ -cne '$PackageReceiptSchemaVersion' }).Count -eq 0) "Export-Package.ps1 writes $($written.Count) receipt(s) and gives their schema as: $($written -join ', ')"
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
