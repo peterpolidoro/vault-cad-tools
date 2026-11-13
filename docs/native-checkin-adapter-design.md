@@ -8,6 +8,12 @@ into a synchronisation design. Revision 1's mutating sequence is kept, condensed
 route in section 9. Evidence for every "verified" statement below:
 `vault-cad-exchange/evidence/2026-10-23-windows-sync-design-01/` (`REPORT.md`).
 
+Note added on 2026-11-13 (Linux): the exporter this design names,
+`Export-PartAssets`, and the check of its package, `Test-SnapshotOutputs`,
+were removed that day. The exporter is `Export-Package.ps1`, and its package
+is checked by `Test-PackageOutputs` in `Package-Format.ps1`; read the names
+below as those. What section 6 plans for the exporter is not built for either.
+
 Notes added on 2026-11-10 (Linux):
 
 - The file name is historical. The document is the synchronisation design; the

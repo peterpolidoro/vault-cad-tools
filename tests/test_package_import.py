@@ -404,8 +404,6 @@ class PackageImportTests(unittest.TestCase):
         self.assertTrue((self.dest / "references/assemblies/root/assembly.json").is_file())
         self.assertEqual(main(["import-snapshot", str(package), "--into", str(self.dest), "--run", "run-2"]), 0)
         self.assertEqual(main(["import-snapshot", str(package), "--into", str(self.dest), "--run", "run-2"]), 2)
-        self.assertEqual(main(["import-snapshot", str(package), "--into", str(self.dest), "--run", "run-3",
-                               "--inventory", str(package / "package.json")]), 2)
 
 
 if __name__ == "__main__":

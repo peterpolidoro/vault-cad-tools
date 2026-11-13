@@ -34,10 +34,9 @@ An export of unchanged Vault versions changes nothing in a project: every file
 of the package but `package.json` is the same bytes, and `import-snapshot`
 reports every reference as unchanged.
 
-`Export-PartAssets.ps1` writes the earlier format (`assets/`, a snapshot,
-AP214 by default). It is kept for now, is not run for new work and gets no
-further corrections; none of its defaults is changed. What else serves only
-the earlier format or the earlier layout is listed at the end of this file.
+The earlier exporter, `Export-PartAssets.ps1`, and the scripts that served
+only it or the export of single files were removed on 2026-11-13. The last
+section of this file says which.
 
 ## Environment
 
@@ -56,9 +55,9 @@ prerequisites that Pixi does not manage.
 Call the scripts with `&` from PowerShell. `powershell -File` flattens array
 parameters.
 
-Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
+Offline suites, none of which needs Inventor or Vault:
 `Test-InventorSession.ps1`, `Test-DialogWatchdog.ps1`, `Test-StepLengthUnit.ps1`,
-`Test-SnapshotOutputs.ps1 -SelfTest`, `Test-StepHeader.ps1`,
+`Test-StepHeader.ps1`,
 `Test-PackageFormat.ps1`, `Get-VaultFileFacts.ps1 -SelfTest`,
 `Discover-VaultFolder.ps1 -SelfTest`, `Test-ScriptHygiene.ps1`.
 
@@ -81,13 +80,12 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 
 - Every script that drives Inventor should start it through
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
-  `Export-PartAssets.ps1`, `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
+  `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
   `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
-  `Invoke-ExporterGuardChecks.ps1`, `Invoke-StepExportProbe.ps1`,
+  `Invoke-StepExportProbe.ps1`,
   `Get-PartFeatureDump.ps1`, `Invoke-AssemblyStepProbe.ps1`,
   `Invoke-StepImportProbe.ps1` and `Export-Package.ps1` do.
-  `Export-InventorStep.ps1`,
-  `Inspect-StepInInventor.ps1`, `Compare-NativeAndStepAssembly.ps1`,
+  `Compare-NativeAndStepAssembly.ps1`,
   `Invoke-NativeAuthoringPilot.ps1` and `Invoke-NativeParameterPilot.ps1` do not
   yet: use them only in the single-user interactive session they were
   qualified in.
@@ -203,21 +201,30 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   is case-insensitive and its dot access returns the value of a key named
   `count`; use an ordinal dictionary and `get_Count()` where either matters.
 
-## Scripts of the earlier format
+## Removed on 2026-11-13: the scripts of the earlier format
 
-Kept, not run for new work, and without further corrections. Nothing here is
-deleted before Peter has seen this list.
+Peter saw the list of 2026-11-13 and had them removed; the Linux role removed
+the files, and with them the reading of the earlier package in
+`import-snapshot`. 14a235a is the last commit that has them.
 
-| Script | What it serves | What still calls it |
-| --- | --- | --- |
-| `Export-PartAssets.ps1` | The earlier package: `assets/`, `native-snapshot.json`, `scene.json`, `inventory-raw.json`, `export-receipt.json`; AP214 by default | `Invoke-ExporterGuardChecks.ps1` runs it. In Python `import-snapshot` still reads its package, and `bom-audit --snapshot` takes its `native-snapshot.json` |
-| `Snapshot-Validation.ps1` | The check of that package | Dot-sourced by `Export-PartAssets.ps1`, `Invoke-ExporterGuardChecks.ps1` and `Test-SnapshotOutputs.ps1` |
-| `Test-SnapshotOutputs.ps1` | The suite of that check: 12 cases, one of the ten offline suites | Nothing. `docs/exchange-protocol.md` names it |
-| `Invoke-ExporterGuardChecks.ps1` | The qualification of `Export-PartAssets.ps1` in Inventor | Nothing |
-| `Export-InventorStep.ps1` | The single-file export: one STEP file per document, a whole assembly as one file, with `<name>.export-metadata.json` | Nothing. `New-ExportReceipt.ps1` reads its metadata |
-| `New-ExportReceipt.ps1` | The receipt of the single-file export, which `import-step` read | `Test-ExportReceipt.ps1`. `docs/exchange-protocol.md` says that nothing on Linux reads the receipt |
-| `Test-ExportReceipt.ps1` | The suite of that receipt: 11 checks, one of the ten offline suites | Nothing |
-| `Inspect-StepInInventor.ps1` | The re-read of a single-file export in Inventor | Nothing. `Invoke-StepImportProbe.ps1` reads a STEP file in an owned instance and records more |
+| Script | What it served |
+| --- | --- |
+| `Export-PartAssets.ps1` | The earlier package: `assets/`, `native-snapshot.json`, `scene.json`, `inventory-raw.json`, `export-receipt.json`; AP214 by default |
+| `Snapshot-Validation.ps1` | The check of that package |
+| `Test-SnapshotOutputs.ps1` | The suite of that check, 12 cases |
+| `Invoke-ExporterGuardChecks.ps1` | The qualification of `Export-PartAssets.ps1` in Inventor |
+| `Export-InventorStep.ps1` | The single-file export: one STEP file per document, a whole assembly as one file |
+| `New-ExportReceipt.ps1` | The receipt of the single-file export |
+| `Test-ExportReceipt.ps1` | The suite of that receipt, 11 checks |
+| `Inspect-StepInInventor.ps1` | The re-read of a single-file export in Inventor |
+
+Eight offline suites are left of ten. Not done when this was written, because
+no PowerShell runs on Linux: the eight suites run after the removal, and the
+comments in `Export-Package.ps1`, `Invoke-AssemblyStepProbe.ps1`,
+`Invoke-StepExportProbe.ps1` and `Invoke-StepImportProbe.ps1` that still say
+"as `Export-PartAssets.ps1` does" or name `Inspect-StepInInventor.ps1`.
+`bom-audit-summary --snapshot` still takes a `native-snapshot.json`; nothing
+writes a new one, and a project keeps the one it has.
 
 Not on the list, though they date from the same weeks:
 `Get-VaultDependencySnapshot.ps1` writes the acquisition records and the

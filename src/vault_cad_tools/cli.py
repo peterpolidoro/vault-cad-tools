@@ -78,18 +78,15 @@ def parser():
     ingest.add_argument("--exchange", help="Exchange root (default: inferred from the result path)")
     bom = sub.add_parser("bom-audit-summary", help="Join a native BOM audit, exporter snapshot and Vault discovery into reviewable facts (offline)")
     bom.add_argument("--audit", required=True, help="Directory written by windows/Audit-NativeBom.ps1")
-    bom.add_argument("--snapshot", required=True, help="native-snapshot.json from Export-PartAssets.ps1")
+    bom.add_argument("--snapshot", required=True, help="native-snapshot.json of the earlier exporter; a project keeps one under references/receipts/")
     bom.add_argument("--joints", help="joint-audit.json with Linux candidate joints (optional)")
     bom.add_argument("--discovery", help="Directory written by windows/Discover-VaultAssociations.ps1 (optional)")
     bom.add_argument("--output", required=True)
-    layout = sub.add_parser("import-snapshot", help="Write an exporter package into the layout with one directory per Vault file; offline. "
-                            "The earlier package (native-snapshot.json, scene.json, assets/) goes into a new directory; "
-                            "the package with package.json and files/ (a draft format) goes into a new directory or an existing project, keeping its keys")
-    layout.add_argument("package", help="Directory with package.json and files/, or with native-snapshot.json, scene.json, export-receipt.json and assets/")
-    layout.add_argument("--into", required=True, help="Where references/ and vault-lock.json are written: a new or empty directory, or (package.json only) a project")
+    layout = sub.add_parser("import-snapshot", help="Write the package of windows/Export-Package.ps1 (package.json, files/) into the "
+                            "layout with one directory per Vault file, in a new directory or an existing project, keeping its keys; offline")
+    layout.add_argument("package", help="Directory with package.json and files/")
+    layout.add_argument("--into", required=True, help="Where references/ and vault-lock.json are written: a new or empty directory, or a project")
     layout.add_argument("--run", required=True, help="Name under which the exporter's records are kept (references/receipts/<run>/)")
-    layout.add_argument("--inventory", help="dependency-inventory.json of the acquisition (optional; the earlier package only)")
-    layout.add_argument("--acquisition", help="acquisition.json of the acquisition (optional; the earlier package only)")
     return p
 
 
@@ -155,12 +152,11 @@ def execute(args):
                 "native_parts_not_exported": summary["native_parts_not_exported"], "drawings_available": summary["drawings_available"]}
     if args.command == "import-snapshot":
         from .package_import import import_package, is_package
-        if is_package(args.package):
-            if args.inventory or args.acquisition:
-                raise ExchangeError("--inventory and --acquisition belong to the earlier package; this one carries its Vault facts")
-            return import_package(args.package, args.into, args.run)
-        from .layout_import import import_snapshot
-        return import_snapshot(args.package, args.into, args.run, inventory=args.inventory, acquisition=args.acquisition)
+        if not is_package(args.package):
+            raise ExchangeError(f"{args.package} has no package.json: it is not a package of windows/Export-Package.ps1. "
+                                "The package of the earlier exporter (native-snapshot.json, scene.json, assets/) is no "
+                                "longer read")
+        return import_package(args.package, args.into, args.run)
     project = Project(args.project)
     if args.command == "status":
         return project.status()

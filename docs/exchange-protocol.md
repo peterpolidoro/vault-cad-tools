@@ -18,8 +18,8 @@ record are what the project holds. It does not validate geometry;
 Until 2026-11-12 a single STEP file could be imported with `import-step` and a
 receipt of its own (source ids, exporter, model state, protocol, SHA-256),
 recorded by path in the earlier lock. That command and that lock are gone.
-`windows/New-ExportReceipt.ps1` still writes such a receipt; nothing on Linux
-reads it.
+The script that wrote such a receipt on Windows, `New-ExportReceipt.ps1`, was
+removed on 2026-11-13.
 
 The Windows worker must establish the source/output relationship from actual
 job results and file associations or exact-version acquisition and local export

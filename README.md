@@ -127,16 +127,15 @@ fails if the page count does not reach `totalResults`.
 ## Windows export route (verified 2026-10-21)
 
 A root assembly is exported for a project with `Export-Package.ps1` (item 26
-below), and `import-snapshot` reads its package into the project.
-`Export-PartAssets.ps1` (item 9) writes the earlier package and
-`Export-InventorStep.ps1` (item 2) one STEP file per document; they are kept
-for now, are not run for new work and get no further corrections. The scripts
-that serve only the earlier formats are listed at the end of
-`windows/README.md`; nothing of that list is removed yet.
+below), and `import-snapshot` reads its package into the project. The earlier
+exporter, `Export-PartAssets.ps1`, the export of one STEP file per document,
+`Export-InventorStep.ps1`, and the six scripts that served only those two
+were removed on 2026-11-13 (Peter); 14a235a is the last commit that has them.
+Their numbers below are kept, so that a reference to another item stays right.
 
 The Job Processor route is not used yet: no processor runs on the workstation,
 built-in STEP job parameters are undocumented, and the queue does not expose
-completed jobs for inspection. Instead, four PowerShell scripts under `windows/`
+completed jobs for inspection. Instead, PowerShell scripts under `windows/`
 run on a machine with Inventor 2025 installed and Vault access:
 
 1. `Get-VaultDependencySnapshot.ps1 -RootVersionId ID -OutputDirectory EVIDENCE -CacheRoot MIRROR`
@@ -145,26 +144,11 @@ run on a machine with Inventor 2025 installed and Vault access:
    `MIRROR\<Vault path without $/>` with `acquisition.json` (SHA-256 per file).
    The mirror root stands in for Vault's `$`, so Inventor resolves references
    unchanged. Nothing is checked out.
-2. `Export-InventorStep.ps1 -WorkspaceRoot MIRROR -Document PATH[,PATH] -OutputDirectory OUT`
-   starts a separate hidden Inventor instance (aborting if COM attached to a
-   running one), activates a temporary single-user project whose workspace is
-   the mirror, exports STEP (AP214 by default, sketches excluded, other
-   translator defaults kept), records units, model state, occurrence/body
-   counts, range box and unresolved references in `<name>.export-metadata.json`,
-   never saves native files, then restores the user's project list and quits.
-3. `Inspect-StepInInventor.ps1 -Step FILE[,FILE] -WorkspaceRoot MIRROR` re-imports
-   the STEP files in another hidden instance and writes `<name>.step-inspection.json`
-   (occurrences, bodies, extent) for comparison with the export metadata.
-4. `New-ExportReceipt.ps1 -Metadata ... -Inventory ... -Acquisition ... -VaultPath '$/...'`
-   joins those records into the `docs/exchange-protocol.md` receipt, re-hashing
-   the STEP file and embedding the dependency inventory for assemblies. With
-   `-RequireVerifiedInputs` it refuses metadata that was not bound to acquisition.
-
-Binding exports to exact versions: `Export-InventorStep.ps1 -Acquisition acquisition.json`
-re-hashes the root and every document Inventor actually opened, requires each to be
-listed in the acquisition record with the same SHA-256, refuses unresolved references
-(unless `-AllowUnresolvedReferences`), and records `native_inputs` in the metadata;
-the receipt then carries `native_inputs_verified` and `acquired_but_not_opened`.
+2. Removed on 2026-11-13: `Export-InventorStep.ps1`, the export of one STEP file
+   per document, a whole assembly as one file.
+3. Removed on 2026-11-13: `Inspect-StepInInventor.ps1`, the re-read of such a
+   file. `Invoke-StepImportProbe.ps1` (item 28) reads a STEP file in Inventor.
+4. Removed on 2026-11-13: `New-ExportReceipt.ps1`, the receipt of that export.
 
 Measurement and native authoring (added for the command-line pilot):
 
@@ -208,29 +192,13 @@ Measurement and native authoring (added for the command-line pilot):
    (added after a Before-Save iLogic error form of the production assembly blocked
    `Save2` for 19 hours; `SilentOperation` does not cover add-in forms); `Resolve-RunStatus`
    turns a run's `complete` into `complete_with_dialogs` when anything was dismissed (W1). Used by
-   `Export-PartAssets.ps1` and `Measure-PartBodies.ps1`; the older scripts still
-   use the process-list heuristic. `Step-Units.ps1` (`Get-StepLengthUnit`) and
-   `Snapshot-Validation.ps1` (`Test-SnapshotOutputs`) are the other shared modules.
-9. `Export-PartAssets.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -OutputDirectory NEW -Acquisition ... -Inventory ...`
-   (strict by default; `-AllowUnboundInputs` only for fixtures without Vault records)
-   writes one STEP per distinct part document and model state plus
-   `native-snapshot.json`, `scene.json` (draft-1 shaped: mm, row-major 4x4 for column
-   vectors, parent-relative, `+Y` up declared with `basis_to_z_up`), `inventory-raw.json`
-   and `export-receipt.json` (session PID, attempted/observed shutdown, guards,
-   verified inputs, validation result, hashes). Every required guard query fails
-   closed: an API error is an unknown configuration and is refused. Refuses:
-   non-empty output directory, pre-existing asset, undeterminable or ambiguous
-   governing STEP unit (every `GLOBAL_UNIT_ASSIGNED_CONTEXT` validated, all must
-   agree), occurrence model state differing from the document's or definition's
-   active state (parts and assemblies), iPart/iAssembly factories at the root or
-   nested, adaptive, substitute (LOD) and mirrored occurrences, non-master LOD or
-   positional representation at the root or on assembly occurrences. The unit check
-   can only run after the translator has written the file, so that refusal leaves a
-   partial asset behind in a `FAILED` run. The receipt is `complete` (exit 0) only
-   when no error occurred, `Test-SnapshotOutputs` accepted the written manifests
-   (object shapes, unique ids, references, 4x4 transforms, per-part instance counts,
-   totals, receipt asset list and hashes) and the shutdown was observed to succeed.
-   Flexible sub-assembly instance positions are preserved.
+   `Export-Package.ps1`, the probes and `Measure-PartBodies.ps1`; the older scripts still
+   use the process-list heuristic. `Step-Units.ps1` (`Get-StepLengthUnit`) is another
+   shared module.
+9. Removed on 2026-11-13: `Export-PartAssets.ps1`, the earlier exporter (one STEP
+   file per distinct part, `native-snapshot.json`, `scene.json`, AP214 by default),
+   and `Snapshot-Validation.ps1`, the check of its package. A project keeps the
+   records of an export made with it under `references/receipts/`.
 10. `Measure-PartBodies.ps1 -Part IPT[,IPT] -WorkspaceRoot MIRROR -OutputDirectory NEW`
     records per-body volumes with explicit attempted/succeeded/failed coverage,
     `MassProperties.Volume` at every accuracy, pairwise overlap coverage with an
@@ -240,8 +208,7 @@ Measurement and native authoring (added for the command-line pilot):
 11. `Invoke-NativeParameterPilot.ps1 -Parameters parameters.json -WorkspaceRoot NEW -OutputDirectory NEW [-LinuxStep FILE]`
     authors a native part from named user parameters, saves, reopens, edits and
     restores a parameter, exports STEP and cross-checks an external STEP. Fixture only.
-12. Offline tests (no Inventor): `Test-ExportReceipt.ps1` (11 receipt provenance
-    cases), `Test-InventorSession.ps1` (39 mock cases: unproven or
+12. Offline tests (no Inventor): `Test-InventorSession.ps1` (39 mock cases: unproven or
     pre-existing owner never mutated, start failure after proven ownership quits the
     owned instance, activation that throws before or AFTER changing the active
     project restores the previous project first and removes only the added entry,
@@ -259,11 +226,7 @@ Measurement and native authoring (added for the command-line pilot):
     box is recorded and left alone, the window scan is scoped to one pid),
     `Test-StepLengthUnit.ps1` (10 STEP text
     fixtures: mm, cm, metre, inch, unknown, missing, mixed, unresolved, two length
-    units, literal-dollar regex), `Test-SnapshotOutputs.ps1 -SelfTest` (12 manifest
-    cases incl. scalar, truncated, duplicate, missing, count mismatch, claimed stock,
-    a parent cycle and a self-parented group, both with their hanging occurrences)
-    and `-Directory DIR -ExpectParts N -ExpectOccurrences M -VerifyHashes` on a real
-    run, `Test-ScriptHygiene.ps1` (AST: parse errors, variables that differ from a
+    units, literal-dollar regex), `Test-ScriptHygiene.ps1` (AST: parse errors, variables that differ from a
     parameter only by case, functions shadowed by built-ins, one variable spelled
     with different casing in the same scope; every run first proves these checks on
     nine built-in snippets and fails if they cannot find their own target),
@@ -287,18 +250,10 @@ Measurement and native authoring (added for the command-line pilot):
     or in that `finally`), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
-13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
-    runs the exporter for real and judges each case mechanically from the exit code
-    (captured immediately), the receipt, the asset count, the output validation and
-    the Inventor process list: non-empty output directory and strict mode without
-    records (refused before Inventor), tampered intermediate hash (exit 1, `FAILED`,
-    zero assets, shutdown observed), positive strict run, unbound fixture, and a
-    pre-registered project entry that must survive the run. Ownership of that entry
-    is tracked from before the setup instance runs: cleanup, in `finally`, removes
-    only an entry or `.ipj` the setup created, an entry present beforehand must still
-    be registered afterwards, and the setup and cleanup shutdown outcomes are part of
-    the verdict. `-FixtureOnly` skips the strict Inventor cases. Writes
-    `guard-checks.json` and one log per case.
+13. Removed on 2026-11-13: `Invoke-ExporterGuardChecks.ps1`, the qualification of
+    the earlier exporter in Inventor. With it and items 4 and 9 two of the offline
+    suites went, `Test-ExportReceipt.ps1` and `Test-SnapshotOutputs.ps1`; eight are
+    left.
 14. `Publish-StepToVault.ps1 -Plan plans/UUID.json -OutputDirectory NEW -DryRun`
     re-verifies the payload named by a plan from `vault-cad plan-publish`, resolves
     the eleven SDK members of the add route by reflection against the installed Vault
@@ -381,7 +336,7 @@ Measurement and native authoring (added for the command-line pilot):
     translator options reported and read back. A variant's `open` says how the document is
     reached: `invisible` (opened by itself without a view), `visible` (with a view, whose
     camera a `camera` entry can rotate, zoom or set) or `referenced` (taken from the
-    invisibly opened, hash-bound assembly, exactly as `Export-PartAssets.ps1` reaches a
+    invisibly opened, hash-bound assembly, exactly as the exporter reaches a
     part; the receipt then holds a census of views). Documents are never saved.
 21. `Compare-StepExports.ps1 -Path A.step,B.step[,...] [-Label ...] [-OutputPath NEW.json] [-ListDifferingEntities] [-AllowDifferences]`
     says whether several exports of one part have identical data sections, which header
@@ -421,8 +376,7 @@ Measurement and native authoring (added for the command-line pilot):
     `occurrences.json` (every occurrence in the root's context: its placement in its parent
     and in the root, whether it differs from its definition, its flags) and, last and only
     when every check passed, `package.json`. It is the exporter: a root assembly is
-    exported for a project with this script. `Export-PartAssets.ps1` writes the earlier
-    format; its output and its default protocol are unchanged. Every file
+    exported for a project with this script. Every file
     but `package.json` is the same bytes when the same versions are exported again, and no
     file carries a workstation path or a host or account name (checked before
     `package.json` is written). The translator's own files, the run's receipt and the logs
@@ -472,8 +426,7 @@ Measurement and native authoring (added for the command-line pilot):
     of names and its placement, and for every part document its bodies and its volume at
     the default accuracy and at `k_VeryHigh`. With `-Convert` the file is read a second
     time so that Inventor writes native documents into WORK, a disposable copy, and the
-    files that appeared are listed. No Vault access. `Inspect-StepInInventor.ps1` (item 3)
-    is the older re-read of a single-file export and is unchanged.
+    files that appeared are listed. No Vault access.
 
 REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
@@ -491,6 +444,8 @@ after the six remarks of the Linux review were corrected, are in
 `.../2026-11-13-windows-new-layout-02/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
+(`native-snapshot.json` is a record of the earlier exporter, which is removed: nothing
+writes a new one, and a project keeps the one it has under `references/receipts/`)
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,
 `drawings.json`, `coincident-tank.json` (same-part occurrences with identical world
 placement, their native flags, parts-only totals and Vault version history) and
@@ -528,43 +483,30 @@ read. It went on 2026-11-12, when the enclosure, the one project in it, had
 been converted. The commands refuse such a lock and say why; the last commit
 that reads it is a66ca5a.
 
-## Convert an exported snapshot into one directory per Vault file
+## Read an exporter's package into a project
 
-```sh
-python3 run.py import-snapshot /path/to/the/earlier/package \
-    --into /path/to/a/new/directory --run legacy-snapshot-991056 \
-    [--inventory dependency-inventory.json] [--acquisition acquisition.json]
-```
-
-`import-snapshot` reads the package `windows/Export-PartAssets.ps1` wrote
-(`native-snapshot.json`, `scene.json`, `export-receipt.json`, `assets/`),
-verifies it against its receipt, and writes into a new directory:
-`references/parts/<key>/` and `references/assemblies/<key>/` with a
-`source.json` each, a `part.step` copied byte for byte, an `assembly.json`
-listing each assembly's direct children at their definition placements with
-the placements of flexible instances as overrides, the exporter's records
-unchanged under `references/receipts/<run>/`, and `vault-lock.json` as the
-index of those directories. The dependency inventory and acquisition record of
-the same acquisition, when given, supply the Vault identity of the
-sub-assembly documents and the version number, revision, lifecycle state and
-check-in date of every file.
-
-It refuses a package that does not match its receipt, a destination that is
-not empty, suppressed or mirrored occurrences, and instances whose definitions
-disagree. The layout it writes is specified and validated in `mechanical-cad`
+`import-snapshot` reads the package `windows/Export-Package.ps1` writes into
+the layout with one directory per Vault file: `references/parts/<key>/` and
+`references/assemblies/<key>/` with a `source.json` each, a `part.step`
+copied byte for byte, an `assembly.json` listing each assembly's direct
+children at their definition placements with the placements of flexible
+instances as overrides, the exporter's records unchanged under
+`references/receipts/<run>/`, and `vault-lock.json` as the index of those
+directories. The layout is specified and validated in `mechanical-cad`
 (`docs/layout-specification.md`, `python3 -m mechanical_cad validate`); Peter
-decided its choices on 2026-11-11. For this package the command writes into a
-new directory and does not touch a project's existing `references/` or lock.
-Tests: `tests/test_layout_import.py`.
+decided its choices on 2026-11-11.
 
-### The package with `package.json`: into a project, keeping its keys
+Until 2026-11-13 the command also read the package of the earlier exporter
+(`native-snapshot.json`, `scene.json`, `export-receipt.json`, `assets/`) into
+a new directory. That reading is removed with the exporter; such a package is
+refused with the reason. `tests/test_layout_import.py` has the test of that
+and of the helpers both readers shared.
 
 ```sh
 python3 run.py import-snapshot /path/to/package --into ../free-standing-tank-enclosure --run RUN
 ```
 
-Provisional. When the package directory holds a `package.json`, the command
-reads the package specified in `mechanical-cad/docs/exporter-package.md`
+Provisional. The command reads the package specified in `mechanical-cad/docs/exporter-package.md`
 (draft 3): one directory per Vault file and model state under `files/`, with
 `source.json` and `part.step` or `assembly.json`, every file identified by
 master id and model state and none by a key, and `occurrences.json` beside

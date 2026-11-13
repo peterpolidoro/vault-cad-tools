@@ -14,7 +14,8 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 Demonstrated, each once, on the enclosure pilot:
 
 - Vault to repository: `Get-VaultDependencySnapshot.ps1` freezes and downloads
-  the exact versions of one root assembly; `Export-PartAssets.ps1` exports one
+  the exact versions of one root assembly; `Export-PartAssets.ps1` (the
+  earlier exporter, removed on 2026-11-13) exported one
   STEP per part document plus the instance, placement and BOM records, with
   every opened document bound to its acquired hash; `import-step`, since
   removed, recorded provenance in the project's `vault-lock.json`. Result: 37 parts, 155
@@ -30,9 +31,10 @@ Demonstrated, each once, on the enclosure pilot:
 
 Added on 2026-11-10, provisional: `vault-cad import-snapshot`
 (`src/vault_cad_tools/layout_import.py`), the first form of the import command
-of the layout proposal. It reads the package `Export-PartAssets.ps1` writes
-today and writes `references/` (one directory per Vault file) and the derived
-lock into a new directory. Run as a dry run on the enclosure, its output
+of the layout proposal. It read the package of the earlier exporter,
+`Export-PartAssets.ps1`, and wrote `references/` (one directory per Vault
+file) and the derived lock into a new directory; that reading was removed
+with the exporter on 2026-11-13. Run as a dry run on the enclosure, its output
 passes the proposal's acceptance test (37 parts, 7 assemblies, 44 overrides;
 the scene flattened from it equals the exporter's). Nothing was written into
 the enclosure's tracked tree.
@@ -105,9 +107,7 @@ changes; no translator option leaves out the hidden bodies or the saved view;
 of the 37 parts one has an `INVISIBILITY`, in the understood form. Linux
 compared the 37 AP242 files with the tracked AP214 parts by measured geometry
 that day: 37 of 37 the same (`mechanical-cad/docs/layout-proposal.md`,
-"Windows tests of 2026-11-11"). `Export-PartAssets.ps1` is untouched: its
-default is still AP214, it does not normalise headers, and it writes the
-earlier package.
+"Windows tests of 2026-11-11").
 
 Added on 2026-11-12 by the Windows side (record in `windows/HISTORY.md`; not
 yet reviewed on Linux):
@@ -164,10 +164,22 @@ tests showed of the shared helpers is kept (portable paths, symlinks in a
 managed path, JSON with a byte-order mark, the operation lock), and a test
 now shows that a failure to write the index leaves no `vault.json` behind.
 102 tests pass; `status` on the enclosure's `main` is byte for byte what it
-was. The last commit that reads the earlier lock is a66ca5a. Still there:
-`layout_import.py`, which reads the package `Export-PartAssets.ps1` writes,
-and on Windows the scripts of that package and of the single-file export;
-the Windows agent has been asked for a list of them, with no deletion.
+was. The last commit that reads the earlier lock is a66ca5a.
+
+Removed on 2026-11-13, at Peter's word after he saw the Windows agent's list:
+the eight Windows scripts that served only the earlier package or the export
+of single files (`Export-PartAssets.ps1`, `Snapshot-Validation.ps1`,
+`Test-SnapshotOutputs.ps1`, `Invoke-ExporterGuardChecks.ps1`,
+`Export-InventorStep.ps1`, `New-ExportReceipt.ps1`, `Test-ExportReceipt.ps1`,
+`Inspect-StepInInventor.ps1`), and the reading of the earlier package in
+`import-snapshot`, which now refuses such a package with the reason.
+`layout_import.py` keeps what the two readers shared. 14a235a is the last
+commit that has them. 95 tests pass. `bom-audit-summary --snapshot` still
+takes a `native-snapshot.json`: nothing writes a new one, and the enclosure
+keeps the one of its earlier export under `references/receipts/`. Not done,
+because no PowerShell runs on Linux: the eight remaining offline suites run
+after the removal, and comments in four scripts that still name a removed
+one (`windows/README.md`, last section). That is for the Windows agent.
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -182,18 +194,17 @@ re-exported into it. The proposal (`mechanical-cad/docs/layout-proposal.md`, not
 accepted) is one directory per Vault file, for parts and for assemblies. If it
 is accepted, this repository changes as follows:
 
-- `windows/Export-PartAssets.ps1`: every file identified by its Vault master id
+- The exporter: every file identified by its Vault master id
   and model state instead of a name that hashes the Vault path; one child list
   per assembly document in place of one flattened `scene.json`; no absolute
   workstation paths; a normalised STEP header (fixed name and timestamp, empty
-  author). The exporter never sees a repository key.
+  author). The exporter never sees a repository key. `Export-Package.ps1`
+  does all of this since 2026-11-12.
 - The import command: assigns a readable key to each new master id and is the
   only writer of the project's `references/` tree apart from the facts command
   of `mechanical-cad`; keeps the exporter's run-level records unchanged under
-  `references/receipts/`. `import-snapshot` does this for the present package
-  format, into an empty directory only, and since 2026-11-11 for the package
-  keyed by master id, into a project that already has keys. No exporter
-  writes that package yet.
+  `references/receipts/`. `import-snapshot` does this for the package keyed
+  by master id, into a new directory or a project that already has keys.
 - The lock: a derived index of the directories (design document 2.3 is
   replaced); the validator recomputes it.
 - The planned `metadata.json` (design 4.2, 4.3): replaced by a `source.json`
@@ -321,18 +332,9 @@ Directives:
    with every one of its 171 occurrences where the package puts it (what an
    Inventor user sees of names and documents is in `mechanical-cad`'s plan),
    and one new script, `Invoke-StepImportProbe.ps1`, did that read.
-   The list, for Peter to see; nothing of it is removed:
-   `Export-PartAssets.ps1`, `Snapshot-Validation.ps1`,
-   `Test-SnapshotOutputs.ps1`, `Invoke-ExporterGuardChecks.ps1`,
-   `Export-InventorStep.ps1`, `New-ExportReceipt.ps1`,
-   `Test-ExportReceipt.ps1`, `Inspect-StepInInventor.ps1` (two of them are
-   suites of the ten). To weigh before they go: `bom-audit --snapshot` takes
-   `native-snapshot.json`, which only `Export-PartAssets.ps1` writes (the
-   enclosure keeps the one of the earlier export under
-   `references/receipts/`), and `docs/exchange-protocol.md` and
-   `docs/native-checkin-adapter-design.md` name two of the scripts. When
-   Peter has seen it: remove `layout_import.py`'s reading of the earlier
-   package and the Windows scripts on the list.
+   Its list of eight scripts that served only the earlier formats went to
+   Peter, who had them removed that day with the reading of the earlier
+   package (see the current state).
    Answered to Windows that day, for its next change of the exporter: a
    read of a document's `Dirty` flag that fails stops the run, as the read
    of the length unit does again; the exporter's receipt becomes
@@ -350,8 +352,7 @@ Directives:
   `AW2725Q-nominal-envelope.step`. For Peter to settle before the next
   publication, with the wrapper-part naming question of the design document.
 - The index has two derivations, one here (`import-snapshot` for the
-  components, in `layout_import.py` for the earlier package and in
-  `package_import.derive_components` for the new one, and
+  components, in `package_import.derive_components`, and
   `Project.derive_publications` for the publications) and one in
   `mechanical-cad` (`derive_lock`, which the validator holds the file to). They
   agree on the fixture of the tests and on the converted enclosure. Nothing
@@ -362,8 +363,7 @@ Directives:
 - `prepare-publish` checks that the part is committed and is the file its
   receipt describes. It does not evaluate the part's `checks.json`; whoever
   prepares a publication runs `mechanical_cad validate` and `check` first.
-- Five scripts do not start Inventor through `Inventor-Session.ps1`:
-  `Export-InventorStep.ps1`, `Inspect-StepInInventor.ps1`,
+- Three scripts do not start Inventor through `Inventor-Session.ps1`:
   `Compare-NativeAndStepAssembly.ps1`, `Invoke-NativeAuthoringPilot.ps1`,
   `Invoke-NativeParameterPilot.ps1`. Keep them to the single-user interactive
   session they were qualified in until they are moved.
@@ -377,9 +377,9 @@ Directives:
   thread features, patterns of holes other than a mirror.
 - Why the STEP translator sometimes names a second schema in `FILE_SCHEMA` is
   not known; it has only been seen in runs of `Export-Package.ps1`.
-- Seven older scripts start their owned Inventor instance a few statements
+- Six older scripts start their owned Inventor instance a few statements
   before the `try` whose `finally` stops it, and write their receipt outside
-  a `try`: `Export-PartAssets.ps1`, `Invoke-StepExportProbe.ps1`,
+  a `try`: `Invoke-StepExportProbe.ps1`,
   `Get-PartFeatureDump.ps1`, `Audit-NativeBom.ps1`, `Measure-PartBodies.ps1`,
   `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`. A
   failure of their first log line or of the watchdog's start would leave the
@@ -427,8 +427,7 @@ authentication; the PowerShell helper supplies the token. One file has been
 written to Vault, by the gated executor. Automatic export job submission and LFS
 payload resolution are not implemented. Search is deliberately one page with the
 returned cursor preserved. ByRef COM calls (`CreateGeometryProxy`, translator
-`Open`) are made through the compiled C# helper; `Inspect-StepInInventor.ps1`
-still falls back to `Documents.Open` defaults. Export metadata counts come from
+`Open`) are made through the compiled C# helper. Export metadata counts come from
 an explicit occurrence-tree walk; `AllLeafOccurrences` is not enumerable from
 PowerShell (its count reads through `InvokeMember`). `SurfaceBody.Volume()` is not callable from PowerShell; volumes come
 from `MassProperties.Volume`. All Windows automation ran in an interactive
