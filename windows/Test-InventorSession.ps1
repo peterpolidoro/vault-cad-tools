@@ -263,6 +263,30 @@ Case "S31 run status: FAILED stays FAILED whatever the watchdog did" {
     $d = [pscustomobject]@{ Dismissed = 3; Left = 0; Events = @(1, 2, 3) }
     Assert ((Resolve-RunStatus -Status "FAILED" -Dialogs $d) -eq "FAILED") "FAILED was altered"
 }
+
+# ---- the collections on which the binding of the inputs rests ----
+Case "S32 a collection a guard rests on: its items, or a refusal of nothing, of something that does not count and of a count that is not met" {
+    Assert (@(Get-RequiredCollectionItems "three" @(1, 2, 3)).Count -eq 3 -and @(Get-RequiredCollectionItems "none" @()).Count -eq 0) "the items were not returned"
+    $refused = 0
+    foreach ($bad in @($null, [pscustomobject]@{ Count = 3 }, [pscustomobject]@{ Count = "many" })) { try { [void]@(Get-RequiredCollectionItems "documents" $bad) } catch { if ($_.Exception.Message -match "documents") { $refused++ } } }
+    Assert ($refused -eq 3) "$refused of 3 collections that are missing or do not give what they count were refused"
+}
+Case "S33 binding: a root document without AllReferencedDocuments, or a document without ReferencedFileDescriptors, is refused and not bound as 'no documents'" {
+    $records = [pscustomobject]@{ files = @() }
+    $file = [pscustomobject]@{ ReferencedFileDescriptors = @() }
+    $messages = @()
+    foreach ($document in @(
+            [pscustomobject]@{ FullFileName = "C:\mirror\root.iam"; AllReferencedDocuments = $null; File = $file },
+            [pscustomobject]@{ FullFileName = "C:\mirror\root.iam"; AllReferencedDocuments = @(); File = [pscustomobject]@{ ReferencedFileDescriptors = $null } },
+            [pscustomobject]@{ FullFileName = "C:\mirror\root.iam"; AllReferencedDocuments = @(); File = $null },
+            [pscustomobject]@{ FullFileName = "C:\mirror\root.iam"; AllReferencedDocuments = @(); File = $file })) {
+        try { [void](Confirm-AcquiredInputs $document $records $records); $messages += "bound" } catch { $messages += $_.Exception.Message }
+    }
+    Assert ($messages[0] -match "AllReferencedDocuments of the root document" -and $messages[0] -match "missing") "no AllReferencedDocuments: $($messages[0])"
+    Assert ($messages[1] -match "ReferencedFileDescriptors of " -and $messages[1] -match "missing") "no ReferencedFileDescriptors: $($messages[1])"
+    Assert ($messages[2] -match "ReferencedFileDescriptors of " -and $messages[2] -match "missing") "no File: $($messages[2])"
+    Assert ($messages[3] -ne "bound" -and $messages[3] -notmatch "Required collection") "with both collections the binding has to go on to the acquisition record: $($messages[3])"
+}
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
 Write-Output "$passed passed, $failed failed"
 if ($env:VAULT_CAD_TEST_JSON) { $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:VAULT_CAD_TEST_JSON -Encoding UTF8 }

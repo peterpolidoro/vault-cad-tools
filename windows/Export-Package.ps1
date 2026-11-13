@@ -9,7 +9,9 @@ the context of the root, and package.json. Read-only: nothing is saved and Vault
         -Acquisition acquisition.json -Inventory dependency-inventory.json `
         -OutputDirectory PACKAGE -WorkDirectory WORK
 
-A mode of its own beside Export-PartAssets.ps1, whose output, default protocol and tests are unchanged.
+THIS IS THE EXPORTER: a root assembly is exported for a project with this script (AP242, normalised headers,
+one directory per Vault file), and "import-snapshot" reads its package into the project. Export-PartAssets.ps1
+writes the earlier format; it is kept for now, is not run for new work and gets no further corrections.
 Both directories must not exist or must be empty, and neither may lie inside the other.
 
   PACKAGE/package.json                    what was exported and the hash of every other file; written last, and
@@ -54,7 +56,11 @@ collection must exist before it is counted or walked; what the API does not give
 Inventor is started inside the try whose finally stops it, and nothing after that runs outside a try: a receipt
 is always written, with the number of times each guard was evaluated, and whatever fails after package.json was
 written removes it. Only a run that ends "complete" leaves package.json: a run in which the watchdog dismissed a
-dialog ends "complete_with_dialogs" and its package is withheld. Exit code 1 unless a complete package was left.
+dialog ends "complete_with_dialogs" and its package is withheld. That is decided before package.json is written,
+so such a run writes none. What the receipt says about package.json is asked of the file system after the last
+attempt to remove it; a package.json that could not be removed fails the run. A value Inventor returns as nothing
+is null; a read of a document's length unit that fails stops the run. Exit code 1 unless a complete package was
+left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$NativeAssembly,
@@ -288,7 +294,7 @@ $guards = New-PackageGuardLedger @("inputs_bound_to_the_acquisition", "document_
 $session = $null; $app = $null; $project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $completion = $null
 $inputs = @(); $documents = [ordered]@{}; $rootRecord = $null; $script:context = @(); $translatorOptions = $null; $rawOutputs = [ordered]@{}; $headerNames = @(); $partTimings = @(); $timings = [ordered]@{}
 $retried = @(); $packageWritten = $false; $mirrorBefore = $null; $mirror = $null; $status = "FAILED"; $withheld = $null
-$changed = @(); $placed = @(); $notExported = @(); $forbidden = @(); $packageComplete = $false
+$changed = @(); $placed = @(); $notExported = @(); $forbidden = @(); $packageComplete = $false; $manifestPresent = $null; $outcome = $null; $prospective = $null; $completion = $null
 # Inventor is started INSIDE the try whose finally stops it: nothing between the start and the try can fail and
 # leave the instance running.
 try {
@@ -313,7 +319,11 @@ try {
         Log "Bound $($inputs.Count) opened documents to acquisition/inventory ($(@($inputs | Where-Object { $_.kind -eq 'assembly' }).Count) assemblies, $(@($inputs | Where-Object { $_.kind -eq 'part' }).Count) parts)"
         $timings.open_and_bind_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
         # ---- the documents: identity, model state, no view ----
-        foreach ($doc in @($asm) + @($asm.AllReferencedDocuments)) {
+        # the documents the root references are a collection that must exist and give as many items as it counts
+        $referencedDocuments = $asm.AllReferencedDocuments
+        $openedDocuments = @($asm) + @(Get-RequiredItems "documents the root references" $referencedDocuments)
+        Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
+        foreach ($doc in $openedDocuments) {
             $file = Get-RequiredValue "file name of an opened document" { $doc.FullFileName } -Kind string; $lower = $file.ToLowerInvariant()
             if ($documents.Contains($lower)) { continue }
             $what = Relative $file
@@ -334,7 +344,8 @@ try {
             $vault = New-PackageVaultBlock -VaultId $vaultId -AcquisitionRecord $acquired -InventoryRecord $listed
             $folder = Get-PackageDirectoryName $vault.master_id $state
             foreach ($other in $documents.Values) { if ($other.Folder -ieq $folder) { throw "Refused: '$what' and '$($other.What)' would share the directory $folder" } }
-            $unitCode = Get-OptionalValue { $doc.UnitsOfMeasure.LengthUnits } "int"
+            # null is for a unit Inventor returns as nothing; a read that fails stops the run, as it always did
+            $unitCode = Get-GivenValue "length unit of '$what'" { $doc.UnitsOfMeasure.LengthUnits } "int"
             $documents[$lower] = [pscustomobject]@{ Document = $doc; What = $what; Kind = $kind; Name = [IO.Path]::GetFileNameWithoutExtension($file); ModelState = $state; Vault = $vault; Folder = $folder
                 Placed = 0; Children = @(); ChildByName = @{}; LengthUnit = $(if ($null -ne $unitCode) { $lengthUnitNames[$unitCode] } else { $null }); DisplayName = (Get-OptionalValue { $doc.DisplayName } "string") }
         }
@@ -585,7 +596,7 @@ try {
     # each step on its own: one that fails must not keep the next from running
     if ($session) {
         try { $shutdown = Stop-IsolatedInventor $session $project } catch { $errors += "the shutdown of the owned Inventor instance threw: $($_.Exception.Message)" }
-        if (-not $shutdown -or -not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $(if ($shutdown) { "$($shutdown.Observed | ConvertTo-Json -Compress) notes=$($shutdown.Notes -join ' | ')" } else { 'no result' })" }
+        try { if (-not $shutdown -or -not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $(if ($shutdown) { "$($shutdown.Observed | ConvertTo-Json -Compress) notes=$($shutdown.Notes -join ' | ')" } else { 'no result' })" } } catch { $errors += "the shutdown could not be described: $($_.Exception.Message)" }
         try { Log "Shutdown: pid $($session.Pid) exited=$(if ($shutdown) { $shutdown.Exited }) succeeded=$(if ($shutdown) { $shutdown.Succeeded })" } catch { }
     }
     if ($watchdog) {
@@ -621,27 +632,33 @@ try {
             acquisition = [ordered]@{ captured_at = [string]$invJson.captured_at; acquired_at = [string]$acqJson.acquired_at; method = [string]$acqJson.method }
             counts = $null; not_exported = $notExported; translator_outputs = $rawOutputs; files = $null }
         $expectParts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; $expectAssemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; $expectOccurrences = @($script:context).Count
-        $completion = Complete-Package -Directory $OutputDirectory -Manifest $manifest -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance -ExpectParts $expectParts -ExpectAssemblies $expectAssemblies -ExpectOccurrences $expectOccurrences
+        # The status is known here, before package.json is written: the watchdog has been stopped. A run in which it
+        # dismissed a dialog writes no package.json at all, so that a run killed in between cannot leave one behind.
+        $prospective = Resolve-RunStatus -Status "complete" -Dialogs $dialogs
+        if (-not (Test-PackageRunStatus $prospective)) { $withheld = "the run ends '$prospective': the watchdog dismissed a dialog, and what it acknowledged is only in this receipt, which stays on the workstation; package.json is not written" }
+        $completion = Complete-Package -Directory $OutputDirectory -Manifest $manifest -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance -ExpectParts $expectParts -ExpectAssemblies $expectAssemblies -ExpectOccurrences $expectOccurrences -WithholdBecause "$withheld"
         if ($completion.ok) {
-            Add-PackageGuardCheck $guards "package_checked_before_package_json"; Add-PackageGuardCheck $guards "package_checked_with_package_json"
-            $status = Resolve-RunStatus -Status "complete" -Dialogs $dialogs
-            if (Test-PackageRunStatus $status) { Add-PackageGuardCheck $guards "run_status_allows_a_complete_package" }
-            else { $withheld = "the run ended '$status': the watchdog dismissed a dialog, and what it acknowledged is only in this receipt, which stays on the workstation; package.json is withheld"; $warnings += $withheld }
+            Add-PackageGuardCheck $guards "package_checked_before_package_json"
+            $status = $prospective
+            if ($completion.manifest_written) { Add-PackageGuardCheck $guards "package_checked_with_package_json"; Add-PackageGuardCheck $guards "run_status_allows_a_complete_package" } else { $warnings += $withheld }
         } else {
             if ($completion.stage -ne "before package.json") { Add-PackageGuardCheck $guards "package_checked_before_package_json" }
             $errors += "the package failed its check ($($completion.stage)): $(@($completion.failures) -join '; ')"
         }
     }
 } catch { $errors += "after Inventor was closed: $($_.Exception.Message)"; $status = "FAILED" }
-# only a run that ended "complete" leaves package.json
+# Only a run that ended "complete" leaves package.json. What the receipt says about the file is asked of the file
+# system after the last attempt to remove it: a package.json that is still there fails the run and is reported.
+try { if (-not (Test-PackageRunStatus $status)) { [void](Remove-PackageManifest $OutputDirectory) } } catch { $errors += "package.json could not be taken away: $($_.Exception.Message)" }
 try {
-    if (-not (Test-PackageRunStatus $status)) { if (-not (Remove-PackageManifest $OutputDirectory)) { $errors += "package.json could not be taken away" } }
-    $packageComplete = (Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json"))
-} catch { $errors += "package.json could not be taken away: $($_.Exception.Message)"; $status = "FAILED" }
+    $outcome = Get-PackageOutcome $OutputDirectory $status
+    $manifestPresent = $outcome.manifest_present; $packageComplete = $outcome.complete
+    if ($outcome.problem) { $errors += $outcome.problem; if ($status -ceq "complete") { $status = "FAILED" } }
+} catch { $errors += "the output directory could not be asked for package.json: $($_.Exception.Message)"; $status = "FAILED"; $packageComplete = $false }
 # the receipt: always written; if it cannot be written in full the run is not recorded and its package is not complete
 try {
     $receipt = [ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = $status; errors = $errors; warnings = $warnings
-        package = $OutputDirectory; package_complete = $packageComplete; package_withheld_because = $withheld; work_directory = $WorkDirectory
+        package = $OutputDirectory; package_complete = $packageComplete; package_json_present = $manifestPresent; package_withheld_because = $withheld; work_directory = $WorkDirectory
         inventor = $(if ($session) { "$($session.Version) build $($session.Build)" } else { $null }); host = $env:COMPUTERNAME; interactive_desktop = [Environment]::UserInteractive; interop_assembly = $interopPath
         session = $(if ($session) { [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids
                 shutdown = $(if ($shutdown) { [ordered]@{ succeeded = $shutdown.Succeeded; exited = $shutdown.Exited; attempted = $shutdown.Attempted; observed = $shutdown.Observed; unexpected_survivors = @($shutdown.UnexpectedSurvivors); notes = @($shutdown.Notes) } } else { $null }) } } else { $null })
@@ -664,7 +681,8 @@ try {
 } catch {
     $problem = $_.Exception.Message; $status = "FAILED"; $packageComplete = $false
     try { [void](Remove-PackageManifest $OutputDirectory) } catch { }
-    try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = (Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json")) }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
+    try { $manifestPresent = Test-Path -LiteralPath (Join-Path $OutputDirectory "package.json") } catch { $manifestPresent = $null }
+    try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = $false; package_json_present = $manifestPresent }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
     Write-Output "ERROR: the receipt could not be written in full: $problem"
 }
 try { Log "Package status: $status; package.json $(if ($packageComplete) { 'written' } else { 'not left' }) ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context)" } catch { }

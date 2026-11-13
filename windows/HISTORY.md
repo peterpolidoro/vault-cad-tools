@@ -8,6 +8,47 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — the new layout checked, a STEP file from Linux read by Inventor, six remarks corrected (2026-11-13)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-13-windows-new-layout-02/` (report `REPORT.md`, which records the
+commits it ran from) and, for the stop that came before it, `.../2026-11-12-windows-new-layout-01/`. Requested
+by `to-windows/20261112T181749Z-...` and `to-windows/20261113T144207Z-...`. No Vault access; no production
+document saved; the 45 files of the mirror unchanged.
+
+- The checkout. On 2026-11-12 `python -m mechanical_cad validate` failed on the enclosure here: Git for Windows
+  had written `build.py` of the authored part with CRLF, and its hash no longer was the recorded one. The
+  cause was in `.gitattributes` of the enclosure and of mechanical-cad, and was corrected there
+  (`* text=auto eol=lf`). After every tracked file was written again, no file is stored with LF and written
+  with CRLF, and `validate`, `assemblies`, `status` and the repeat import give what Linux gets.
+- Inventor reads a STEP file of the whole enclosure that FreeCAD built on Linux (`Invoke-StepImportProbe.ps1`,
+  new): it opens in 47 s as an assembly in mm, the translator reports `Successful`, no dialog is shown. 155
+  part occurrences, 17 sub-assembly occurrences (the file adds one level that turns the frame to +Z up), 479
+  solid bodies, 37 part documents. All 171 occurrences are where the package's `occurrences.json` puts them
+  after the frame change, within 7e-10 mm. The volume over all part occurrences is within 6e-5 of FreeCAD's at
+  `k_VeryHigh`. Inventor names an occurrence after the usage's id in the file, not after its name.
+- Converted into native documents in a work directory, as a disposable copy: 18 `.iam` and 37 `.ipt`, 31 MB,
+  74 s; the translator's report has `Successful` for 50 components and "Some Surfaces have been simplified"
+  for five parts. The copy was deleted.
+- The six remarks of the Linux review of 2026-11-12, each with an offline case:
+  1. `AllReferencedDocuments` and `ReferencedFileDescriptors` are collections that must exist and give as
+     many items as they count, in the exporter, the probe and `Confirm-AcquiredInputs` (P28, S32, S33).
+  2. What a receipt says about `package.json` is asked of the file system after the last attempt to remove
+     it; a file that could not be removed fails the run (P32).
+  3. The status is decided before `package.json` is written: a run in which the watchdog dismissed a dialog
+     writes none (P31).
+  4. Every statement of the `finally` that stops Inventor is a `try` of its own (P33).
+  5. A count is no longer asked in one step, which gives 0 for a collection that is missing (P29).
+  6. A read of a document's length unit that fails stops the run again; null is for a value Inventor returns
+     as nothing (`Get-GivenValue`, P30).
+- `Export-Package.ps1` is described as the exporter; `Export-PartAssets.ps1` writes the earlier format, is kept
+  and is not run for new work. `README.md` of this directory lists what serves only the earlier format.
+- The exporter, run once afterwards: `complete`; every file of the package but `package.json` is byte for byte
+  the file of the package that is imported into the project; imported into a fresh clone of the project it
+  changes nothing (44 unchanged).
+- Suites: hygiene over 39 scripts with a 9-case self-test, 39 session mock cases, 3 watchdog, 12 snapshot, 10
+  STEP unit, 11 receipt, 27 STEP header and entity cases, 33 package format cases, 7 Vault facts and 8 folder
+  discovery cases; 102 Python tests under Pixi.
+
 ## Result — the Linux review's findings on the package exporter corrected (2026-11-12)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-12-windows-package-findings-01/` (report `REPORT.md`, which

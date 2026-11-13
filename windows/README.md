@@ -16,6 +16,29 @@ request.
 - Where the work is going and what is next: `.agents/PLANS.md`, and the newest
   message addressed to Windows in the shared coordination directory.
 
+## Exporting a root assembly for a project
+
+`Export-Package.ps1` is the exporter. It writes the package that
+`import-snapshot` reads into a project: one directory per Vault file with
+`source.json` and `part.step` (AP242, header normalised) or `assembly.json`,
+`occurrences.json`, and `package.json`, which is written last. The package is
+specified in `mechanical-cad/docs/exporter-package.md`.
+
+```powershell
+& .\windows\Export-Package.ps1 -NativeAssembly ROOT.iam -WorkspaceRoot MIRROR `
+    -Acquisition acquisition.json -Inventory dependency-inventory.json `
+    -OutputDirectory PACKAGE -WorkDirectory WORK
+```
+
+An export of unchanged Vault versions changes nothing in a project: every file
+of the package but `package.json` is the same bytes, and `import-snapshot`
+reports every reference as unchanged.
+
+`Export-PartAssets.ps1` writes the earlier format (`assets/`, a snapshot,
+AP214 by default). It is kept for now, is not run for new work and gets no
+further corrections; none of its defaults is changed. What else serves only
+the earlier format or the earlier layout is listed at the end of this file.
+
 ## Environment
 
 ```powershell
@@ -61,8 +84,9 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   `Export-PartAssets.ps1`, `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
   `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
   `Invoke-ExporterGuardChecks.ps1`, `Invoke-StepExportProbe.ps1`,
-  `Get-PartFeatureDump.ps1`, `Invoke-AssemblyStepProbe.ps1` and
-  `Export-Package.ps1` do. `Export-InventorStep.ps1`,
+  `Get-PartFeatureDump.ps1`, `Invoke-AssemblyStepProbe.ps1`,
+  `Invoke-StepImportProbe.ps1` and `Export-Package.ps1` do.
+  `Export-InventorStep.ps1`,
   `Inspect-StepInInventor.ps1`, `Compare-NativeAndStepAssembly.ps1`,
   `Invoke-NativeAuthoringPilot.ps1` and `Invoke-NativeParameterPilot.ps1` do not
   yet: use them only in the single-user interactive session they were
@@ -70,15 +94,21 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 - A run that ends `complete_with_dialogs` had a dialog dismissed by the
   watchdog. Read the receipt's `dialogs` field before accepting it.
 - A package is complete only after a run that ended `complete`. When a run of
-  `Export-Package.ps1` ends `complete_with_dialogs`, the script takes
-  `package.json` away again and exits 1. The reason: what the watchdog
-  acknowledged is only in the run's receipt, the receipt stays on the
-  workstation, and whoever reads the package cannot see it; a package that
-  says it is complete must not depend on something its reader cannot check.
-  The other files stay where they are, without `package.json`, as after any
-  failed run. There is no switch to accept such a package: read `dialogs` in
-  the receipt, remove the cause and run again. A dialog that comes back on
-  every run is for Peter to decide.
+  `Export-Package.ps1` ends `complete_with_dialogs`, the script writes no
+  `package.json` and exits 1. The status is known before the file would be
+  written, because the watchdog has been stopped by then, so a run that is
+  killed cannot leave a `package.json` behind. The reason for the rule: what
+  the watchdog acknowledged is only in the run's receipt, the receipt stays on
+  the workstation, and whoever reads the package cannot see it; a package
+  that says it is complete must not depend on something its reader cannot
+  check. The other files stay where they are, without `package.json`, as
+  after any failed run. There is no switch to accept such a package: read
+  `dialogs` in the receipt, remove the cause and run again. A dialog that
+  comes back on every run is for Peter to decide.
+- What a receipt says about `package.json` is asked of the file system after
+  the last attempt to remove it (`Get-PackageOutcome`). A `package.json`
+  that could not be removed is reported as present and fails the run: to
+  whoever reads the directory it says "complete", whatever the receipt says.
 - Production documents are opened from the acquired mirror and never saved.
   Pilots that save anything work in a disposable copy of the mirror.
 - All automation so far ran in an interactive desktop session. Unattended
@@ -95,9 +125,9 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
 - An AP242 export carries a saved view (`CAMERA_MODEL_D3` and what it reaches).
   A document opened without a view gets a fixed default camera, so the file is
   the same in every session; a document that has a view gets that view's
-  camera, and the file changes with it. `Export-PartAssets.ps1` opens the root
-  invisibly and no document has a view. Keep it so: never export for the
-  repository from a document opened visibly.
+  camera, and the file changes with it. `Export-Package.ps1` opens the root
+  invisibly and refuses a document that has a view. Keep it so: never export
+  for the repository from a document opened visibly.
 - AP242 also writes the bodies that are hidden in the part, marked by an
   `INVISIBILITY` entity; no translator option leaves them or the saved view
   out. A solid with an internal void is a `BREP_WITH_VOIDS`, not a
@@ -132,18 +162,68 @@ Offline suites, none of which needs Inventor or Vault: `Test-ExportReceipt.ps1`,
   `{ [int]$doc.Views.Count }` reads a missing collection as "no view" and
   passes its guard. A collection is asked for as an object that must exist:
   `$null.Count` is 0 and `foreach` over `$null` runs zero times. Use
-  `Get-RequiredValue`, `Assert-RequiredObject` and `Get-RequiredCount` of
-  `Package-Format.ps1`, and `Get-OptionalValue` for what may be unknown and is
-  then null. `Test-PackageFormat.ps1` (P21) reads `Export-Package.ps1` and
-  `Invoke-AssemblyStepProbe.ps1` as syntax trees and fails when a guard query
-  or an optional read holds a cast.
+  `Get-RequiredValue`, `Assert-RequiredObject`, `Get-RequiredCount` and
+  `Get-RequiredItems` of `Package-Format.ps1`, and `Get-OptionalValue` for
+  what may be unknown and is then null. `Test-PackageFormat.ps1` (P21) reads
+  `Export-Package.ps1`, `Invoke-AssemblyStepProbe.ps1` and
+  `Invoke-StepImportProbe.ps1` as syntax trees and fails when a guard query or
+  an optional read holds a cast.
+- Never ask for a count in one step. `{ $manager.Views.Count }` gives 0 for a
+  collection that is missing, also without a cast. Hand the collection over:
+  `Get-RequiredCount` and `Get-RequiredItems` refuse a missing one, and
+  `Get-OptionalCount` returns nothing for it. `Test-PackageFormat.ps1` (P29)
+  finds a count asked in one step in the three scripts.
+- "Inventor returns nothing" and "the read failed" are two things.
+  `Get-OptionalValue` turns both into null and counts the failures; it is for
+  what is only described. `Get-GivenValue` returns null for nothing and stops
+  the run when the read fails; the exporter reads a document's length unit
+  with it, so `native.length_unit: null` never stands for a failed read.
 - Start Inventor inside the `try` whose `finally` stops it, and run nothing
   outside a `try` after it: the receipt is always written, and whatever fails
-  after `package.json` was written removes it (`Complete-Package`).
-  `Test-PackageFormat.ps1` (P22) holds the same two scripts to that structure.
-  The older scripts that start an owned instance do not have it yet (see the
-  open items in `.agents/PLANS.md`).
+  after `package.json` was written removes it (`Complete-Package`). In that
+  `finally` every statement is a `try` of its own, so that one that throws
+  cannot skip the watchdog's stop. `Test-PackageFormat.ps1` (P22, P33) holds
+  the three scripts to that structure. The older scripts that start an owned
+  instance do not have it yet (see the open items in `.agents/PLANS.md`).
+- A value that came through the pipeline is wrapped in a `PSObject`, and COM
+  answers a wrapped value with "Type mismatch" (`DISP_E_TYPEMISMATCH`): an
+  option name taken from `... | Where-Object` has to be cast to `[string]`
+  before it goes into `InvokeMember`.
+- Reading a STEP file that Inventor did not write (`Invoke-StepImportProbe.ps1`):
+  the translator's `Open` needs the C# helper of `Import-InventorInterop.ps1`.
+  In Inventor 2025 the options that make it write documents while it reads
+  are `SaveToDisk` and `EnableSaveComponentDuringLoad`; there is no
+  `SaveComponentDuringLoad`. Inventor names an occurrence after the first
+  attribute of its `NEXT_ASSEMBLY_USAGE_OCCURRENCE`, the id, and not after the
+  second, the name; it names a document after its `PRODUCT`. When it writes
+  native documents it puts them beside the STEP file, in a directory named
+  after it.
 - In PowerShell the comma binds tighter than arithmetic: write
   `@(($x * 10), ($y * 10))`, never `@($x * 10, $y * 10)`. A hashtable literal
   is case-insensitive and its dot access returns the value of a key named
   `count`; use an ordinal dictionary and `get_Count()` where either matters.
+
+## Scripts of the earlier format
+
+Kept, not run for new work, and without further corrections. Nothing here is
+deleted before Peter has seen this list.
+
+| Script | What it serves | What still calls it |
+| --- | --- | --- |
+| `Export-PartAssets.ps1` | The earlier package: `assets/`, `native-snapshot.json`, `scene.json`, `inventory-raw.json`, `export-receipt.json`; AP214 by default | `Invoke-ExporterGuardChecks.ps1` runs it. In Python `import-snapshot` still reads its package, and `bom-audit --snapshot` takes its `native-snapshot.json` |
+| `Snapshot-Validation.ps1` | The check of that package | Dot-sourced by `Export-PartAssets.ps1`, `Invoke-ExporterGuardChecks.ps1` and `Test-SnapshotOutputs.ps1` |
+| `Test-SnapshotOutputs.ps1` | The suite of that check: 12 cases, one of the ten offline suites | Nothing. `docs/exchange-protocol.md` names it |
+| `Invoke-ExporterGuardChecks.ps1` | The qualification of `Export-PartAssets.ps1` in Inventor | Nothing |
+| `Export-InventorStep.ps1` | The single-file export: one STEP file per document, a whole assembly as one file, with `<name>.export-metadata.json` | Nothing. `New-ExportReceipt.ps1` reads its metadata |
+| `New-ExportReceipt.ps1` | The receipt of the single-file export, which `import-step` read | `Test-ExportReceipt.ps1`. `docs/exchange-protocol.md` says that nothing on Linux reads the receipt |
+| `Test-ExportReceipt.ps1` | The suite of that receipt: 11 checks, one of the ten offline suites | Nothing |
+| `Inspect-StepInInventor.ps1` | The re-read of a single-file export in Inventor | Nothing. `Invoke-StepImportProbe.ps1` reads a STEP file in an owned instance and records more |
+
+Not on the list, though they date from the same weeks:
+`Get-VaultDependencySnapshot.ps1` writes the acquisition records and the
+mirror that `Export-Package.ps1` binds to. `Compare-NativeAndStepAssembly.ps1`
+was written for the single-file export but takes any STEP file of a whole
+assembly. `Publish-StepToVault.ps1` executes a plan and reads no layout. The
+pilots and probes (`Invoke-*Pilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
+`Invoke-StepExportProbe.ps1`, `Measure-PartBodies.ps1`) take their files as
+parameters and belong to no package format.

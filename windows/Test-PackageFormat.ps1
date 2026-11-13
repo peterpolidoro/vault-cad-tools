@@ -84,6 +84,8 @@ function Get-OpenManifest($model) { $model.manifest.counts = $null; $model.manif
 
 # ---- the scripts that drive Inventor, read as syntax trees (nothing is run) ----
 $commandAst = [System.Management.Automation.Language.CommandAst]
+$queryFunctions = @("Get-RequiredValue", "Get-OptionalValue", "Get-OptionalObject", "Get-GivenValue")   # their script blocks ask the API
+$inventorScripts = @("Export-Package.ps1", "Invoke-AssemblyStepProbe.ps1", "Invoke-StepImportProbe.ps1")   # read as syntax trees below
 function Get-ScriptTree([string]$Text) {
     $tokens = $null; $problems = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$problems)
@@ -94,9 +96,41 @@ function Get-CastsInGuardQueries([string]$Text) {
     # The casts inside the script blocks handed to the guard and optional-read functions, each as "line N: text".
     $found = @()
     foreach ($call in (Get-ScriptTree $Text).FindAll({ $args[0] -is $commandAst }, $true)) {
-        if (@("Get-RequiredValue", "Get-OptionalValue", "Get-OptionalObject") -notcontains $call.GetCommandName()) { continue }
+        if ($queryFunctions -notcontains $call.GetCommandName()) { continue }
         foreach ($block in @($call.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] })) {
             foreach ($cast in $block.FindAll({ $args[0] -is [System.Management.Automation.Language.ConvertExpressionAst] }, $true)) { $found += "line $($cast.Extent.StartLineNumber): $($cast.Extent.Text)" }
+        }
+    }
+    return $found   # bare: callers wrap with @(...)
+}
+function Get-CountsAskedInOneStep([string]$Text) {
+    # In the script blocks handed to the guard and optional-read functions: a Count read from something that was
+    # itself just read ({ $manager.Views.Count }, { $a.Item(1).Count }). For a collection that is missing it gives
+    # 0, not nothing. The count of a variable ({ $views.Count }) is not reported: the variable can be tested first.
+    $found = @()
+    foreach ($call in (Get-ScriptTree $Text).FindAll({ $args[0] -is $commandAst }, $true)) {
+        if ($queryFunctions -notcontains $call.GetCommandName()) { continue }
+        foreach ($block in @($call.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] })) {
+            foreach ($member in $block.FindAll({ $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and $args[0] -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+                if ($member.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or $member.Member.Value -ne "Count") { continue }
+                if ($member.Expression -is [System.Management.Automation.Language.MemberExpressionAst]) { $found += "line $($member.Extent.StartLineNumber): $($member.Extent.Text)" }
+            }
+        }
+    }
+    return $found   # bare: callers wrap with @(...)
+}
+function Get-FinallyProblems([string]$Text) {
+    # The finally of the try that owns the Inventor instance: each of its statements must be a try, or an if whose
+    # statements are all try statements. Anything else can throw and skip what follows (the watchdog's stop).
+    $tree = Get-ScriptTree $Text
+    $tryAst = [System.Management.Automation.Language.TryStatementAst]; $ifAst = [System.Management.Automation.Language.IfStatementAst]
+    $found = @()
+    foreach ($owner in $tree.FindAll({ $args[0] -is $tryAst -and $args[0].Finally -and @($args[0].Finally.FindAll({ $args[0] -is $commandAst -and $args[0].GetCommandName() -eq "Stop-IsolatedInventor" }, $true)).Count -gt 0 }, $true)) {
+        foreach ($statement in @($owner.Finally.Statements)) {
+            if ($statement -is $tryAst) { continue }
+            if ($statement -isnot $ifAst) { $found += "line $($statement.Extent.StartLineNumber): a statement outside a try in the finally"; continue }
+            $inner = @(); foreach ($clause in @($statement.Clauses)) { $inner += @($clause.Item2.Statements) }; if ($statement.ElseClause) { $inner += @($statement.ElseClause.Statements) }
+            foreach ($nested in $inner) { if ($nested -isnot $tryAst) { $found += "line $($nested.Extent.StartLineNumber): a statement outside a try in the finally" } }
         }
     }
     return $found   # bare: callers wrap with @(...)
@@ -307,10 +341,10 @@ try {
         $object = New-Object object
         Assert ([object]::ReferenceEquals((Get-OptionalObject { $object }), $object)) "an object was not returned as it is"
     }
-    Case "P21 no guard query and no optional read of the package exporter and the assembly probe holds a cast" {
+    Case "P21 no guard query and no optional read of the package exporter and the two probes holds a cast" {
         Assert (@(Get-CastsInGuardQueries 'Get-RequiredValue "views" { [int]$doc.Views.Count } -Kind int').Count -eq 1 -and @(Get-CastsInGuardQueries 'Get-OptionalValue { [double]$tap.Pitch } "double"; Get-OptionalObject { [string]$a.B }').Count -eq 2) "the check does not find a cast it must find"
         Assert (@(Get-CastsInGuardQueries 'Get-RequiredValue "views" { $views.Count } -Kind int; $n = [int]$x; Get-OptionalValue { $tap.Pitch } "double"').Count -eq 0) "the check reports a query without a cast, or a cast outside a query"
-        foreach ($scriptName in @("Export-Package.ps1", "Invoke-AssemblyStepProbe.ps1")) {
+        foreach ($scriptName in $inventorScripts) {
             $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))
             Assert ($text -match 'Get-RequiredValue ') "$scriptName holds no guard query: the check has nothing to look at"
             $casts = @(Get-CastsInGuardQueries $text)
@@ -318,12 +352,12 @@ try {
         }
     }
     # ---- findings 5 and 2: the instance is owned by a try, and nothing after it runs unprotected ----
-    Case "P22 the package exporter and the assembly probe start Inventor inside the try whose finally stops it, and run nothing outside a try afterwards" {
+    Case "P22 the package exporter and the two probes start Inventor inside the try whose finally stops it, and run nothing outside a try afterwards" {
         Assert ((@(Get-SessionStructureProblems '$s = Start-IsolatedInventor; try { Use $s } finally { Stop-IsolatedInventor $s }') -join ';') -match 'not inside a try whose finally calls Stop-IsolatedInventor') "an instance started before its try was not found"
         Assert ((@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; Write-Receipt $s') -join ';') -match 'a statement outside a try after') "a receipt written outside a try was not found"
         Assert ((@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; $file = Join-Path $a $b; try { Write-Receipt } catch { }') -join ';') -match 'a statement outside a try after') "an assignment that calls a command outside a try was not found"
         Assert (@(Get-SessionStructureProblems 'try { $s = Start-IsolatedInventor } finally { Stop-IsolatedInventor $s }; $status = "FAILED"; try { Write-Receipt } catch { }; if ($status -ne "complete") { exit 1 }').Count -eq 0) "a script with the right structure was reported"
-        foreach ($scriptName in @("Export-Package.ps1", "Invoke-AssemblyStepProbe.ps1")) {
+        foreach ($scriptName in $inventorScripts) {
             $problems = @(Get-SessionStructureProblems ([IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))))
             Assert ($problems.Count -eq 0) "$scriptName`: $($problems -join '; ')"
         }
@@ -387,6 +421,75 @@ try {
         $directory = Write-Model (New-Model) "withheld"
         Assert ((Remove-PackageManifest $directory) -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json")) -and (Remove-PackageManifest $directory)) "package.json was not taken away"
         Assert ((@((Test-PackageOutputs -Directory $directory).failures) -join ';') -match 'package.json is missing') "a package without package.json passed"
+    }
+    # ---- the remarks of the Linux review of 2026-11-12 on the corrections ----
+    Case "P28 the items of a collection a guard rests on: all of them, or a refusal of nothing and of a collection that counts more than it gives" {
+        Assert (@(Get-RequiredItems "three" @(1, 2, 3)).Count -eq 3 -and @(Get-RequiredItems "none" @()).Count -eq 0 -and @(Get-RequiredItems "one" @("a"))[0] -ceq "a") "the items were not returned"
+        Assert (Throws { Get-RequiredItems "documents the root references" $null } "documents the root references") "a missing collection was walked as an empty one"
+        Assert (Throws { Get-RequiredItems "documents the root references" ([pscustomobject]@{ Count = 3 }) } "counts 3 and gave 1") "a collection that counts more than it gives passed"
+        $walked = 0; foreach ($item in $null) { $walked++ }
+        Assert ($walked -eq 0 -and @($null).Count -eq 1) "PowerShell no longer walks nothing zero times: the reason for this case is gone"
+    }
+    Case "P29 the count of a collection the API may not give is nothing when there is no collection; a count asked in one step is found in the scripts" {
+        $holder = [pscustomobject]@{ Views = $null; Bodies = @(1, 2) }
+        Assert ($null -eq (Get-OptionalCount $holder.Views) -and (Get-OptionalCount $holder.Bodies) -eq 2 -and (Get-OptionalCount @()) -eq 0) "the count is wrong"
+        Assert ((Get-OptionalValue { $holder.Views.Count } "int") -eq 0) "PowerShell no longer counts nothing as 0: the reason for this case is gone"
+        Assert (@(Get-CountsAskedInOneStep 'Get-OptionalValue { $manager.DesignViewRepresentations.Count } "int"; Get-RequiredValue "views" { $doc.Views.Count } -Kind int; Get-GivenValue "n" { $a.Item(1).Count } "int"').Count -eq 3) "the check does not find a count asked in one step"
+        Assert (@(Get-CountsAskedInOneStep 'Get-OptionalValue { $leaves.Count } "int"; Get-RequiredValue "n" { $Collection.Count } -Kind int; $n = $a.b.Count').Count -eq 0) "the check reports the count of a variable, or a count outside a query"
+        foreach ($scriptName in $inventorScripts) {
+            $counts = @(Get-CountsAskedInOneStep ([IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))))
+            Assert ($counts.Count -eq 0) "$scriptName`: $($counts -join '; ')"
+        }
+    }
+    Case "P30 a value the API may return as nothing: nothing stays nothing, and a read that fails stops the run" {
+        $given = [pscustomobject]@{ Unit = 11269; None = $null }
+        Assert ((Get-GivenValue "unit" { $given.Unit } "int") -eq 11269 -and $null -eq (Get-GivenValue "unit" { $given.None } "int")) "the value is wrong"
+        Assert (Throws { Get-GivenValue "length unit of a part" { throw "E_FAIL" } "int" } "length unit of a part.*E_FAIL") "a read that failed was taken for nothing"
+        $failuresBefore = $script:PackageOptionalReadFailures
+        Assert ($null -eq (Get-OptionalValue { throw "E_FAIL" } "int") -and $script:PackageOptionalReadFailures -eq $failuresBefore + 1) "Get-OptionalValue no longer turns a failed read into nothing: the two functions do not differ"
+        Assert (@(Get-CastsInGuardQueries 'Get-GivenValue "unit" { [int]$doc.Units } "int"').Count -eq 1) "the check for casts does not look into Get-GivenValue"
+        Assert ([IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1")) -match 'Get-GivenValue "length unit of ') "the exporter does not read the length unit of a document with Get-GivenValue"
+    }
+    Case "P31 a package that is withheld is checked and gets no package.json: the decision comes before the file" {
+        $model = New-Model; $directory = Write-Model $model "withheld-a" -NoManifest
+        $calls = @{ made = 0 }
+        $counting = { param($beforeManifest) $calls.made++; Test-PackageOutputs -Directory $directory -AllowMissingManifest:$beforeManifest }
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 2 -ExpectAssemblies 2 -ExpectOccurrences 3 -WithholdBecause "the watchdog dismissed a dialog" -Check $counting
+        Assert ($done.ok -and $done.stage -ceq "withheld" -and $done.withheld -and -not $done.manifest_written -and -not $done.manifest_present -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "a withheld package: $($done | ConvertTo-Json -Compress -Depth 4)"
+        Assert ($calls.made -eq 1) "a withheld package was checked $($calls.made) times: package.json was written and taken away again"
+        $model = New-Model; $model.sources["100_primary"]["key"] = "plate"; $directory = Write-Model $model "withheld-b" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -WithholdBecause "the watchdog dismissed a dialog"
+        Assert (-not $done.ok -and $done.stage -ceq "before package.json" -and -not $done.withheld) "a withheld package that fails its check must fail: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $model = New-Model; $directory = Write-Model $model "withheld-c" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 3 -WithholdBecause "the watchdog dismissed a dialog"
+        Assert (-not $done.ok -and ($done.failures -join ';') -match '2 parts, 3 exported') "a withheld package that does not hold what was exported must fail"
+    }
+    Case "P32 a package.json that cannot be removed is reported as present: the file system is asked after the attempt" {
+        $model = New-Model; $model.manifest.root.master_id = "100"; $directory = Write-Model $model "stuck-a" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -Remove { $false }
+        Assert (-not $done.ok -and $done.stage -ceq "with package.json" -and $done.manifest_present -and $done.manifest_written -and ($done.failures -join ';') -match 'could not be removed' -and (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "a removal that does nothing: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $model = New-Model; $model.manifest.root.master_id = "100"; $directory = Write-Model $model "stuck-b" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -Remove { throw "the file is in use" }
+        Assert (-not $done.ok -and $done.manifest_present -and ($done.failures -join ';') -match 'the file is in use') "a removal that throws: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $outcome = Get-PackageOutcome $directory "FAILED"
+        Assert ($outcome.manifest_present -and -not $outcome.complete -and $outcome.problem -match 'remove[d]? by hand') "a failed run with package.json left: $($outcome | ConvertTo-Json -Compress)"
+        $outcome = Get-PackageOutcome $directory "complete_with_dialogs"
+        Assert ($outcome.manifest_present -and -not $outcome.complete -and $outcome.problem) "a run with a dismissed dialog and package.json left: $($outcome | ConvertTo-Json -Compress)"
+        $outcome = Get-PackageOutcome $directory "complete"
+        Assert ($outcome.manifest_present -and $outcome.complete -and $null -eq $outcome.problem) "a complete run with package.json: $($outcome | ConvertTo-Json -Compress)"
+        Assert (Remove-PackageManifest $directory) "package.json was not taken away"
+        $outcome = Get-PackageOutcome $directory "complete"
+        Assert (-not $outcome.manifest_present -and -not $outcome.complete -and $outcome.problem -match 'no package.json') "a complete run without package.json: $($outcome | ConvertTo-Json -Compress)"
+        $outcome = Get-PackageOutcome $directory "FAILED"
+        Assert (-not $outcome.manifest_present -and -not $outcome.complete -and $null -eq $outcome.problem) "a failed run without package.json: $($outcome | ConvertTo-Json -Compress)"
+    }
+    Case "P33 in the finally that stops Inventor every statement is a try, or an if whose statements are: one that throws cannot skip the next" {
+        Assert ((@(Get-FinallyProblems 'try { $s = Start-IsolatedInventor } finally { if ($s) { try { Stop-IsolatedInventor $s } catch { }; $errors += "x: $($r | ConvertTo-Json)" }; if ($w) { try { Stop-DialogWatchdog $w } catch { } } }') -join ';') -match 'outside a try in the finally') "a statement outside a try in the finally was not found"
+        Assert (@(Get-FinallyProblems 'try { $s = Start-IsolatedInventor } finally { if ($s) { try { Stop-IsolatedInventor $s } catch { }; try { $errors += "x" } catch { } }; if ($w) { try { Stop-DialogWatchdog $w } catch { } } }').Count -eq 0) "a finally with the right structure was reported"
+        foreach ($scriptName in $inventorScripts) {
+            $problems = @(Get-FinallyProblems ([IO.File]::ReadAllText((Join-Path $PSScriptRoot $scriptName))))
+            Assert ($problems.Count -eq 0) "$scriptName`: $($problems -join '; ')"
+        }
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count

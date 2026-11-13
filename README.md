@@ -126,6 +126,14 @@ fails if the page count does not reach `totalResults`.
 
 ## Windows export route (verified 2026-10-21)
 
+A root assembly is exported for a project with `Export-Package.ps1` (item 26
+below), and `import-snapshot` reads its package into the project.
+`Export-PartAssets.ps1` (item 9) writes the earlier package and
+`Export-InventorStep.ps1` (item 2) one STEP file per document; they are kept
+for now, are not run for new work and get no further corrections. The scripts
+that serve only the earlier formats are listed at the end of
+`windows/README.md`; nothing of that list is removed yet.
+
 The Job Processor route is not used yet: no processor runs on the workstation,
 built-in STEP job parameters are undocumented, and the queue does not expose
 completed jobs for inspection. Instead, four PowerShell scripts under `windows/`
@@ -233,7 +241,7 @@ Measurement and native authoring (added for the command-line pilot):
     authors a native part from named user parameters, saves, reopens, edits and
     restores a parameter, exports STEP and cross-checks an external STEP. Fixture only.
 12. Offline tests (no Inventor): `Test-ExportReceipt.ps1` (11 receipt provenance
-    cases), `Test-InventorSession.ps1` (37 mock cases: unproven or
+    cases), `Test-InventorSession.ps1` (39 mock cases: unproven or
     pre-existing owner never mutated, start failure after proven ownership quits the
     owned instance, activation that throws before or AFTER changing the active
     project restores the previous project first and removes only the added entry,
@@ -243,13 +251,15 @@ Measurement and native authoring (added for the command-line pilot):
     S19-S28: a single visible OK is dismissed, Yes/No, Save/Don't Save and OK+Cancel
     are left alone, a disabled window is blocked, hidden buttons do not count, a hidden dialog is dismissed only while the application main frame is disabled by a modal loop;
     S29-S31 run status: a dismissed dialog makes `complete_with_dialogs`, record-only keeps
-    `complete`, FAILED stays),
+    `complete`, FAILED stays; S32 and S33: `Confirm-AcquiredInputs` refuses a root whose
+    referenced documents, or a document whose file descriptors, are missing as a
+    collection or give fewer items than they count),
     `Test-DialogWatchdog.ps1` (live but without Inventor: child powershell
     MessageBoxes; an OK-only box is dismissed so the child exits by itself, a Yes/No
     box is recorded and left alone, the window scan is scoped to one pid),
     `Test-StepLengthUnit.ps1` (10 STEP text
     fixtures: mm, cm, metre, inch, unknown, missing, mixed, unresolved, two length
-    units, literal-dollar regex), `Test-SnapshotOutputs.ps1 -SelfTest` (11 manifest
+    units, literal-dollar regex), `Test-SnapshotOutputs.ps1 -SelfTest` (12 manifest
     cases incl. scalar, truncated, duplicate, missing, count mismatch, claimed stock,
     a parent cycle and a self-parented group, both with their hanging occurrences)
     and `-Directory DIR -ExpectParts N -ExpectOccurrences M -VerifyHashes` on a real
@@ -261,15 +271,20 @@ Measurement and native authoring (added for the command-line pilot):
     data-section hash, the normalised header, refusals; entity counts, the form of
     an INVISIBILITY mark, entity differences, whether a difference is confined
     to the saved view, a `FILE_SCHEMA` that names two schemas),
-    `Test-PackageFormat.ps1` (27 cases: the package's JSON, directory names and
+    `Test-PackageFormat.ps1` (33 cases: the package's JSON, directory names and
     Vault block, and the check of a written package on synthetic ones: the
     manifest, `source.json`, `part.step`, `assembly.json`, `occurrences.json`,
     forbidden text, two runs compared; guard queries and optional reads, the
     guards a run evaluated, a directory before and after, the completion of a
     package with `package.json` written last and removed by whatever fails after
-    it; and `Export-Package.ps1` and `Invoke-AssemblyStepProbe.ps1` read as syntax
-    trees: no cast in a guard query, Inventor started inside the `try` whose
-    `finally` stops it, nothing outside a `try` afterwards), `Get-VaultFileFacts.ps1
+    it; a collection that must give as many items as it counts, a count that is
+    handed its collection, a value that is given or nothing, a package withheld
+    before `package.json` is written, and what the file system says about
+    `package.json` after a removal that failed; and `Export-Package.ps1`,
+    `Invoke-AssemblyStepProbe.ps1` and `Invoke-StepImportProbe.ps1` read as syntax
+    trees: no cast in a guard query, no count asked in one step, Inventor started
+    inside the `try` whose `finally` stops it, nothing outside a `try` afterwards
+    or in that `finally`), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
 13. `Invoke-ExporterGuardChecks.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -Acquisition ... -Inventory ... -OutputRoot NEW [-FixtureAssembly IAM -FixtureWorkspace DIR] [-ExpectParts 37 -ExpectOccurrences 155]`
@@ -405,8 +420,9 @@ Measurement and native authoring (added for the command-line pilot):
     header normalised) or `assembly.json` (the children as the document defines them),
     `occurrences.json` (every occurrence in the root's context: its placement in its parent
     and in the root, whether it differs from its definition, its flags) and, last and only
-    when every check passed, `package.json`. It is a mode of its own:
-    `Export-PartAssets.ps1`, its output and its default protocol are unchanged. Every file
+    when every check passed, `package.json`. It is the exporter: a root assembly is
+    exported for a project with this script. `Export-PartAssets.ps1` writes the earlier
+    format; its output and its default protocol are unchanged. Every file
     but `package.json` is the same bytes when the same versions are exported again, and no
     file carries a workstation path or a host or account name (checked before
     `package.json` is written). The translator's own files, the run's receipt and the logs
@@ -421,7 +437,12 @@ Measurement and native authoring (added for the command-line pilot):
     disappeared fails the run. The receipt is always written and says how often each guard
     was evaluated. `package.json` is written last, whatever fails after it removes it, and
     only a run that ends `complete` leaves it: a run in which the watchdog dismissed a
-    dialog ends `complete_with_dialogs`, exits 1 and leaves no `package.json`.
+    dialog ends `complete_with_dialogs`, exits 1 and leaves no `package.json`. That is
+    decided before the file is written, so such a run writes none. What the receipt
+    says about the file (`package_json_present`) is asked of the file system after the
+    last attempt to remove it, and a `package.json` that is still there fails the run.
+    A read of a document's length unit that fails stops the run; null is for a unit
+    Inventor returns as nothing.
     Draft 3 of the specification follows the exporter
     in two things draft 2 had otherwise: the placements of flexible instances are not
     written as `overrides` (the import command derives them from `occurrences.json`),
@@ -436,8 +457,23 @@ Measurement and native authoring (added for the command-line pilot):
     `Compare-PackageDirectoryHashes`, and what the scripts that drive Inventor ask the API
     through: `Get-RequiredValue`, `Assert-RequiredObject` and `Get-RequiredCount` (guard
     queries that refuse nothing, a failure, a collection and another type, and hold no
-    cast), `Get-OptionalValue` and `Get-OptionalObject` (null when the API gives nothing),
-    and a ledger of the guards a run evaluated.
+    cast), `Get-RequiredItems` (a collection that must exist and give as many items as it
+    counts), `Get-OptionalValue` and `Get-OptionalObject` (null when the API gives nothing),
+    `Get-OptionalCount` (handed the collection itself: a count asked in one step is 0 for
+    a collection that is missing), `Get-GivenValue` (null for nothing, a read that fails
+    stops the run), `Get-PackageOutcome` (whether `package.json` is there and whether that
+    fits the run's status), and a ledger of the guards a run evaluated.
+28. `Invoke-StepImportProbe.ps1 -Step FILE -WorkDirectory WORK -OutputDirectory NEW [-ExpectedSha256 SHA] [-Convert]`
+    reads one STEP file that Inventor did not write (a whole assembly built with FreeCAD,
+    for example) into an owned, invisible instance with the translator's `Open`, nothing
+    written and every document closed without saving, under the dialog watchdog. The
+    receipt holds what the file's text says (header, schema, length unit, entity counts),
+    the translator's options, the document's type and unit, every occurrence with its path
+    of names and its placement, and for every part document its bodies and its volume at
+    the default accuracy and at `k_VeryHigh`. With `-Convert` the file is read a second
+    time so that Inventor writes native documents into WORK, a disposable copy, and the
+    files that appeared are listed. No Vault access. `Inspect-StepInInventor.ps1` (item 3)
+    is the older re-read of a single-file export and is unchanged.
 
 REST listings are read as ONE page (`limit` up to 1000) whose row count must equal the
 server's `totalResults`: on this server the paging cursor is id-based while rows are ordered
@@ -449,7 +485,10 @@ The results of items 19 to 24 on the enclosure are in
 (item 25) is in `.../2026-11-12-windows-assembly-step-01/`, and the first two packages
 written by item 26 are in `.../2026-11-12-windows-package-01/`. The run after the Linux
 review's findings on the script were corrected is in
-`.../2026-11-12-windows-package-findings-01/`.
+`.../2026-11-12-windows-package-findings-01/`. What Inventor makes of the STEP file of
+the whole enclosure that FreeCAD built on Linux (item 28), and the run of the exporter
+after the six remarks of the Linux review were corrected, are in
+`.../2026-11-13-windows-new-layout-02/`.
 
 The portable `vault-cad bom-audit-summary --audit DIR --snapshot native-snapshot.json [--joints joint-audit.json] [--discovery DIR] --output NEW`
 joins those outputs into `virtual-and-excluded.json`, `kit-boundaries.json`,

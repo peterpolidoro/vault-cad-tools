@@ -514,6 +514,38 @@ function Get-RequiredCount {
     Assert-RequiredObject $What $Collection
     return (Get-RequiredValue "$What (count)" { $Collection.Count } -Kind int)
 }
+function Get-RequiredItems {
+    <# The items of a collection that a guard rests on. The collection must exist, must count its items as an
+       integer and must give as many as it counts: a collection that is missing would otherwise be walked as an
+       empty one, because foreach over nothing runs zero times. #>
+    param([Parameter(Mandatory = $true)][string]$What, [AllowNull()]$Collection)
+    $expected = Get-RequiredCount $What $Collection
+    $items = New-Object System.Collections.ArrayList
+    foreach ($item in $Collection) { [void]$items.Add($item) }
+    if ($items.Count -ne $expected) { throw "Required collection '$What' counts $expected and gave $($items.Count); unknown configuration refused" }
+    return $items.ToArray()   # bare: callers wrap with @(...)
+}
+function Get-OptionalCount($Collection) {
+    <# How many items a collection has that the API may not give: $null when there is no collection, or when it
+       does not count its items as an integer. Hand over the collection itself. A count asked in one step,
+       { $manager.Views.Count }, gives 0 for a collection that is missing: the count of nothing is 0. #>
+    if ($null -eq $Collection) { return $null }
+    $raw = $null
+    try { $raw = $Collection.Count } catch { $script:PackageOptionalReadFailures++; return $null }
+    if ($raw -isnot [int] -and $raw -isnot [long] -and $raw -isnot [int16] -and $raw -isnot [byte]) { return $null }
+    return [int]$raw
+}
+function Get-GivenValue {
+    <# A value the API may return as nothing: nothing stays $null, anything else comes back in its type. Unlike
+       Get-OptionalValue, a read that FAILS is not "nothing": it stops the run and names what was read. Use it
+       where the package says null for "Inventor has no value here" and must not say it for "the read threw". #>
+    param([Parameter(Mandatory = $true)][string]$What, [Parameter(Mandatory = $true)][scriptblock]$Query, [ValidateSet("double", "bool", "int", "string")][string]$As = "string")
+    $raw = $null
+    try { $raw = & $Query } catch { throw "The read of '$What' failed; unknown configuration refused: $($_.Exception.Message)" }
+    if ($null -eq $raw) { return $null }
+    if ($raw -is [array]) { throw "The read of '$What' returned a collection; unknown configuration refused" }
+    switch ($As) { "double" { return [double]$raw } "bool" { return [bool]$raw } "int" { return [int]$raw } default { return [string]$raw } }
+}
 $script:PackageOptionalReadFailures = 0   # reads that failed (an exception), over the whole run of the script that dot-sourced this file
 function Get-OptionalObject([scriptblock]$Query) {
     # A single object or scalar the API may not give: $null when the read fails. Not for collections (see above).
@@ -570,38 +602,60 @@ function Test-PackageRunStatus([string]$Status) {
        receipt, which stays on the workstation; whoever reads the package cannot see it. #>
     return ($Status -ceq "complete")
 }
+function Get-PackageOutcome([string]$Directory, [string]$Status) {
+    <# What a run leaves behind, asked of the file system after every attempt to write or to remove package.json:
+       whether the file is there, whether the package is complete (the file is there AND the run ended
+       "complete"), and the problem when the two do not fit: a package.json that could not be removed says
+       "complete" to whoever reads the directory, whatever the receipt says. #>
+    $present = Test-Path -LiteralPath (Join-Path $Directory "package.json")
+    $allowed = Test-PackageRunStatus $Status
+    $problem = $null
+    if ($present -and -not $allowed) { $problem = "package.json is in the output directory although the run ended '$Status': it could not be removed and has to be removed by hand" }
+    elseif ($allowed -and -not $present) { $problem = "the run ended '$Status' and there is no package.json" }
+    return [pscustomobject]@{ manifest_present = $present; complete = ($present -and $allowed); problem = $problem }
+}
 function Complete-Package {
     <# Checks a written package, writes package.json and checks the package once more with it. The manifest comes
        without its "counts" and "files" (both keys present and null); they are filled here, in place. Whatever
        fails after package.json was written removes it, an exception included: the caller never gets a
        package.json that a failed check left behind. Returns ok, stage, failures, summary and manifest_written.
        -Check replaces the package check (for tests): a script block taking $true before package.json exists and
-       $false after, and returning what Test-PackageOutputs returns. #>
+       $false after, and returning what Test-PackageOutputs returns.
+       -WithholdBecause: the caller already knows that this run may not leave a complete package (the watchdog
+       dismissed a dialog). The package is checked as before package.json and nothing is written: stage
+       "withheld". The decision comes before the file, so a run that is killed cannot leave one behind.
+       manifest_present is what the file system says when the function returns; when package.json could not be
+       removed again, that is a failure of its own. -Remove replaces the removal (for tests). #>
     param([Parameter(Mandatory = $true)][string]$Directory, [Parameter(Mandatory = $true)]$Manifest, [string[]]$ForbiddenTerms = @(), [double]$RotationTolerance = 1e-9, [double]$LengthTolerance = 1e-7,
-        [int]$ExpectParts = -1, [int]$ExpectAssemblies = -1, [int]$ExpectOccurrences = -1, [scriptblock]$Check = $null)
+        [int]$ExpectParts = -1, [int]$ExpectAssemblies = -1, [int]$ExpectOccurrences = -1, [scriptblock]$Check = $null, [string]$WithholdBecause = "", [scriptblock]$Remove = $null)
     $manifestPath = Join-Path $Directory "package.json"
     if (Test-Path -LiteralPath $manifestPath) { throw "package.json already exists in $Directory" }
     foreach ($key in @("counts", "files")) { if (-not $Manifest.Contains($key)) { throw "The manifest must have the key '$key' (null until it is filled here)" } }
     $run = $(if ($Check) { $Check } else { { param($beforeManifest) Test-PackageOutputs -Directory $Directory -ForbiddenTerms $ForbiddenTerms -AllowMissingManifest:$beforeManifest -RotationTolerance $RotationTolerance -LengthTolerance $LengthTolerance } })
+    $take = $(if ($Remove) { $Remove } else { { Remove-PackageManifest $Directory } })
     $before = & $run $true
-    if (-not $before.ok) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @($before.failures); summary = $before.summary; manifest_written = $false } }
+    if (-not $before.ok) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @($before.failures); summary = $before.summary; manifest_written = $false; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $false } }
     $unexpected = @()
     if ($ExpectParts -ge 0 -and $before.summary.parts -ne $ExpectParts) { $unexpected += "$($before.summary.parts) parts, $ExpectParts exported" }
     if ($ExpectAssemblies -ge 0 -and $before.summary.assemblies -ne $ExpectAssemblies) { $unexpected += "$($before.summary.assemblies) assemblies, $ExpectAssemblies exported" }
     if ($ExpectOccurrences -ge 0 -and $before.summary.occurrences -ne $ExpectOccurrences) { $unexpected += "$($before.summary.occurrences) occurrences, $ExpectOccurrences read" }
-    if ($unexpected.Count -gt 0) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @("the package does not hold what was exported: $($unexpected -join '; ')"); summary = $before.summary; manifest_written = $false } }
+    if ($unexpected.Count -gt 0) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @("the package does not hold what was exported: $($unexpected -join '; ')"); summary = $before.summary; manifest_written = $false; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $false } }
+    if ($WithholdBecause) { return [pscustomobject]@{ ok = $true; stage = "withheld"; failures = @(); summary = $before.summary; manifest_written = $false; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $true } }
     $Manifest["counts"] = [ordered]@{ parts = $before.summary.parts; assemblies = $before.summary.assemblies }
     $Manifest["files"] = Get-PackageDirectoryHashes $Directory
     try {
         Write-PackageJsonFile $manifestPath $Manifest
         $after = & $run $false
         if (-not $after.ok) {
-            [void](Remove-PackageManifest $Directory)
-            return [pscustomobject]@{ ok = $false; stage = "with package.json"; failures = @($after.failures); summary = $after.summary; manifest_written = $false }
+            $failures = @($after.failures)
+            try { [void](& $take) } catch { $failures += "package.json could not be removed: $($_.Exception.Message)" }
+            $present = Test-Path -LiteralPath $manifestPath
+            if ($present) { $failures += "package.json is still in the directory: it could not be removed" }
+            return [pscustomobject]@{ ok = $false; stage = "with package.json"; failures = $failures; summary = $after.summary; manifest_written = $present; manifest_present = $present; withheld = $false }
         }
-        return [pscustomobject]@{ ok = $true; stage = "complete"; failures = @(); summary = $after.summary; manifest_written = $true }
+        return [pscustomobject]@{ ok = $true; stage = "complete"; failures = @(); summary = $after.summary; manifest_written = $true; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $false }
     } catch {
-        if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }
+        try { [void](& $take) } catch { }
         throw
     }
 }

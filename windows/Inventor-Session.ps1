@@ -190,6 +190,20 @@ function Stop-IsolatedInventor {
         ProjectEntryRemoved = ($observed.added_entry_removed -eq $true); ProjectEntryPreserved = ($observed.preexisting_entry_still_registered -eq $true); PreviousProjectRestored = ($observed.previous_project_active -eq $true) }
 }
 
+function Get-RequiredCollectionItems([string]$What, $Collection) {
+    <# The items of a collection on which a guard rests. The collection must exist, must count its items as an
+       integer and must give as many as it counts. $null.Count is 0 and foreach over $null runs zero times, so a
+       collection that Inventor did not give would otherwise pass as "no documents" or "no references".
+       (Package-Format.ps1 has the same check as Get-RequiredItems; this file does not depend on it.) #>
+    if ($null -eq $Collection) { throw "Required collection '$What' is missing; unknown configuration refused" }
+    $reported = $Collection.Count
+    if ($reported -isnot [int] -and $reported -isnot [long] -and $reported -isnot [int16] -and $reported -isnot [byte]) { throw "Required collection '$What' does not count its items; unknown configuration refused" }
+    $items = New-Object System.Collections.ArrayList
+    foreach ($item in $Collection) { [void]$items.Add($item) }
+    if ($items.Count -ne $reported) { throw "Required collection '$What' counts $reported and gave $($items.Count); unknown configuration refused" }
+    return $items.ToArray()   # bare: callers wrap with @(...)
+}
+
 function Confirm-AcquiredInputs {
     <#
     Bind every opened native document (root + AllReferencedDocuments) to acquisition.json and
@@ -207,8 +221,10 @@ function Confirm-AcquiredInputs {
     }
     $invByVersion = @{}
     foreach ($f in $Inventory.files) { $v = [string]$f.version_id; if (-not $v -or $invByVersion.ContainsKey($v)) { throw "Duplicate or empty inventory version id: $v" }; $invByVersion[$v] = $f }
-    $docs = @($Document) + @($Document.AllReferencedDocuments)
-    $missing = @(); foreach ($d in $docs) { foreach ($fd in $d.File.ReferencedFileDescriptors) { if ($fd.ReferenceMissing) { $missing += $fd.FullFileName } } }
+    # Both collections are asked for as collections that must exist and give as many items as they count: the
+    # binding of the inputs rests on them, and a collection that is missing would be walked as an empty one.
+    $docs = @($Document) + @(Get-RequiredCollectionItems "AllReferencedDocuments of the root document" $Document.AllReferencedDocuments)
+    $missing = @(); foreach ($d in $docs) { foreach ($fd in @(Get-RequiredCollectionItems "ReferencedFileDescriptors of '$($d.FullFileName)'" $d.File.ReferencedFileDescriptors)) { if ($fd.ReferenceMissing) { $missing += $fd.FullFileName } } }
     if ($missing.Count -gt 0) { throw "Unresolved references: $($missing -join '; ')" }
     $inputs = @(); $seen = @{}
     foreach ($d in $docs) {

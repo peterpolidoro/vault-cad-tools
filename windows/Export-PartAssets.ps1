@@ -4,6 +4,10 @@ Export one STEP per distinct part geometry of a native assembly plus an occurren
 with strict provenance binding, fail-closed configuration guards and validated outputs.
 
 .DESCRIPTION
+THE EARLIER FORMAT. A root assembly is exported for a project with Export-Package.ps1 (AP242, normalised
+headers, one directory per Vault file). This script writes the package that came before it. It is kept
+for now, is not run for new work and gets no further corrections; its defaults are unchanged.
+
 Walks instance occurrences (including flexible subassembly proxies), derives parent-relative
 transforms from Inventor's top-level-context world transforms, and cross-checks placements against
 Inventor proxy bounds. Writes under -OutputDirectory (which must not exist or must be empty):

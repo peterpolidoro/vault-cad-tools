@@ -32,7 +32,8 @@ What the receipt states as a fact is read as one: the flags its counts rest on (
 document of an occurrence, the views and the dirty flags are guard queries that hold no cast (Get-RequiredValue in
 Package-Format.ps1), and a collection must exist and give as many items as it counts. A flag that is only
 described (excluded, grounded, adaptive, substitute, flexible) is null when Inventor does not give it, and the
-receipt counts those. Flexible is asked of an assembly occurrence only; Inventor does not define it for a part
+receipt counts those. So is the number of items of a collection that is only described (Get-OptionalCount: the
+collection is handed over, because a count asked in one step gives 0 for a collection that is missing). Flexible is asked of an assembly occurrence only; Inventor does not define it for a part
 occurrence, which is recorded as not flexible. Inventor is started inside the try whose finally stops it, and
 nothing after that runs outside a try: a receipt is always written.
 Outputs: <OutputName>, assembly-step-probe.json, probe.log, dialogs.log. Exit code 1 unless the status is complete.
@@ -93,7 +94,7 @@ function Get-AllLeafCount($occurrences) {
     # $null when it cannot be read: the count of nothing is 0 in PowerShell and would look like "no leaves".
     try { $leaves = $occurrences.GetType().InvokeMember("AllLeafOccurrences", [Reflection.BindingFlags]::GetProperty, $null, $occurrences, $null) } catch { return $null }
     if ($null -eq $leaves) { return $null }
-    return (Get-OptionalValue { $leaves.Count } "int")
+    return (Get-OptionalCount $leaves)
 }
 
 $session = $null; $app = $null; $project = $null; $errors = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null
@@ -163,16 +164,18 @@ try {
         $rootOccurrences = $rootDef.Occurrences
         $unitCode = Get-OptionalValue { $asm.UnitsOfMeasure.LengthUnits } "int"
         $rootRecord = [ordered]@{ document = (Relative $NativeAssembly); length_units = $(if ($null -ne $unitCode) { $lengthUnitNames[$unitCode] } else { $null })
-            model_state = (Get-RequiredValue "model state of the root" { $rootDef.ModelStates.ActiveModelState.Name } -Kind string); model_states = (Get-OptionalValue { $rootDef.ModelStates.Count } "int")
-            design_view_representation = (Get-RequiredValue "design view representation of the root" { $manager.ActiveDesignViewRepresentation.Name } -Kind string); design_view_representations = (Get-OptionalValue { $manager.DesignViewRepresentations.Count } "int")
-            positional_representation = (Get-RequiredValue "positional representation of the root" { $manager.ActivePositionalRepresentation.Name } -Kind string); positional_representations = (Get-OptionalValue { $manager.PositionalRepresentations.Count } "int")
-            level_of_detail = (Get-RequiredValue "level of detail of the root" { $manager.ActiveLevelOfDetailRepresentation.Name } -Kind string); levels_of_detail = (Get-OptionalValue { $manager.LevelOfDetailRepresentations.Count } "int")
+            model_state = (Get-RequiredValue "model state of the root" { $rootDef.ModelStates.ActiveModelState.Name } -Kind string); model_states = (Get-OptionalCount $rootDef.ModelStates)
+            design_view_representation = (Get-RequiredValue "design view representation of the root" { $manager.ActiveDesignViewRepresentation.Name } -Kind string); design_view_representations = (Get-OptionalCount $manager.DesignViewRepresentations)
+            positional_representation = (Get-RequiredValue "positional representation of the root" { $manager.ActivePositionalRepresentation.Name } -Kind string); positional_representations = (Get-OptionalCount $manager.PositionalRepresentations)
+            level_of_detail = (Get-RequiredValue "level of detail of the root" { $manager.ActiveLevelOfDetailRepresentation.Name } -Kind string); levels_of_detail = (Get-OptionalCount $manager.LevelOfDetailRepresentations)
             top_level_occurrences = (Get-RequiredCount "top-level occurrences" $rootOccurrences); all_leaf_occurrences = (Get-AllLeafCount $rootOccurrences)
             representations_changed_by_probe = $false }
         Log "Root: model state $($rootRecord.model_state), design view '$($rootRecord.design_view_representation)', positional '$($rootRecord.positional_representation)', level of detail '$($rootRecord.level_of_detail)'; $($rootRecord.top_level_occurrences) top-level occurrences, AllLeafOccurrences $($rootRecord.all_leaf_occurrences)"
         # the views: of the root and of every referenced document, each a collection that must exist
         $rootViews = $asm.Views
-        $referenced = @($asm.AllReferencedDocuments); $withViews = @()
+        # the documents the root references are a collection that must exist and give as many items as it counts
+        $referencedDocuments = $asm.AllReferencedDocuments
+        $referenced = @(Get-RequiredItems "documents the root references" $referencedDocuments); $withViews = @()
         foreach ($document in $referenced) { $documentViews = $document.Views; if ((Get-RequiredCount "views of a referenced document" $documentViews) -gt 0) { $withViews += (Relative (Get-RequiredValue "file name of a referenced document" { $document.FullFileName } -Kind string)) } }
         $viewCensus = [ordered]@{ application_visible = (Get-RequiredValue "Visible of the application" { $app.Visible }); assembly_views = (Get-RequiredCount "views of the root" $rootViews); referenced_documents = $referenced.Count; referenced_documents_with_views = $withViews.Count
             documents_with_views = $withViews }
@@ -215,7 +218,7 @@ try {
     # each step on its own: one that fails must not keep the next from running
     if ($session) {
         try { $shutdown = Stop-IsolatedInventor $session $project } catch { $errors += "the shutdown of the owned Inventor instance threw: $($_.Exception.Message)" }
-        if (-not $shutdown -or -not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $(if ($shutdown) { $shutdown.Observed | ConvertTo-Json -Compress } else { 'no result' })" }
+        try { if (-not $shutdown -or -not $shutdown.Succeeded) { $errors += "shutdown not observed as complete: $(if ($shutdown) { $shutdown.Observed | ConvertTo-Json -Compress } else { 'no result' })" } } catch { $errors += "the shutdown could not be described: $($_.Exception.Message)" }
         try { Log "Shutdown: pid $($session.Pid) exited=$(if ($shutdown) { $shutdown.Exited }) succeeded=$(if ($shutdown) { $shutdown.Succeeded })" } catch { }
     }
     if ($watchdog) {

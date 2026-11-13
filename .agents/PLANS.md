@@ -79,14 +79,16 @@ them are new, for the package, in `tests/test_package_import.py`, 13 are for
 the index, in `tests/test_layout_project.py`, and 10 are for the earlier
 package). On Windows 87 passed under Pixi on 2026-11-11, from
 the commit before the index was added; the 25 newer ones have not been run
-there. On Windows all 115 passed under Pixi on 2026-11-12, and the offline
-suites pass (run 2026-11-12: script hygiene over 38 scripts with a 9-case
-self-test of the checks, 37 session mock cases, 3 watchdog, 12 snapshot, 10
-STEP unit, 11 receipt, 27 STEP header and entity cases, 27 package format
-cases, 7 Vault facts and 8 folder discovery cases). The package reader was
-run on Windows that day on a copy of the exporter's first package
-(`import_package` into an empty directory); `import-snapshot` on a project
-has not been run there.
+there. On Windows all 115 passed under Pixi on 2026-11-12 and the 102 of
+992f076 on 2026-11-13, and the offline suites pass (run 2026-11-13 on the
+scripts of the Windows patch of that day: script hygiene over 39 scripts
+with a 9-case self-test of the checks, 39 session mock cases, 3 watchdog, 12
+snapshot, 10 STEP unit, 11 receipt, 27 STEP header and entity cases, 33
+package format cases, 7 Vault facts and 8 folder discovery cases). The
+package reader was run on Windows on 2026-11-12 on a copy of the exporter's
+first package (`import_package` into an empty directory), and
+`import-snapshot` into a fresh clone of the enclosure on 2026-11-13, on the
+package of the changed exporter: `unchanged` 44 and nothing else.
 
 Added on 2026-11-11 by the Windows side, with its three read-only AP242 tests
 (record in `windows/HISTORY.md`; reviewed and applied on Linux):
@@ -289,9 +291,13 @@ Directives:
    `2026-11-12-linux-windows-package-findings-review-01/REVIEW.md`): all six
    are there, the package the corrected exporter writes is the first one in
    every file but `package.json`, and a run in which a dialog was dismissed
-   delivers no package. Six smaller remarks of that review wait for the next
-   change of the script; none needs a run of its own. Peter has not reviewed
-   the draft.
+   delivers no package. The six smaller remarks of that review were
+   corrected on Windows on 2026-11-13, each with an offline case (P28 to
+   P33, S32, S33), and the changed exporter was run once: `complete`, 89 of
+   its 90 files the bytes of the package in the project, `package.json`
+   alone differing (evidence `2026-11-13-windows-new-layout-02/`, 178 files
+   verified on Linux). The patch, ten files under `windows/`, was reviewed
+   and applied on Linux that day. Peter has not reviewed the draft.
 2. The import command reads the real package since 2026-11-12
    (`_read_occurrences` in `package_import.py`). Tried that day on a copy of
    the enclosure's branch: 44 files rewritten, all keys kept, 44 overrides
@@ -307,9 +313,31 @@ Directives:
    that changes nothing), the six remarks, `Export-Package.ps1` described as
    the exporter, a list of the scripts that serve only the earlier package
    or layout, one run of the changed exporter, and Inventor reading the STEP
-   file of the whole enclosure that FreeCAD built on Linux. When its list is
-   there and Peter has seen it: remove `layout_import.py`'s reading of the
-   earlier package and the Windows scripts on the list.
+   file of the whole enclosure that FreeCAD built on Linux. Windows stopped
+   at a line-ending fault of the repositories on 2026-11-12, which was
+   corrected in the enclosure and in `mechanical-cad`, and delivered all of
+   it on 2026-11-13 (`to-linux/20261113T153758Z-...`): the checkout is right
+   on Windows, a repeat import changes nothing, Inventor opens the STEP file
+   with every one of its 171 occurrences where the package puts it (what an
+   Inventor user sees of names and documents is in `mechanical-cad`'s plan),
+   and one new script, `Invoke-StepImportProbe.ps1`, did that read.
+   The list, for Peter to see; nothing of it is removed:
+   `Export-PartAssets.ps1`, `Snapshot-Validation.ps1`,
+   `Test-SnapshotOutputs.ps1`, `Invoke-ExporterGuardChecks.ps1`,
+   `Export-InventorStep.ps1`, `New-ExportReceipt.ps1`,
+   `Test-ExportReceipt.ps1`, `Inspect-StepInInventor.ps1` (two of them are
+   suites of the ten). To weigh before they go: `bom-audit --snapshot` takes
+   `native-snapshot.json`, which only `Export-PartAssets.ps1` writes (the
+   enclosure keeps the one of the earlier export under
+   `references/receipts/`), and `docs/exchange-protocol.md` and
+   `docs/native-checkin-adapter-design.md` name two of the scripts. When
+   Peter has seen it: remove `layout_import.py`'s reading of the earlier
+   package and the Windows scripts on the list.
+   Answered to Windows that day, for its next change of the exporter: a
+   read of a document's `Dirty` flag that fails stops the run, as the read
+   of the length unit does again; the exporter's receipt becomes
+   `schema_version` 3, because `validation.stage` has a value a reader of 2
+   does not know.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
    (`vault-cad sync-status`, written to `sync-status.json`, never into the
