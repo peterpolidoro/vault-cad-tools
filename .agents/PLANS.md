@@ -467,6 +467,33 @@ Directives:
    what `sync-status` names; an `update_step_file` plan. A refresh on a change made in Vault needs such a
    change: nothing has changed there since October.
 
+5. Publishing as collaborators will meet it (step 2 of
+   `mechanical-cad/docs/direction.md`), recommended to Peter on 2026-11-16
+   as the next step: a part added from the new layout as a dry run and then
+   live, a revision of it as a new version of the same file
+   (`update_step_file`, not built), and the file referenced from an
+   Inventor assembly. It needs a test folder in Vault, the file's name
+   there, his word to read that folder and his request for each write.
+   Peter asked that day whether the Windows agent can make the test folder,
+   inside the enclosure's Vault folder or outside it, and whether that has
+   to be done in the Vault window. Answered from what is recorded here:
+   - REST on this server (Vault 2025) cannot create a folder; folder
+     creation came to the REST API later, as did every other write
+     (`Vault-Inventor-STEP-Automation.md`).
+   - The client SDK, through which `Publish-StepToVault.ps1 -Live` adds a
+     file, is expected to have a call for it (`DocumentService.AddFolder`).
+     That is from memory: no script here resolves or calls it, and whether
+     Peter's account may create a folder there has not been tried.
+   - The publish route needs the folder to exist: it takes the folder's
+     path and id as gates and refuses when they do not match.
+   - Recommended: Peter makes the folder himself in the Vault window, once,
+     as a sub-folder of the enclosure's folder with a name that says it is
+     a test. A sub-folder there has the rules real publications meet and
+     does not enter the mirror: the discovery lists the folder's own files
+     and follows the root assembly's closure. What speaks against it: files
+     in Vault are hard to remove, so what is tested there stays in the
+     project's folder.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`
