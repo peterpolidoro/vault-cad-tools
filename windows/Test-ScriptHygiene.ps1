@@ -6,7 +6,11 @@ Static checks for the PowerShell scripts in this folder (AST based, offline):
      case-insensitively but with different casing (PowerShell variables are case-insensitive, so
      `$inventory = ...` silently overwrites `[string]$Inventory` and coerces it to a string);
   3. functions whose name is a built-in alias or cmdlet (e.g. `measure`), which the alias shadows;
-  4. one variable spelled with different casing in the same scope (`$R` matrix and `for ($r ...)` counter).
+  4. one variable spelled with different casing in the same scope (`$R` matrix and `for ($r ...)` counter);
+  5. a Vault session's id or token inside a text (a text is what reaches a log, a receipt or the screen); the
+     one text that may hold the token is the Authorization header;
+  6. a web request that is not a GET, other than the sign-in (POST sessions/win-auth): the scripts read from
+     Vault's REST API and never write through it.
 Every run first proves the checks on built-in snippets (a clash that must be found, names that must not be
 flagged); a checker that cannot find its own target fails the run instead of reporting clean scripts.
 Run: & .\windows\Test-ScriptHygiene.ps1
@@ -55,6 +59,38 @@ function Get-HygieneFailures {
             $found += "in scope $($key.Split('|')[0]) one variable is spelled $(($forms | ForEach-Object { '$' + $_ + ' (first at line ' + $inner.get_Item($_) + ')' }) -join ' and '); PowerShell treats these as ONE variable"
         }
     }
+    # 5. a session's id or token inside a text. The Authorization header ("Bearer ...") is the one text that holds
+    #    the token; a session's id belongs in none.
+    foreach ($text in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true)) {
+        if ($text.Value -cmatch '^Bearer ') { continue }
+        $secrets = @()
+        foreach ($nested in @($text.NestedExpressions)) {
+            foreach ($node in @($nested.FindAll({ $true }, $true))) {
+                if ($node -is [System.Management.Automation.Language.MemberExpressionAst] -and $node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    if ($node.Member.Value -ieq "accessToken") { $secrets += "an access token" }
+                    elseif ($node.Member.Value -ieq "id" -and $node.Expression -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.Expression.VariablePath.UserPath -ieq "session") { $secrets += "a session's id" }
+                } elseif ($node -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.VariablePath.UserPath -ieq "env:VAULT_CAD_TOKEN") { $secrets += "the session token" }
+            }
+        }
+        foreach ($secret in @($secrets | Sort-Object -Unique)) { $found += "line $($text.Extent.StartLineNumber): a text holds $secret; no log, receipt or message may" }
+    }
+    # 6. a web request that is not a GET. A request without -Method is a GET; one whose parameters are splatted, or
+    #    whose method is not the word Get, is refused unless it is the sign-in.
+    foreach ($command in $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        if (@("Invoke-RestMethod", "Invoke-WebRequest", "irm", "iwr", "curl", "wget") -notcontains $command.GetCommandName()) { continue }
+        $elements = @($command.CommandElements); $method = $null; $address = ""; $splatted = $false
+        for ($i = 1; $i -lt $elements.Count; $i++) {
+            if ($elements[$i] -is [System.Management.Automation.Language.VariableExpressionAst] -and $elements[$i].Splatted) { $splatted = $true }
+            if ($elements[$i] -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+            $given = $elements[$i].ParameterName
+            $value = $(if ($null -ne $elements[$i].Argument) { $elements[$i].Argument } elseif ($i + 1 -lt $elements.Count) { $elements[$i + 1] } else { $null })
+            if ($null -eq $value) { continue }
+            if ($given.Length -ge 2 -and "Method".StartsWith($given, [StringComparison]::OrdinalIgnoreCase)) { $method = $value.Extent.Text.Trim([char[]]@([char]39, [char]34)) }
+            if ($given -ieq "Uri") { $address = $value.Extent.Text }
+        }
+        if ($splatted) { $found += "line $($command.Extent.StartLineNumber): a web request with splatted parameters; its method cannot be read here" }
+        elseif ($null -ne $method -and $method -ine "Get" -and $address -notmatch 'sessions/win-auth') { $found += "line $($command.Extent.StartLineNumber): a web request with -Method $method that is not the sign-in; these scripts read from Vault and never write through REST" }
+    }
     return $found   # bare: callers wrap with @(...); a comma-wrapped empty array would arrive as one empty item
 }
 
@@ -79,6 +115,13 @@ Expect "4 finds a clash inside one function" 'function A($Path) { $path = 1; $Pa
 Expect "4 finds a clash between a parameter read and a later loop variable in script scope" 'param($Items) foreach ($items in 1..2) { $items }' 'spelled \$Items .* and \$items ' 1
 Expect "2 finds an assignment that overwrites a parameter under another casing" 'param([string]$Inventory) $inventory = 1' 'clashes with parameter \$Inventory' 1
 Expect "3 finds a function shadowed by an alias" 'function measure { 1 }' "function 'measure' is shadowed" 1
+Expect "5 finds a session's id in a text that is written out" 'Write-Output "Session $($session.id) as $($session.userInformation.name)"' "a text holds a session's id" 1
+Expect "5 finds an access token in a text" 'Write-Host "token $($session.accessToken)"' 'a text holds an access token' 1
+Expect "5 finds the token of the environment in a text" 'Add-Content -LiteralPath $log -Value "token=$env:VAULT_CAD_TOKEN"' 'a text holds the session token' 1
+Expect "5 lets the Authorization header and a user name pass" '$one = @{ Authorization = "Bearer $($session.accessToken)" }; $two = @{ Authorization = "Bearer $env:VAULT_CAD_TOKEN" }; Write-Output "Signed in as $($session.userInformation.name)"' '.' 0
+Expect "6 finds a request that is not a GET" 'Invoke-RestMethod -Uri "$base/vaults/1/file-versions/2" -Method Put -Body $content' 'a web request with -Method Put that is not the sign-in' 1
+Expect "6 finds a request whose parameters are splatted" 'Invoke-RestMethod @request' 'a web request with splatted parameters' 1
+Expect "6 lets the sign-in, a GET and a download pass" 'Invoke-RestMethod -Uri "$base/sessions/win-auth" -Method Post -Body $content; Invoke-RestMethod -Uri $address -Method Get; Invoke-WebRequest -Uri $address -OutFile $file' '.' 0
 Expect "a clean script has no finding" 'param([string]$Path) $total = 0; foreach ($item in 1..3) { $total += $item }; function Get-Thing($Value) { $Value }' '.' 0
 Expect "a parse error is reported" 'function {' 'parse error' 1
 if ($selfFailures.Count) { $selfFailures | ForEach-Object { Write-Output "FAIL $_" }; Write-Output "the hygiene checks failed their own self-test ($($selfFailures.Count)); no script was judged"; exit 1 }
@@ -92,4 +135,4 @@ foreach ($file in Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.ps1) {
     foreach ($text in @(Get-HygieneFailures $ast $builtinNames)) { $failures += "$($file.Name): $text" }
 }
 if ($failures.Count) { $failures | ForEach-Object { Write-Output "FAIL $_" }; Write-Output "$checked scripts checked, $($failures.Count) hygiene failure(s)"; exit 1 }
-Write-Output "$checked scripts checked (self-test of the checks: 9 cases passed), no parse errors, no parameter-name clashes, no shadowed function names, no variable spelled with two casings in one scope"
+Write-Output "$checked scripts checked (self-test of the checks: 16 cases passed), no parse errors, no parameter-name clashes, no shadowed function names, no variable spelled with two casings in one scope, no session id or token in a text, no web request other than a GET and the sign-in"

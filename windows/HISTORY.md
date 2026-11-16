@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-13
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-16
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,37 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — reading from Vault again: nothing changed; an earlier version and the second root assembly acquired and exported (2026-11-16)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-16-windows-vault-read-tests-01/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261116T143321Z-...`; Peter authorized reading from Vault for
+tests that day. Sent to Vault: 16 sign-ins (`POST sessions/win-auth`), 706 GET, 101 downloads, and nothing
+else. Nothing was written to Vault; no production document was saved; the mirror of the project and its 45
+files are unchanged. Three new mirror roots lie outside every checkout.
+
+- Nothing has changed in Vault since the acquisition of 2026-10-21 and the check of 2026-11-10: every one of
+  the 44 masters is still at the acquired version, and the 32 files of the folder are those of 2026-11-10 in
+  every field. The root assembly has five versions, the second root assembly three.
+- What the server answers for an old version: the children of exactly that version, each at its latest
+  version, whatever option is set. Version 4 of the root, checked in on 2026-09-09, is answered with
+  `CAMERA FRAME.iam` at version 5 of 2026-09-10. `Get-VaultDependencySnapshot.ps1 -AsCheckedIn` rebuilds the
+  earlier state by check-in date (six offline cases, `-SelfTest`).
+- Version 4 of the root was acquired both ways, each into a mirror root of its own, and exported: both runs
+  `complete`, 34 parts, 6 assemblies, 154 occurrences. Against the package in the project the root assembly
+  differs and four files are missing; as checked in, `CAMERA FRAME` is at another version too, with the same
+  `assembly.json`.
+- The second root assembly, `SLLB Enclosure.iam`, acquired at its latest version and exported: `complete`, the
+  first run of the exporter on another assembly. 19 parts, 2 assemblies, 56 occurrences, every guard
+  evaluated, no warning. The 19 Vault files it shares with the enclosure give the same bytes in both packages.
+- `import-snapshot` on scratch projects: the package of version 4, then the one in the project, gives 39
+  unchanged, 1 updated, 4 new; the other way round it refuses, because the project holds the later version.
+- No script shows a session's id any more (`Set-VaultCadToken.ps1` and `Get-VaultDependencySnapshot.ps1` did),
+  the acquisition script counts its requests in `snapshot-receipt.json`, and `Test-ScriptHygiene.ps1` checks
+  every script for a session id or token in a text and for a web request that is not a GET or the sign-in.
+- Suites: hygiene over 31 scripts with a 16-case self-test, 39 session mock cases, 3 watchdog, 10 STEP unit, 27
+  STEP header and entity cases, 35 package format cases, 7 Vault facts, 8 folder discovery and 6 dependency
+  snapshot cases; 95 Python tests under Pixi.
 
 ## Result — Inventor reads shared products, the suites after the removal, a dirty flag that is nothing (2026-11-13)
 

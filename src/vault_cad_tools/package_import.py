@@ -419,6 +419,26 @@ def _check_project_vault(dest, manifest, root_source):
     return True
 
 
+def _check_project_root(project, root_identity):
+    """A project that does not name its root assembly takes the packages of the one it holds.
+
+    Its root is the assembly that none of its assemblies places. A package of another root would be added
+    beside it without a word, and everything the project holds would be listed as no longer in the package.
+    """
+    placed = set()
+    for rec in project["components"].values():
+        if rec["kind"] == "assembly":
+            manifest = _read_json(rec["dir"] / "assembly.json")
+            for child in (manifest.get("children") or []) if isinstance(manifest, dict) else []:
+                if isinstance(child, dict):
+                    placed.add(child.get("component"))
+    roots = {identity: rec["key"] for identity, rec in project["by_identity"].items()
+             if rec["kind"] == "assembly" and rec["key"] not in placed}
+    if roots and root_identity not in roots:
+        raise ExchangeError(f"the package's root assembly is not the one this project mirrors ({', '.join(sorted(roots.values()))}); "
+                            "import it into a new directory, or name the root in vault-project.toml")
+
+
 def _ordered(record, order):
     return {k: record[k] for k in order if k in record}
 
@@ -442,6 +462,8 @@ def import_package(package, dest, run):
     if receipts.exists():
         raise ExchangeError(f"references/receipts/{run} exists; every import has its own run name")
     vault_checked = _check_project_vault(dest, manifest, files[root_identity]["source"])
+    if project and not vault_checked:
+        _check_project_root(project, root_identity)
 
     # keys: the project's own for what it has, a new one from the name for what it does not
     existing = project["by_identity"] if project else {}

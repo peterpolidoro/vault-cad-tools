@@ -13,8 +13,9 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 
 Demonstrated, each once, on the enclosure pilot:
 
-- Vault to repository: `Get-VaultDependencySnapshot.ps1` freezes and downloads
-  the exact versions of one root assembly; `Export-PartAssets.ps1` (the
+- Vault to repository: `Get-VaultDependencySnapshot.ps1` records and downloads
+  the versions of one root assembly and its dependencies (for the latest
+  version of a root, each child at its latest version; see next work 4); `Export-PartAssets.ps1` (the
   earlier exporter, removed on 2026-11-13) exported one
   STEP per part document plus the instance, placement and BOM records, with
   every opened document bound to its acquired hash; `import-step`, since
@@ -390,10 +391,60 @@ Directives:
    changed were not run in Inventor afterwards; no run had a `Dirty` flag
    that was nothing; the six older scripts that start Inventor before their
    `try` are not corrected, as agreed. The Windows agent has no assignment.
-4. Then the synchronisation design's qualification on the new layout:
-   read-only `discover_folder` with the sync states computed on Linux
-   (`vault-cad sync-status`, written to `sync-status.json`, never into the
-   lock), the incremental export dry run, an `update_step_file` plan.
+4. Keeping a mirror current (goals 2 and 3 of `mechanical-cad/docs/direction.md`).
+   Peter authorized reading from Vault for tests on 2026-11-16, and three
+   read-only tests were asked of Windows and delivered that day
+   (`to-linux/20261116T151953Z-...`, evidence
+   `2026-11-16-windows-vault-read-tests-01`, 941 files verified on Linux; sent
+   to Vault: 16 sign-ins, 706 GET, 101 downloads, nothing else). The patch,
+   six files under `windows/`, is applied here and gives the tree Windows
+   recorded; no token or session id is in the evidence.
+   - **Nothing has changed in Vault** since the acquisition of 2026-10-21:
+     all 44 masters at the acquired version, the folder's 32 files as on
+     2026-11-10. So a refresh still has no change of its own to work on.
+   - **A root version does not name a state.** The server answers an old
+     version of the root with its children at their latest versions,
+     whatever option is set. So whether a mirror is current is asked of
+     every master in it, and a mirror holds "get latest": each master at its
+     latest version. `Get-VaultDependencySnapshot.ps1 -AsCheckedIn` rebuilds
+     an earlier state by check-in date, as a rule and not a record; kept, for
+     comparisons, and not what a project is mirrored with. Put to Peter:
+     that a mirror is "get latest".
+   - **A refresh between two real versions works.** Version 4 of the root
+     (2026-09-09) was acquired into a mirror root of its own and exported
+     (`complete`, 34 parts, 6 assemblies). Imported into an empty project
+     and then followed by the package the enclosure holds, on Windows and
+     again on Linux: `unchanged` 39, `updated` 1 (the root), `new` 4,
+     `rewritten` 0, `not_in_package` 0, 3 parts to measure. Compared on
+     Linux with the enclosure's repository: all 37 `part.step` and all 7
+     `assembly.json` are the same bytes, the index holds the same 44
+     records, and every `source.json` differs only in the name of the run.
+     The other way round the import refuses, because the project holds the
+     later version. Not met: a file that is gone (nothing left the assembly
+     between the two versions), so `not_in_package` is still only reported.
+   - **A second assembly goes through the same commands.** The folder's
+     second root assembly was acquired and exported on the first run
+     (`complete`, 19 parts, 2 assemblies, every guard evaluated, no warning;
+     the 19 files it shares with the enclosure are the same bytes in both
+     packages). On Linux, in a scratch project: imported, measured (19
+     valid), validated with no error and no finding, and its whole-assembly
+     file built and read back (143 solids in place). It is test data and is
+     in no repository.
+   - Found by it and corrected here: a project without `vault-project.toml`
+     took the package of another root assembly without a word and listed
+     everything it held as no longer in the package. It now refuses, naming
+     the root it mirrors (`_check_project_root`, one test; 96 tests). A
+     project with the file refused already.
+   - Known now, not acted on: the sub-assembly both roots use is flexed
+     differently in each, with the same `assembly.json` (the difference is
+     in each `occurrences.json`, as designed); a version that is not the
+     latest has an empty lifecycle state in the server's answers.
+   Still to build: `vault-cad sync-status` (the states of the design
+   document, computed on Linux from a discovery and the project's
+   `source.json` files, written to `sync-status.json`, never into the lock);
+   removing what a package no longer has; the incremental export; an
+   `update_step_file` plan. A refresh on a change made in Vault needs such a
+   change: nothing has changed there since October.
 
 ## Open items
 

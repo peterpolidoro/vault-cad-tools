@@ -28,7 +28,7 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 95 portable tests pass in the Guix environment (2026-11-16). The Windows
+The 96 portable tests pass in the Guix environment (2026-11-16). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
@@ -139,11 +139,21 @@ completed jobs for inspection. Instead, PowerShell scripts under `windows/`
 run on a machine with Inventor 2025 installed and Vault access:
 
 1. `Get-VaultDependencySnapshot.ps1 -RootVersionId ID -OutputDirectory EVIDENCE -CacheRoot MIRROR`
-   freezes the exact dependency versions of a file version (recursive `uses`),
+   records a file version and the versions of its dependencies (recursive `uses`),
    writes `dependency-inventory.json`, and downloads every version into
    `MIRROR\<Vault path without $/>` with `acquisition.json` (SHA-256 per file).
    The mirror root stands in for Vault's `$`, so Inventor resolves references
-   unchanged. Nothing is checked out.
+   unchanged. Nothing is checked out. **Which versions of the children** (found
+   on 2026-11-16): the server names the children of a version at their latest
+   versions, whatever option is set. For the latest version of a root that is
+   what "get latest" gives a user, and it is what a mirror holds. For an earlier
+   version it is the old root with today's children, a state that never was in
+   Vault; `-AsCheckedIn` rebuilds the earlier state by check-in date instead
+   (every child at its newest version checked in at or before the root version),
+   which is a rule applied to dates and not a record. `dependency-inventory.json`
+   says which way was used (`resolution`); `snapshot-receipt.json` counts the
+   requests by kind (one sign-in, then GET only). `-SelfTest` runs six offline
+   cases of the rule. Each acquisition goes into a mirror root of its own.
 2. Removed on 2026-11-13: `Export-InventorStep.ps1`, the export of one STEP file
    per document, a whole assembly as one file.
 3. Removed on 2026-11-13: `Inspect-StepInInventor.ps1`, the re-read of such a
@@ -252,10 +262,15 @@ Measurement and native authoring (added for the command-line pilot):
     or in that `finally`), `Get-VaultFileFacts.ps1
     -SelfTest` (7 cases of the join with the inventory) and
     `Discover-VaultFolder.ps1 -SelfTest` (8 cases of the root and standalone rule).
+    Since 2026-11-16 also `Get-VaultDependencySnapshot.ps1 -SelfTest` (6 cases of
+    the closure by check-in date), and `Test-ScriptHygiene.ps1` holds every script
+    to two more rules, with 16 cases of its own in all: no Vault session id or
+    token in a text that reaches a log, a receipt or the screen, and no web
+    request other than a GET and the sign-in.
 13. Removed on 2026-11-13: `Invoke-ExporterGuardChecks.ps1`, the qualification of
     the earlier exporter in Inventor. With it and items 4 and 9 two of the offline
-    suites went, `Test-ExportReceipt.ps1` and `Test-SnapshotOutputs.ps1`; eight are
-    left.
+    suites went, `Test-ExportReceipt.ps1` and `Test-SnapshotOutputs.ps1`; eight
+    were left, and a ninth came on 2026-11-16 (item 12).
 14. `Publish-StepToVault.ps1 -Plan plans/UUID.json -OutputDirectory NEW -DryRun`
     re-verifies the payload named by a plan from `vault-cad plan-publish`, resolves
     the eleven SDK members of the add route by reflection against the installed Vault
@@ -517,6 +532,12 @@ and of the helpers both readers shared.
 ```sh
 python3 run.py import-snapshot /path/to/package --into ../free-standing-tank-enclosure --run RUN
 ```
+
+A project takes the packages of one root assembly: the one `vault-project.toml`
+names, or, where the project has no such file, the assembly none of its
+assemblies places. A package of another root is refused with the reason
+(since 2026-11-16; until then a project without the file took it and listed
+everything it held as no longer in the package).
 
 Provisional. The command reads the package specified in `mechanical-cad/docs/exporter-package.md`
 (draft 3): one directory per Vault file and model state under `files/`, with

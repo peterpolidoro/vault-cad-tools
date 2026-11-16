@@ -19,7 +19,8 @@ finding R1 applied:
               recorded for every file, never a reason to deny it the role of root or standalone.
 
 Requests: folders (root, sub-folders, the folder itself), folders/{id}/contents (paged, includeHidden), and for
-every file of the folder file-versions/{id}/parents and /uses (the exact version, getLatestAssocs=false), plus
+every file of the folder file-versions/{id}/parents and /uses (of exactly that version, getLatestAssocs=false; the
+server names every parent and child at its latest version, see Get-VaultDependencySnapshot.ps1), plus
 /uses with recurse for every assembly and folders/{id} for the folders of closure members. No content is
 downloaded; nothing is written to Vault; the token is never written.
 

@@ -59,7 +59,8 @@ Offline suites, none of which needs Inventor or Vault:
 `Test-InventorSession.ps1`, `Test-DialogWatchdog.ps1`, `Test-StepLengthUnit.ps1`,
 `Test-StepHeader.ps1`,
 `Test-PackageFormat.ps1`, `Get-VaultFileFacts.ps1 -SelfTest`,
-`Discover-VaultFolder.ps1 -SelfTest`, `Test-ScriptHygiene.ps1`.
+`Discover-VaultFolder.ps1 -SelfTest`, `Get-VaultDependencySnapshot.ps1 -SelfTest`,
+`Test-ScriptHygiene.ps1`.
 
 ## Operating preconditions for live Vault writes
 
@@ -120,6 +121,30 @@ Offline suites, none of which needs Inventor or Vault:
   when its row count equals the server's `totalResults`. This server's paging
   cursor is id-based while rows are ordered by name; following it repeats and
   skips rows.
+- The server names the children of an old version at their latest versions.
+  `GET file-versions/{id}/uses` gives the children of exactly that version of
+  the parent, which masters they are, but it gives every child at its latest
+  version, whatever `getLatestAssocs` and `releaseBiased` are set to;
+  `/parents` answers the same way. For the latest version of a root that is
+  what "get latest" gives a user. For an earlier version it is a mix that
+  never existed in Vault: the old root with today's children, and with
+  today's children of those. `Get-VaultDependencySnapshot.ps1 -AsCheckedIn`
+  rebuilds what the version was checked in with, by date: every child at its
+  newest version checked in at or before the root version, and that
+  version's own children in the same way. It is a rule applied to dates, not
+  a record read from Vault; `dependency-inventory.json` says which of the two
+  ways was used (`resolution`).
+- A version that is not the latest has no lifecycle state in the server's
+  answers, so `vault.lifecycle_state` is an empty text for it in a package.
+- No script shows or records a Vault session's id or its token, and none
+  sends a web request other than a GET, apart from the sign-in
+  (`POST sessions/win-auth`). `Test-ScriptHygiene.ps1` (checks 5 and 6) holds
+  every script of this directory to both. `Get-VaultDependencySnapshot.ps1`
+  counts its requests by kind in `snapshot-receipt.json`; the folder
+  discovery and the file facts count theirs in their receipts.
+- Every acquisition gets a mirror root of its own. The exporter makes its
+  project file in the mirror root and removes it again, so a mirror holds the
+  acquired files and nothing else, before a run and after it.
 - The STEP translator takes the header's author from the native file's Summary
   Information "Author" when its own `Author` option is empty, the header's name
   from the output file name, and has no option for the time stamp. A fixed
@@ -247,8 +272,9 @@ the files, and with them the reading of the earlier package in
 | `Test-ExportReceipt.ps1` | The suite of that receipt, 11 checks |
 | `Inspect-StepInInventor.ps1` | The re-read of a single-file export in Inventor |
 
-Eight offline suites are left of ten, and the hygiene suite checks 31
-scripts. No script names a removed one.
+Eight offline suites were left of ten, and the hygiene suite checks 31
+scripts. No script names a removed one. A ninth suite came on 2026-11-16,
+`Get-VaultDependencySnapshot.ps1 -SelfTest`.
 `bom-audit-summary --snapshot` still takes a `native-snapshot.json`; nothing
 writes a new one, and a project keeps the one it has.
 

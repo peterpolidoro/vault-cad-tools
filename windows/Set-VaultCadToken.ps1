@@ -10,7 +10,7 @@ Dot-source this script so the variable lands in your interactive shell:
 
 It calls POST /sessions/win-auth with the current Windows identity (Active Directory account
 mapped in Vault), stores the returned access token in the environment of this process only,
-and prints the session id and user name but never the token. Nothing is written to disk.
+and prints the user name, but neither the token nor the session's id. Nothing is written to disk.
 Verified against Vault Professional Server 2025 (30.4) on 2026-10-21.
 
 Vault 2025 answers 501 to DELETE /sessions/{id}; sessions expire server-side.
@@ -36,4 +36,4 @@ $session = Invoke-RestMethod -Uri ($BaseUri.TrimEnd('/') + '/sessions/win-auth')
     -Body $body -UseDefaultCredentials -MaximumRedirection 0 -TimeoutSec 30
 if (-not $session.accessToken) { throw "No access token in the win-auth response." }
 $env:VAULT_CAD_TOKEN = $session.accessToken
-Write-Host "Vault session $($session.id) for '$($session.userInformation.name)' on vault '$($session.vaultInformation.name)' stored in VAULT_CAD_TOKEN (not displayed)."
+Write-Host "Vault session for '$($session.userInformation.name)' on vault '$($session.vaultInformation.name)' stored in VAULT_CAD_TOKEN (the token and the session's id are not displayed)."

@@ -229,6 +229,21 @@ class PackageImportTests(unittest.TestCase):
         (self.dest / "vault-project.toml").write_text(toml.replace("ROOT.iam", "Other.iam"))
         self.refused("not the root_assembly of vault-project.toml", run="run-3")
 
+    def test_a_project_without_a_project_file_takes_the_packages_of_the_root_it_holds(self):
+        self.first()
+        other = {"a": part("A", "100"), "top": assembly("Other", "950", [child("A:1", "part", "100", matrix(4))],
+                                                         frame={"handedness": "right", "up_axis": "+Y"})}
+        package = write_package(self.base / "package-other", list(other.values()), ("950", STATE))
+        self.refused("is not the one this project mirrors \\(root\\); import it into a new directory", package=package)
+        # the same package into a new directory is a project of its own
+        result = import_package(package, self.base / "other-project", "run-1")
+        self.assertEqual((result["root"], result["new"]), ("other", ["a", "other"]))
+        # and a later version of the root the project holds is still taken
+        held = files()
+        held["root"] = assembly("Root", "900", held["root"]["assembly"]["children"][:2], version="2",
+                                frame={"handedness": "right", "up_axis": "+Y"}, number=2)
+        self.assertEqual(import_package(self.package(held), self.dest, "run-2")["updated"], ["root"])
+
     def test_a_package_from_a_project_is_what_the_project_holds(self):
         self.first()
         before = tree(self.dest)
