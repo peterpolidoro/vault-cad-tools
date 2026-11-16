@@ -518,19 +518,22 @@ try {
         }
     }
     # ---- the two changes of the Linux review of 2026-11-13 ----
-    Case "P34 a document's dirty flag after the export: False is False, nothing is nothing, a read that fails stops the run; the exporter reads it no other way" {
-        $held = [pscustomobject]@{ Clean = $false; Changed = $true; None = $null }
-        $clean = Get-GivenValue "dirty flag of 'PLATE.ipt' after the export" { $held.Clean } "bool"
-        Assert ($clean -is [bool] -and -not $clean) "a flag that is False came back as '$clean': a clean document would be counted as one without a flag"
-        Assert ((Get-GivenValue "dirty flag" { $held.Changed } "bool") -eq $true -and $null -eq (Get-GivenValue "dirty flag" { $held.None } "bool")) "the flag is wrong"
-        Assert (Throws { Get-GivenValue "dirty flag of 'PLATE.ipt' after the export" { throw "RPC_E_DISCONNECTED" } "bool" } "dirty flag of 'PLATE.ipt' after the export.*RPC_E_DISCONNECTED") "a dirty flag that could not be read was passed over"
+    Case "P34 a document's dirty flag after the export is required: False is False, True is True, and a flag that is nothing or a read that fails stops the run; the exporter reads it no other way" {
+        $held = [pscustomobject]@{ Clean = $false; Changed = $true; None = $null; Text = "False" }
+        $clean = Get-RequiredValue "dirty flag of 'PLATE.ipt' after the export" { $held.Clean }
+        Assert ($clean -is [bool] -and -not $clean) "a flag that is False came back as '$clean': a clean document would stop the run or be counted as dirty"
+        Assert ((Get-RequiredValue "dirty flag" { $held.Changed }) -eq $true) "a flag that is True did not come back as True"
+        # nothing is not "not dirty": the run says which documents were dirty, so a flag that Inventor does not give stops it
+        Assert (Throws { Get-RequiredValue "dirty flag of 'PLATE.ipt' after the export" { $held.None } } "dirty flag of 'PLATE.ipt' after the export.*returned null") "a dirty flag that Inventor returned as nothing was passed over"
+        Assert (Throws { Get-RequiredValue "dirty flag of 'PLATE.ipt' after the export" { throw "RPC_E_DISCONNECTED" } } "dirty flag of 'PLATE.ipt' after the export.*RPC_E_DISCONNECTED") "a dirty flag that could not be read was passed over"
+        Assert (Throws { Get-RequiredValue "dirty flag" { $held.Text } } "not a boolean") "a text was taken for a flag"
         $sample = 'Get-OptionalValue { $held.Document.Dirty } "bool"; $flag = $doc.Dirty; Get-GivenValue "flag" { $doc.Dirty } "bool"; Get-RequiredValue "flag" { $doc.Dirty }'
         Assert ((@(Get-MemberReads $sample "Dirty") -join ",") -ceq "Get-OptionalValue,(no query),Get-GivenValue,Get-RequiredValue") "the check does not say how a member is read: $(@(Get-MemberReads $sample "Dirty") -join ',')"
         $exporter = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1"))
         $reads = @(Get-MemberReads $exporter "Dirty")
-        Assert ($reads.Count -ge 1 -and @($reads | Where-Object { $_ -cne "Get-GivenValue" }).Count -eq 0) "Export-Package.ps1 reads the dirty flag of a document with: $($reads -join ', ')"
-        # a read that throws must leave the run without a package: it comes before the line that says the files are written
-        $read = $exporter.IndexOf('Get-GivenValue "dirty flag of '); $written = $exporter.IndexOf('$packageWritten = $true')
+        Assert ($reads.Count -ge 1 -and @($reads | Where-Object { $_ -cne "Get-RequiredValue" }).Count -eq 0) "Export-Package.ps1 reads the dirty flag of a document with: $($reads -join ', ')"
+        # a flag that stops the run must leave it without a package: the read comes before the line that says the files are written
+        $read = $exporter.IndexOf('Get-RequiredValue "dirty flag of '); $written = $exporter.IndexOf('$packageWritten = $true')
         Assert ($read -ge 0 -and $written -gt $read) "the dirty flags are not read before the package is said to be written (read at $read, written at $written)"
     }
     Case "P35 the exporter's receipt names schema 3 wherever it is written, the receipt of a run that could not write it in full included" {

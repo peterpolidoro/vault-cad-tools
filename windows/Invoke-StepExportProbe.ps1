@@ -21,7 +21,7 @@ A variant is a hashtable:
                'invisible'   Documents.Open(path, OpenVisible = false): the document has no view;
                'visible'     Documents.Open(path, OpenVisible = true): the document has a view;
                'referenced'  the document is taken from AllReferencedDocuments of -ViaAssembly, opened invisibly
-                             and bound with Confirm-AcquiredInputs: exactly how Export-PartAssets.ps1 reaches a part.
+                             and bound with Confirm-AcquiredInputs: exactly how Export-Package.ps1 reaches a part.
                Passes run in the order referenced, invisible, visible; within a pass, variants run in the order given.
   camera       only with open = 'visible': change the camera of the first view before the export and leave it
                changed for later variants: @{ rotate_degrees = 40; zoom_factor = 0.5; orientation = 10759 }
@@ -30,8 +30,8 @@ A variant is a hashtable:
   properties   iProperties to set IN MEMORY before the export and restore after it, never saved:
                @{ 'Inventor Summary Information|Author' = 'MARKER' }. Requires -WorkOnCopies.
   output_name  fixed output file name (e.g. 'part.step'); the file then goes to <label>\<part name>\<output_name>
-Translator options are set as Export-PartAssets.ps1 sets them (ApplicationProtocolType, IncludeSketches false
-when present); nothing else is touched unless a variant says so.
+Of the translator's options the script sets ApplicationProtocolType, and IncludeSketches to false when the
+translator has it; nothing else is touched unless a variant says so.
 
 -ViaAssembly REL and -Inventory dependency-inventory.json are needed for open = 'referenced'. The receipt then
 also holds a view census: how many views the assembly and its referenced documents have when opened that way.
@@ -163,7 +163,7 @@ function Read-PropertySets($doc) {
     return $sets
 }
 function Read-Bodies($definition) {
-    # Inventor's own body counts, as Export-PartAssets.ps1 takes them.
+    # Inventor's own body counts: every body, the solid ones, and the solid ones that are visible.
     $surface = 0; $solid = 0; $visibleSolid = 0
     foreach ($body in $definition.SurfaceBodies) { $surface++; if ($body.IsSolid) { $solid++; if ($body.Visible) { $visibleSolid++ } } }
     [ordered]@{ surface_bodies = $surface; solid_bodies = $solid; visible_solid_bodies = $visibleSolid }
@@ -302,7 +302,7 @@ try {
             $assemblyInputs = Confirm-AcquiredInputs $asm $acq $invJson
             $referenced = @{}; $withViews = 0
             foreach ($d in @($asm.AllReferencedDocuments)) { $referenced[([string]$d.FullFileName).ToLowerInvariant()] = $d; if ([int]$d.Views.Count -gt 0) { $withViews++ } }
-            $viewCensus = [ordered]@{ assembly = $ViaAssembly; opened = "Documents.Open(path, OpenVisible = false) in the owned instance, as Export-PartAssets.ps1 opens the root"; application_visible = [bool]$app.Visible
+            $viewCensus = [ordered]@{ assembly = $ViaAssembly; opened = "Documents.Open(path, OpenVisible = false) in the owned instance, as Export-Package.ps1 opens the root"; application_visible = [bool]$app.Visible
                 assembly_views = [int]$asm.Views.Count; referenced_documents = $referenced.Count; referenced_documents_with_views = $withViews; inputs_bound = @($assemblyInputs).Count; assembly_dirty_after_open = [bool]$asm.Dirty }
             Log "Assembly opened invisibly: $($viewCensus.assembly_views) view(s); $($referenced.Count) referenced documents, $withViews with a view; $(@($assemblyInputs).Count) inputs bound"
             foreach ($b in $bound) {

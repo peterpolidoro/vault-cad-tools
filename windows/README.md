@@ -179,11 +179,14 @@ Offline suites, none of which needs Inventor or Vault:
 - "Inventor returns nothing" and "the read failed" are two things.
   `Get-OptionalValue` turns both into null and counts the failures; it is for
   what is only described. `Get-GivenValue` returns null for nothing and stops
-  the run when the read fails. The exporter reads two things with it: a
-  document's length unit, so `native.length_unit: null` never stands for a
-  failed read, and every document's `Dirty` flag after the export, so a flag
-  that could not be read is never passed over. `Test-PackageFormat.ps1` (P34)
-  fails when the exporter reads `Dirty` in any other way.
+  the run when the read fails. The exporter reads a document's length unit
+  with it, so `native.length_unit: null` never stands for a failed read.
+- What a run states about every document is required, not given. The exporter
+  says which documents were dirty when the export ended, so it reads every
+  `Dirty` flag with `Get-RequiredValue`: a flag that Inventor returns as
+  nothing stops the run as a read that fails does, because nothing is not
+  "not dirty". `Test-PackageFormat.ps1` (P34) fails when the exporter reads
+  `Dirty` in any other way.
 - Start Inventor inside the `try` whose `finally` stops it, and run nothing
   outside a `try` after it: the receipt is always written, and whatever fails
   after `package.json` was written removes it (`Complete-Package`). In that
@@ -206,6 +209,11 @@ Offline suites, none of which needs Inventor or Vault:
   after it. A file whose usages carry the occurrence's name as their id shows
   those names in Inventor unchanged, also where a name repeats under another
   parent (the enclosure's file: 172 names, 125 distinct, none changed).
+  A product that several usages share becomes one document with as many
+  occurrences, each where its usage puts it: the enclosure's file with one
+  product per sub-assembly gives 8 assembly documents where a product per
+  instance gave 18, and the same 172 occurrences. The root document is named
+  after the STEP file, not after the root product.
 - The volume of a document can leave a body out without saying so. Inventor
   computes a volume to a precision. `SurfaceBody.Volume(percent)` fails with
   `E_FAIL` when it cannot reach the precision asked for, and the document's
@@ -239,11 +247,8 @@ the files, and with them the reading of the earlier package in
 | `Test-ExportReceipt.ps1` | The suite of that receipt, 11 checks |
 | `Inspect-StepInInventor.ps1` | The re-read of a single-file export in Inventor |
 
-Eight offline suites are left of ten. Not done when this was written, because
-no PowerShell runs on Linux: the eight suites run after the removal, and the
-comments in `Export-Package.ps1`, `Invoke-AssemblyStepProbe.ps1`,
-`Invoke-StepExportProbe.ps1` and `Invoke-StepImportProbe.ps1` that still say
-"as `Export-PartAssets.ps1` does" or name `Inspect-StepInInventor.ps1`.
+Eight offline suites are left of ten, and the hygiene suite checks 31
+scripts. No script names a removed one.
 `bom-audit-summary --snapshot` still takes a `native-snapshot.json`; nothing
 writes a new one, and a project keeps the one it has.
 

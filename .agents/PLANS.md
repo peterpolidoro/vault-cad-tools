@@ -176,10 +176,11 @@ of single files (`Export-PartAssets.ps1`, `Snapshot-Validation.ps1`,
 `layout_import.py` keeps what the two readers shared. 14a235a is the last
 commit that has them. 95 tests pass. `bom-audit-summary --snapshot` still
 takes a `native-snapshot.json`: nothing writes a new one, and the enclosure
-keeps the one of its earlier export under `references/receipts/`. Not done,
-because no PowerShell runs on Linux: the eight remaining offline suites run
-after the removal, and comments in four scripts that still name a removed
-one (`windows/README.md`, last section). That is for the Windows agent.
+keeps the one of its earlier export under `references/receipts/`. The
+Windows agent ran the eight remaining offline suites after the removal on
+2026-11-13: all pass, and the hygiene suite checks 31 scripts. It changed
+the ten places in four scripts that named a removed one, so no script under
+`windows/` names one now (next work, item 3).
 
 Not implemented: update or check-in of an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
@@ -356,6 +357,39 @@ Directives:
    four scripts that name a removed one, a `Dirty` flag that Inventor
    returns as nothing stopping the run too, and Inventor reading the STEP
    file with one product per sub-assembly.
+   Windows delivered all four that day (`to-linux/20261113T200147Z-...`,
+   evidence `2026-11-13-windows-shared-products-01`, 146 files verified on
+   Linux on 2026-11-16; the patch, seven files under `windows/`, is applied
+   here and gives the tree Windows recorded):
+   - The eight suites and the 95 Python tests pass, on 5025eed and on the
+     scripts as delivered. Ten places in four scripts say what is done
+     instead of naming a removed script. Two of the ten are a text in a
+     probe's receipt (`opened`), which now names `Export-Package.ps1`;
+     accepted, the text describes how the root is opened and that script
+     opens it so.
+   - `Export-Package.ps1` reads every document's `Dirty` flag with
+     `Get-RequiredValue`: a flag that Inventor returns as nothing stops the
+     run before the package is said to be written, as a read that fails
+     does. The warning for a flag that was not given is gone. P34 is
+     restated for it (still 35 package format cases) and fails on the
+     exporter as it was. The receipt stays `schema_version` 3 and does not
+     count these reads among its guards; that is right as it is, because
+     the ledger counts what let the run pass and a dirty document is warned
+     of, not refused.
+   - The changed exporter, run once: `complete`, no warning, 24 guards all
+     evaluated, the mirror's 45 files unchanged; 89 of 90 files are those of
+     the package in the project (compared here by hash), `package.json`
+     alone differing in `exported_at`, `exporter` and `translator_outputs`;
+     imported into a fresh clone of the enclosure it changes nothing
+     (`unchanged` 44).
+   - Inventor makes one document of each shared product and places it once
+     for every usage: 45 documents where the earlier file gave 55, 8 `.iam`
+     and 37 `.ipt` with `-Convert` where it wrote 18 and 37 (the detail is
+     in `mechanical-cad`'s plan and layout specification).
+   Not run on Windows, and not claimed: the two probes whose receipt text
+   changed were not run in Inventor afterwards; no run had a `Dirty` flag
+   that was nothing; the six older scripts that start Inventor before their
+   `try` are not corrected, as agreed. The Windows agent has no assignment.
 4. Then the synchronisation design's qualification on the new layout:
    read-only `discover_folder` with the sync states computed on Linux
    (`vault-cad sync-status`, written to `sync-status.json`, never into the

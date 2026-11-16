@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-12
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-13
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,33 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — Inventor reads shared products, the suites after the removal, a dirty flag that is nothing (2026-11-13)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-13-windows-shared-products-01/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261113T184123Z-...` after the Linux review
+`evidence/2026-11-13-linux-windows-step-names-review-01/REVIEW.md`. No Vault access; no production document
+saved; the 45 files of the mirror unchanged.
+
+- The STEP file of the whole enclosure, built on Linux with one product for the sub-assembly instances that are
+  alike (45 products where there were 55, 126 usages where there were 172): Inventor makes one document of each
+  product and places it once for every usage, so the panel assembly is one document with four occurrences.
+  45 documents in memory, 37 parts and 8 assemblies, where the earlier file gave 55; the six sub-assemblies
+  are named after their files. All 172 occurrence names, all 171 placements and every part volume are those
+  of the read of the earlier file, the 90 occurrences in or below a document that has more than one occurrence
+  included. With `-Convert` Inventor writes 8 `.iam` and 37 `.ipt` files, where it wrote 18 and 37.
+- The eight offline suites that are left after the scripts of the earlier format went pass, and the hygiene
+  suite checks 31 scripts. The ten places in four scripts that named a removed script say what is done
+  instead. Two of them are a text in a probe's receipt (`opened`), which now names `Export-Package.ps1`.
+- `Export-Package.ps1`: a document's `Dirty` flag after the export is required (`Get-RequiredValue`, P34). A
+  flag that Inventor returns as nothing stops the run as a read that fails does, and the warning for a flag
+  that was not given is gone.
+- The exporter, run once afterwards: `complete`; every file of the package but `package.json` is byte for byte
+  the file of the package that is imported into the project; imported into a fresh clone of the project it
+  changes nothing (44 unchanged).
+- Suites: hygiene over 31 scripts with a 9-case self-test, 39 session mock cases, 3 watchdog, 10 STEP unit, 27
+  STEP header and entity cases, 35 package format cases (one restated), 7 Vault facts and 8 folder discovery
+  cases; 95 Python tests under Pixi.
 
 ## Result — names in the STEP file from Linux, two changes of the exporter, a body missing from a volume (2026-11-13)
 

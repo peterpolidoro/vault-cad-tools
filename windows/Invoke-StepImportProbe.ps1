@@ -6,12 +6,11 @@ that Inventor did not write (a whole assembly built with FreeCAD, for example).
 .DESCRIPTION
 Read-only towards everything but -WorkDirectory. No Vault access. No production document is opened.
 
-The file is read the way Inspect-StepInInventor.ps1 reads one: with the STEP translator's Open and nothing
-written, so the documents exist in memory only, and every document is closed without saving. Which options
-decide that depends on the version: of SaveToDisk, EnableSaveComponentDuringLoad and SaveComponentDuringLoad the
-script sets to False whichever the translator reports for the file, and records them. Unlike that script this
-one runs in an instance it has proven to own (Inventor-Session.ps1), under the dialog watchdog, with a temporary
-project whose file lies in -WorkDirectory, and it records the tree.
+The file is read with the STEP translator's Open and nothing written, so the documents exist in memory only,
+and every document is closed without saving. Which options decide that depends on the version: of SaveToDisk,
+EnableSaveComponentDuringLoad and SaveComponentDuringLoad the script sets to False whichever the translator
+reports for the file, and records them. It runs in an instance it has proven to own (Inventor-Session.ps1),
+under the dialog watchdog, with a temporary project whose file lies in -WorkDirectory, and it records the tree.
 
 Recorded in step-import-probe.json:
   - the file: size, SHA-256 (compared with -ExpectedSha256 before Inventor starts), header, schema, length unit and

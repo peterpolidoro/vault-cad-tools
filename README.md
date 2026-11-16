@@ -28,7 +28,7 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 102 portable tests pass in the Guix environment (2026-11-12). The Windows
+The 95 portable tests pass in the Guix environment (2026-11-16). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
@@ -243,8 +243,9 @@ Measurement and native authoring (added for the command-line pilot):
     it; a collection that must give as many items as it counts, a count that is
     handed its collection, a value that is given or nothing, a package withheld
     before `package.json` is written, what the file system says about
-    `package.json` after a removal that failed, a dirty flag whose read fails
-    stopping the run, and the receipt's schema version; and `Export-Package.ps1`,
+    `package.json` after a removal that failed, a dirty flag that cannot be
+    read or that Inventor returns as nothing stopping the run, and the
+    receipt's schema version; and `Export-Package.ps1`,
     `Invoke-AssemblyStepProbe.ps1` and `Invoke-StepImportProbe.ps1` read as syntax
     trees: no cast in a guard query, no count asked in one step, Inventor started
     inside the `try` whose `finally` stops it, nothing outside a `try` afterwards
@@ -396,9 +397,12 @@ Measurement and native authoring (added for the command-line pilot):
     decided before the file is written, so such a run writes none. What the receipt
     says about the file (`package_json_present`) is asked of the file system after the
     last attempt to remove it, and a `package.json` that is still there fails the run.
-    A read of a document's length unit, or of its dirty flag after the export, that
-    fails stops the run; null is for a value Inventor returns as nothing. The receipt
-    is `schema_version` 3 since 2026-11-13.
+    A read of a document's length unit that fails stops the run; null is for a value
+    Inventor returns as nothing. A document's dirty flag after the export is required:
+    a read that fails stops the run, and so does a flag that Inventor returns as
+    nothing, because the run says which documents were dirty. The receipt
+    is `schema_version` 3 since 2026-11-13; the reads of the dirty flag are not among
+    the guards it counts, since a dirty document is warned of and does not stop a run.
     Draft 3 of the specification follows the exporter
     in two things draft 2 had otherwise: the placements of flexible instances are not
     written as `overrides` (the import command derives them from `occurrences.json`),

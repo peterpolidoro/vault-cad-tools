@@ -3,7 +3,7 @@
 Read-only check: Inventor's own STEP export of a whole assembly, as ONE file, from the acquired mirror.
 
 .DESCRIPTION
-Opens the assembly exactly as Export-PartAssets.ps1 opens the root for a snapshot: an owned, invisible Inventor
+Opens the assembly exactly as the exporter, Export-Package.ps1, opens its root: an owned, invisible Inventor
 instance, the temporary project of the mirror, Documents.Open(path, OpenVisible = false), and every opened
 document bound to the acquisition record and the dependency inventory by hash before anything is exported.
 No representation is changed. The STEP translator then writes the assembly document itself into one file, with
@@ -272,7 +272,7 @@ try {
     $receipt = [ordered]@{ schema_version = 2; generated_at = (Utc); probe = "windows/Invoke-AssemblyStepProbe.ps1"; status = $status; errors = $errors
         scope = "read-only STEP export of the assembly document itself; no representation changed; nothing saved; every file of the mirror hashed before and after"
         host = $env:COMPUTERNAME; inventor = $(if ($session) { "$($session.Version) build $($session.Build)" } else { $null }); workspace_root = $WorkspaceRoot; acquisition_record = $Acquisition; inventory_record = $Inventory
-        opened = "Documents.Open(path, OpenVisible = false) in the owned instance, as Export-PartAssets.ps1 opens the root"
+        opened = "Documents.Open(path, OpenVisible = false) in the owned instance, as Export-Package.ps1 opens the root"
         session = $(if ($session) { [ordered]@{ pid = $session.Pid; ownership = $session.OwnershipMethod; started_at = $session.StartedAt.ToString("o"); pre_existing_inventor_pids = $session.PreExistingPids
                 shutdown = $(if ($shutdown) { [ordered]@{ succeeded = $shutdown.Succeeded; exited = $shutdown.Exited; observed = $shutdown.Observed; failed_required = @($shutdown.FailedRequired); notes = @($shutdown.Notes) } } else { $null }) } } else { $null })
         project = $(if ($project) { [ordered]@{ file = $project.ProjectFile; entry_pre_existed = $project.EntryPreExisted; entry_added_by_run = $project.AddedEntry; created_file = $project.CreatedFile; entry_removed_by_run = $(if ($shutdown) { $shutdown.ProjectEntryRemoved } else { $null }); previous_restored = $(if ($shutdown) { $shutdown.PreviousProjectRestored } else { $null }) } } else { $null })

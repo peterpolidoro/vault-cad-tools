@@ -10,8 +10,7 @@ the context of the root, and package.json. Read-only: nothing is saved and Vault
         -OutputDirectory PACKAGE -WorkDirectory WORK
 
 THIS IS THE EXPORTER: a root assembly is exported for a project with this script (AP242, normalised headers,
-one directory per Vault file), and "import-snapshot" reads its package into the project. Export-PartAssets.ps1
-writes the earlier format; it is kept for now, is not run for new work and gets no further corrections.
+one directory per Vault file), and "import-snapshot" reads its package into the project. There is no other.
 Both directories must not exist or must be empty, and neither may lie inside the other.
 
   PACKAGE/package.json                    what was exported and the hash of every other file; written last, and
@@ -35,9 +34,9 @@ component definition; the placements a flexible instance gives its descendants a
 occurrences.json holds every occurrence as Inventor places it in the root's context and says which differ from
 their definition; the import command derives the overrides from it.
 
-Supported subset and refusals as Export-PartAssets.ps1 (primary model states, master level of detail and
-positional representation, rigid placements, no factories, adaptive or substitute occurrences; every guard
-query fails closed), strict binding of every opened document to the acquisition record, and in addition:
+Supported subset: primary model states, master level of detail and positional representation, rigid placements;
+no factories, adaptive or substitute occurrences. Every guard query fails closed, and every opened document is
+bound strictly to the acquisition record. Refused in addition:
   - a document that has a view (the STEP translator would write that view's camera);
   - a part.step that marks items invisible in a form that is not understood (Get-StepInvisibility);
   - a part whose translator file does not name the AP242 schema alone in FILE_SCHEMA in three attempts (the
@@ -59,7 +58,8 @@ written removes it. Only a run that ends "complete" leaves package.json: a run i
 dialog ends "complete_with_dialogs" and its package is withheld. That is decided before package.json is written,
 so such a run writes none. What the receipt says about package.json is asked of the file system after the last
 attempt to remove it; a package.json that could not be removed fails the run. A value Inventor returns as nothing
-is null; a read of a document's length unit, or of its dirty flag after the export, that fails stops the run.
+is null, and a read of a document's length unit that fails stops the run. A document's dirty flag after the
+export is required: a read that fails stops the run, and so does a flag that Inventor returns as nothing.
 The receipt is schema_version 3 ($PackageReceiptSchemaVersion). Exit code 1 unless a complete package was left.
 #>
 param(
@@ -527,7 +527,7 @@ try {
                 title = (Prop $doc "Inventor Summary Information" "Title"); vendor = (Prop $doc "Design Tracking Properties" "Vendor") }
             if ($record.Kind -eq "assembly") {
                 $manifest = [ordered]@{ schema_version = $PackageLayoutSchemaVersion; name = $record.Name; length_unit = "cm" }
-                # The root states the frame, as Export-PartAssets.ps1 declares it in scene.json: Inventor's axes as stored, +Y up.
+                # The root states the frame: Inventor's axes as stored, right-handed, +Y up.
                 if ([object]::ReferenceEquals($record, $rootRecord)) { $manifest.frame = [ordered]@{ handedness = "right"; up_axis = "+Y" } }
                 $manifest.children = $record.Children
                 Write-PackageJsonFile (Join-Path $directory "assembly.json") $manifest
@@ -582,12 +582,12 @@ try {
                 tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length = $lengthTolerance }
                 counts = [ordered]@{ occurrences = $occurrencesOut.Count; parts = @($occurrencesOut | Where-Object { $_.kind -eq "part" }).Count; assemblies = @($occurrencesOut | Where-Object { $_.kind -eq "assembly" }).Count; differ_from_definition = $differing }
                 occurrences = $occurrencesOut })
-        # A dirty flag that cannot be read is not "not dirty". A read that fails stops the run here, before the
-        # package is said to be written (Get-GivenValue); a flag Inventor returns as nothing is counted and warned of.
-        $dirty = @(); $dirtyUnknown = 0
-        foreach ($held in $documents.Values) { $flag = Get-GivenValue "dirty flag of '$($held.What)' after the export" { $held.Document.Dirty } "bool"; if ($null -eq $flag) { $dirtyUnknown++ } elseif ($flag) { $dirty += $held.What } }
+        # The run says which documents were dirty, so every flag is required (Get-RequiredValue): a flag that cannot
+        # be read is not "not dirty", and neither is one that Inventor returns as nothing. Either stops the run here,
+        # before the package is said to be written.
+        $dirty = @()
+        foreach ($held in $documents.Values) { if (Get-RequiredValue "dirty flag of '$($held.What)' after the export" { $held.Document.Dirty }) { $dirty += $held.What } }
         if ($dirty.Count -gt 0) { $warnings += "dirty when the export ended (closed without saving): $($dirty -join '; ')" }
-        if ($dirtyUnknown -gt 0) { $warnings += "Inventor gave no dirty flag for $dirtyUnknown document(s) when the export ended (closed without saving)" }
         $packageWritten = $true
     } finally { try { $asm.Close($true) } catch { $errors += "assembly close: $($_.Exception.Message)" } }
 } catch {
