@@ -28,7 +28,7 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 96 portable tests pass in the Guix environment (2026-11-16). The Windows
+The 104 portable tests pass in the Guix environment (2026-11-16). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
@@ -509,6 +509,30 @@ imported with `import-step`, and deliverables under `step/`) is no longer
 read. It went on 2026-11-12, when the enclosure, the one project in it, had
 been converted. The commands refuse such a lock and say why; the last commit
 that reads it is a66ca5a.
+
+## Is the mirror current?
+
+```sh
+python3 run.py --project ../free-standing-tank-enclosure sync-status /path/to/discovery.json [--output FILE]
+```
+
+`sync-status` compares what a project mirrors with what Vault holds today,
+offline: `discovery.json` is written on Windows by
+`windows/Discover-VaultFolder.ps1` (REST, GET only) for the project's Vault
+folder, and nothing in the project changes. Every mirrored component is
+`in_sync` (the project holds the version Vault names today), `vault_newer`
+(the file was checked in again) or `not_in_closure` (the root assembly no
+longer uses it); `new_in_vault` lists what the root's closure has and the
+project does not; every publication is compared with the file in the folder;
+and what else the folder holds, another root assembly for one, is listed
+apart. `current` says whether a refresh would change anything under
+`references/`. Each file is asked for by itself because Vault names the
+children of any version of a root at their latest versions, so a root
+version does not say what a mirror should hold. Tried on 2026-11-16: the
+enclosure against that day's discovery is current, all 44 in sync; a scratch
+project holding the root's earlier version shows the two files that were
+checked in again and the four that were added, which is what the refresh
+then changed. `tests/test_sync_status.py`.
 
 ## Read an exporter's package into a project
 

@@ -419,12 +419,8 @@ def _check_project_vault(dest, manifest, root_source):
     return True
 
 
-def _check_project_root(project, root_identity):
-    """A project that does not name its root assembly takes the packages of the one it holds.
-
-    Its root is the assembly that none of its assemblies places. A package of another root would be added
-    beside it without a word, and everything the project holds would be listed as no longer in the package.
-    """
+def _project_roots(project):
+    """{(master id, model state): key} of the project's assemblies that none of its assemblies places."""
     placed = set()
     for rec in project["components"].values():
         if rec["kind"] == "assembly":
@@ -432,8 +428,17 @@ def _check_project_root(project, root_identity):
             for child in (manifest.get("children") or []) if isinstance(manifest, dict) else []:
                 if isinstance(child, dict):
                     placed.add(child.get("component"))
-    roots = {identity: rec["key"] for identity, rec in project["by_identity"].items()
-             if rec["kind"] == "assembly" and rec["key"] not in placed}
+    return {identity: rec["key"] for identity, rec in project["by_identity"].items()
+            if rec["kind"] == "assembly" and rec["key"] not in placed}
+
+
+def _check_project_root(project, root_identity):
+    """A project that does not name its root assembly takes the packages of the one it holds.
+
+    Its root is the assembly that none of its assemblies places. A package of another root would be added
+    beside it without a word, and everything the project holds would be listed as no longer in the package.
+    """
+    roots = _project_roots(project)
     if roots and root_identity not in roots:
         raise ExchangeError(f"the package's root assembly is not the one this project mirrors ({', '.join(sorted(roots.values()))}); "
                             "import it into a new directory, or name the root in vault-project.toml")

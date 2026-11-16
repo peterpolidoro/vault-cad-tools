@@ -439,10 +439,24 @@ Directives:
      differently in each, with the same `assembly.json` (the difference is
      in each `occurrences.json`, as designed); a version that is not the
      latest has an empty lifecycle state in the server's answers.
-   Still to build: `vault-cad sync-status` (the states of the design
-   document, computed on Linux from a discovery and the project's
-   `source.json` files, written to `sync-status.json`, never into the lock);
-   removing what a package no longer has; the incremental export; an
+   - **`vault-cad sync-status`** (built 2026-11-16, `sync_status.py`, eight
+     tests, 104 in all): from the `discovery.json` of the project's folder
+     and the project's index, offline, each mirrored component as `in_sync`,
+     `vault_newer` or `not_in_closure`, what is new in the root's closure,
+     each publication against the file in the folder, what else the folder
+     holds, and whether a refresh would change anything. Nothing in the
+     project changes; the result goes to a file only when one is named. On
+     real data: the enclosure against the discovery of 2026-11-16 is
+     current, 44 of 44 in sync, its one publication still the version that
+     was published; a scratch project holding version 4 of the root as
+     checked in has 2 `vault_newer` and 4 new, which is what the refresh
+     then updated and added. The design document's states for a file that
+     the repository changed (`repo_newer`, `both_changed`) are not in it:
+     the mirror is never edited here, and for a publication it says whether
+     `part.step` is still the published file.
+   Still to build: removing what a package no longer has (reported as
+   `not_in_package`, kept; no real package has needed it); the incremental
+   export on Windows, which exports only what `sync-status` names; an
    `update_step_file` plan. A refresh on a change made in Vault needs such a
    change: nothing has changed there since October.
 
