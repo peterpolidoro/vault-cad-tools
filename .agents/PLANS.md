@@ -494,6 +494,23 @@ Directives:
      in Vault are hard to remove, so what is tested there stays in the
      project's folder.
 
+   Peter made the test folder himself that day, in his personal area in
+   Vault, with the category the enclosure's own folder has ("Documentation
+   Folder", from the discovery of that day). Its path names him and is kept
+   out of the repositories: it is in the request and in the message to
+   Windows on the exchange share. Begun the same day:
+   - Request `48a71814-4951-404e-a179-38ec856b747a` (`add_step_file`),
+     prepared from the enclosure with `prepare-publish`: the monitor
+     reference model, `designs/parts/aw2725q-monitor/part.step`, as
+     `aw2725q-monitor.step`, the default name. `verify-request`:
+     `valid_not_uploaded`. Preparing it changes nothing in the project.
+   - Asked of Windows (`to-windows/20261116T164141Z-...`): the tests on the
+     new code, a catalog snapshot of that folder (REST, GET only),
+     `plan-publish`, and `Publish-StepToVault.ps1 -DryRun`. No write. The
+     live add needs Peter's explicit request for that request id.
+   - Not decided: where a verified test publication is recorded. The
+     enclosure's `vault.json` need not take it; a scratch clone can.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`
