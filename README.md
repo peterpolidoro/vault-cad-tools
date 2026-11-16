@@ -28,7 +28,7 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 104 portable tests pass in the Guix environment (2026-11-16). The Windows
+The 106 portable tests pass in the Guix environment (2026-11-16). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
@@ -556,6 +556,12 @@ and of the helpers both readers shared.
 ```sh
 python3 run.py import-snapshot /path/to/package --into ../free-standing-tank-enclosure --run RUN
 ```
+
+What the project mirrors and the package no longer has is reported
+(`not_in_package`) and kept. With `--remove-missing` it is removed, directory
+and index entry; a component that an authored assembly under `designs/`
+places is not removed from under it, and the import refuses, naming the
+assembly, before it writes anything (2026-11-16).
 
 A project takes the packages of one root assembly: the one `vault-project.toml`
 names, or, where the project has no such file, the assembly none of its

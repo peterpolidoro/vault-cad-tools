@@ -102,11 +102,11 @@ class PackageImportTests(unittest.TestCase):
     def first(self):
         return import_package(self.package(), self.dest, "run-1")
 
-    def refused(self, message, held=None, run="run-2", **kw):
+    def refused(self, message, held=None, run="run-2", remove_missing=False, **kw):
         package = kw.pop("package", None) or self.package(held, **kw)
         before = tree(self.dest) if self.dest.exists() else None
         with self.assertRaisesRegex(ExchangeError, message):
-            import_package(package, self.dest, run)
+            import_package(package, self.dest, run, remove_missing=remove_missing)
         self.assertEqual(tree(self.dest) if self.dest.exists() else None, before)       # a refusal writes nothing
 
     def test_first_import_writes_one_directory_per_file(self):
@@ -212,6 +212,37 @@ class PackageImportTests(unittest.TestCase):
         self.assertEqual((result["not_in_package"], result["rewritten"], result["unchanged"]), (["b"], ["root", "sub"], ["a"]))
         self.assertTrue((self.dest / "references/parts/b/part.step").is_file())
         self.assertIn("b", [c["key"] for c in self.load("vault-lock.json")["components"]])
+
+    def test_what_the_package_no_longer_has_is_removed_when_asked(self):
+        self.first()
+        held = files()
+        del held["b"]
+        held["sub"]["assembly"]["children"].pop()
+        held["root"]["assembly"]["children"][2].pop("overrides")
+        result = import_package(self.package(held), self.dest, "run-2", remove_missing=True)
+        self.assertEqual((result["removed"], result["not_in_package"], result["rewritten"], result["unchanged"]),
+                         (["b"], [], ["root", "sub"], ["a"]))
+        self.assertFalse((self.dest / "references/parts/b").exists())
+        self.assertEqual([c["key"] for c in self.load("vault-lock.json")["components"]], ["a", "root", "sub"])
+        self.assertTrue((self.dest / "references/receipts/run-1/package.json").is_file())      # the records of its import stay
+        # the same package again finds nothing to remove
+        again = import_package(self.package(held), self.dest, "run-3", remove_missing=True)
+        self.assertEqual((again["removed"], again["not_in_package"], again["unchanged"]), ([], [], ["a", "root", "sub"]))
+
+    def test_what_an_authored_assembly_places_is_not_removed_from_under_it(self):
+        self.first()
+        design = self.dest / "designs/assemblies/with-b"
+        design.mkdir(parents=True)
+        (design / "assembly.json").write_text(json.dumps({"schema_version": 1, "key": "with-b", "children": [
+            {"name": "B:1", "component": "b", "kind": "part", "transform": matrix(0)}]}))
+        held = files()
+        del held["b"]
+        held["sub"]["assembly"]["children"].pop()
+        held["root"]["assembly"]["children"][2].pop("overrides")
+        self.refused("no longer has what an authored assembly places: b \\(placed by designs/assemblies/with-b\\)",
+                     held, remove_missing=True)
+        # without removing, the import goes through and says what it kept
+        self.assertEqual(import_package(self.package(held), self.dest, "run-2")["not_in_package"], ["b"])
 
     def test_a_project_names_its_vault_and_root_and_keeps_its_publications(self):
         self.first()

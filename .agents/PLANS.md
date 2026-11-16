@@ -318,8 +318,8 @@ Directives:
    flattened scene equals the branch's with no placement differing, and it
    matches Inventor's own STEP export of the root assembly solid for solid.
    The same import went into the branch itself on 2026-11-12 and is merged
-   (see the current state). Not built: removing what a package no longer
-   has.
+   (see the current state). Removing what a package no longer has came on
+   2026-11-16 (item 4).
 3. Asked of the Windows agent on 2026-11-12
    (`to-windows/20261112T181749Z-...`): the checks on the new layout on
    Windows (the tests, `status`, `mechanical_cad validate`, a repeat import
@@ -454,10 +454,17 @@ Directives:
      the repository changed (`repo_newer`, `both_changed`) are not in it:
      the mirror is never edited here, and for a publication it says whether
      `part.step` is still the published file.
-   Still to build: removing what a package no longer has (reported as
-   `not_in_package`, kept; no real package has needed it); the incremental
-   export on Windows, which exports only what `sync-status` names; an
-   `update_step_file` plan. A refresh on a change made in Vault needs such a
+   - **Removing what a package no longer has** (built 2026-11-16):
+     `import-snapshot --remove-missing` removes the directories of what the
+     project mirrors and the package lacks, and the index follows; without
+     the switch such files are reported (`not_in_package`) and kept, as
+     before. A component that an authored assembly places is not removed
+     from under it: the import refuses before anything is written and names
+     the assembly. Two tests, 106 in all. No real package has needed it:
+     between the two versions of the enclosure's root nothing left the
+     assembly.
+   Still to build: the incremental export on Windows, which exports only
+   what `sync-status` names; an `update_step_file` plan. A refresh on a change made in Vault needs such a
    change: nothing has changed there since October.
 
 ## Open items

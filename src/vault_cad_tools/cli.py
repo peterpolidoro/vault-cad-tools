@@ -87,6 +87,8 @@ def parser():
     layout.add_argument("package", help="Directory with package.json and files/")
     layout.add_argument("--into", required=True, help="Where references/ and vault-lock.json are written: a new or empty directory, or a project")
     layout.add_argument("--run", required=True, help="Name under which the exporter's records are kept (references/receipts/<run>/)")
+    layout.add_argument("--remove-missing", action="store_true",
+                        help="Remove what the project mirrors and the package no longer has; without it such files are reported and kept")
     sync = sub.add_parser("sync-status", help="Say which files of the project's mirror are what Vault holds today, from the "
                           "discovery.json of windows/Discover-VaultFolder.ps1; offline, and nothing in the project changes")
     sync.add_argument("discovery", help="discovery.json of the project's Vault folder")
@@ -160,7 +162,7 @@ def execute(args):
             raise ExchangeError(f"{args.package} has no package.json: it is not a package of windows/Export-Package.ps1. "
                                 "The package of the earlier exporter (native-snapshot.json, scene.json, assets/) is no "
                                 "longer read")
-        return import_package(args.package, args.into, args.run)
+        return import_package(args.package, args.into, args.run, remove_missing=args.remove_missing)
     if args.command == "sync-status":
         from .sync_status import sync_status
         return sync_status(args.project, args.discovery, args.output)

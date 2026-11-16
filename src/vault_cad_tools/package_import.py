@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -448,10 +449,29 @@ def _ordered(record, order):
     return {k: record[k] for k in order if k in record}
 
 
-def import_package(package, dest, run):
+def _placed_by_designs(dest):
+    """{component key: the authored assemblies that place it}, from designs/assemblies/*/assembly.json."""
+    placed = {}
+    base = dest / "designs" / "assemblies"
+    for d in sorted(base.iterdir()) if base.is_dir() else []:
+        manifest = d / "assembly.json"
+        if not manifest.is_file():
+            continue
+        data = _read_json(manifest)
+        for child in (data.get("children") or []) if isinstance(data, dict) else []:
+            if isinstance(child, dict) and isinstance(child.get("component"), str):
+                placed.setdefault(child["component"], []).append(f"designs/assemblies/{d.name}")
+    return placed
+
+
+def import_package(package, dest, run, remove_missing=False):
     """Read one exporter package into the project (or the new, empty directory) `dest`.
 
     run: the name under which package.json is kept (references/receipts/<run>/); it must be new.
+    remove_missing: what the project mirrors and the package no longer has is removed, where it is otherwise
+    reported (`not_in_package`) and kept. A package holds everything its root assembly uses, so what it lacks
+    has left the assembly in Vault. Refused, before anything is written, when an authored assembly places such
+    a component: that assembly has to change first.
     Returns what happened to every file of the package, by key.
     """
     package, dest = Path(package), Path(dest)
@@ -532,6 +552,15 @@ def import_package(package, dest, run):
             entry["state"] = "unchanged" if same else "rewritten"
         outcome[entry["state"]].append(entry["key"])
 
+    in_package = {entry["key"] for entry in files.values()}
+    missing = sorted(set(project["components"]) - in_package) if project else []
+    if remove_missing and missing:
+        placed = _placed_by_designs(dest)
+        held = [f"{key} (placed by {', '.join(placed[key])})" for key in missing if key in placed]
+        if held:
+            raise ExchangeError("the package no longer has what an authored assembly places: " + "; ".join(held)
+                                + ". Change the assembly first, or import without removing")
+
     # ---- nothing has been written up to here ----
     dest.mkdir(parents=True, exist_ok=True)
     try:
@@ -561,20 +590,25 @@ def import_package(package, dest, run):
             else:
                 write_json(d / "assembly.json", entry["write_assembly"])
             write_json(d / "source.json", entry["write_source"])
+        removed = []
+        if remove_missing:
+            for key in missing:
+                shutil.rmtree(project["components"][key]["dir"])
+                removed.append(key)
         lock = {"schema_version": LOCK_SCHEMA_VERSION, "components": derive_components(dest),
                 "publications": project["lock"]["publications"] if project else []}
         write_json(dest / "vault-lock.json", lock)
     finally:
         (dest / OPERATION_LOCK).unlink()
 
-    in_package = {entry["key"] for entry in files.values()}
     return {
         "destination": str(dest), "run": run, "root": files[root_identity]["key"],
         "parts": sum(e["kind"] == "part" for e in files.values()),
         "assemblies": sum(e["kind"] == "assembly" for e in files.values()),
         "overrides": sum(len(found) for posed in overrides.values() for found in posed.values()),
         **{state: sorted(found) for state, found in outcome.items()},
-        "not_in_package": sorted(set(project["components"]) - in_package) if project else [],
+        "not_in_package": [key for key in missing if key not in removed],
+        "removed": removed,
         "to_measure": sorted(to_measure),
         "vault_and_root_checked_against_project": vault_checked,
         "not_exported": manifest["not_exported"],
