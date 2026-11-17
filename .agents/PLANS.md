@@ -602,6 +602,21 @@ Directives:
      on either side and to be designed first), and the file referenced
      from an Inventor assembly in the test folder.
 
+   Asked of Windows on 2026-11-17 after that
+   (`to-windows/20261117T152717Z-...`), all of it reading, for Peter to
+   start: the corrected pre-check line rehearsed offline, if the shared
+   clone has 14fe60a by then (it is brought level on his word); the
+   properties of the file published on 2026-10-22 beside those of the test
+   file, to see whether the server fills in the same lab whatever the
+   folder; and a read-only discovery of the Vault folder of a second
+   project, the one `mouse-joysticks-mech` holds a STEP export of, whose
+   natives Peter said that day are in Vault. The folder is named in that
+   message and in the ignored notes of the `mechanical-cad` checkout. A
+   mirror of it would be asked for separately. Peter that day also wanted
+   the three Windows tasks of `mechanical-cad/docs/direction.md` (the plan
+   of 2026-11-17): the published file referenced from an Inventor assembly
+   in the test folder, the revision, and these properties.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`
