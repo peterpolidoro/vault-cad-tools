@@ -26,8 +26,10 @@ Not implemented: updating or checking in an existing Vault file, folder-level
 discovery, change detection against the lock, incremental re-export, a single
 synchronisation command, unattended operation, and export through the Job
 Processor. The synchronisation between Vault and a repository is a design
-document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
-Vault without Peter's explicit request.
+document only (`docs/native-checkin-adapter-design.md`), and so is a revision
+of a published STEP file as a new version of the same file
+(`docs/update-step-file-design.md`, 2026-11-17: nothing of it is built).
+Nothing writes to Vault without Peter's explicit request.
 
 The 108 portable tests pass in the Guix environment (2026-11-17). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.

@@ -647,8 +647,36 @@ Directives:
      version with a check-in date of year 1 is the place of a check-out,
      said so by the discovery and refused by
      `Get-VaultDependencySnapshot.ps1`.
-   - Waiting for Peter: whether the second project is mirrored and from
-     which assembly, and his word for the next Windows task.
+   - Peter the same day: the second project is not being worked on and
+     may serve as an example; a mirror of it for testing may be made in
+     the shared directory; `mouse-joysticks-mech` is left alone.
+
+   Asked of Windows after that (`to-windows/20261117T191339Z-...`), for
+   Peter to start, nothing written to Vault:
+   - A: the two script changes above, as a patch with self-tests.
+   - B: the definitions of the two properties the server fills in on a
+     published file, to see where the lab comes from; of a list only its
+     length and the place of the value in it are kept.
+   - C: the mirror of the second project for testing: the one assembly by
+     its version id with its closure, acquired and exported; the mirror in a
+     directory of its own under `mirrors/` on the share, the package in
+     the evidence.
+   - D: the pilot of `docs/native-checkin-adapter-design.md` 5.5 up to the
+     point where it would write: the published STEP file of the test
+     folder downloaded, a wrapper part and an assembly made in a scratch
+     workspace, the SDK members for two adds with associations looked up
+     offline, a pilot script with gates run with `-DryRun` only, and a
+     report of exactly what a live run would write. The live run is a
+     later task, on Peter's word, after he is told what it writes.
+   On Linux meanwhile: the design of `update_step_file`, written that day
+   as `docs/update-step-file-design.md` and not built: the request with
+   the expected version, the plan's reads, the journal's states for a
+   check-out that is visible to everyone, the executor's order and when
+   an undo may be sent, verification, and the pilot that finds out what
+   is not known. Windows is to read and correct it before step 1 of its
+   section 9 (the portable side, on Linux) is built. Its section 10 holds
+   three points for Peter; the first, which payload the pilot's update
+   uses, has to be settled before the pilot.
 
 ## Open items
 
