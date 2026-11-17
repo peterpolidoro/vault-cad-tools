@@ -570,9 +570,37 @@ Directives:
    The live run needs an Autodesk ID signed in on the Windows machine and
    refuses before the journal moves when there is none.
    When the result comes: into a scratch clone of the enclosure with
-   `import-publication-result`, not into the enclosure's repository. Then
+   `import-publish-result`, not into the enclosure's repository. Then
    `update_step_file` (a revision as a new version of the same file) is
    to be designed and built on both sides.
+
+   **Done the same day** (`evidence/2026-11-17-windows-publish-live-01/`,
+   65 files checked on Linux; review in
+   `evidence/2026-11-17-linux-windows-publish-live-review-01/`, 34 checks):
+   - The file is in the test folder: master 998335, version 998336,
+     version 1. `-Live` ran once. `record-publish` verified it, and the
+     file that came back from Vault is, on Linux too, the blob the
+     provenance names in the enclosure's repository.
+     `results/48a71814-....json` is on the share.
+   - Taken into a scratch clone of the enclosure with
+     `import-publish-result`: the part gets its `vault.json`, the index its
+     second publication, and `status` reports the part `as_published`.
+     The clone is not kept: the result on the share is the record.
+   - What the server made of the file is what it made of the file of
+     2026-10-22: category "Cutsheets & Fabrication Files", a lifecycle with
+     the state "Work in Progress", revision 0. The rule does not come from
+     the folder. It also filled two properties nobody asked for, a design
+     department and a lab; which lab a published file belongs to is one
+     of the open questions of the design document (section 10).
+   - Corrected afterwards: the live run's pre-check counted a nothing as
+     one file (`@($null).Count`); a plan's `existing_files_in_folder`
+     counted the files of the request's name and is replaced by
+     `files_in_folder` and `files_of_this_name_in_folder`. The corrected
+     line of the live branch has not run on Windows.
+   - Left of step 2: a revision as a new version of the same file
+     (`update_step_file`: a check-out, the new bytes, a check-in; not built
+     on either side and to be designed first), and the file referenced
+     from an Inventor assembly in the test folder.
 
 ## Open items
 
@@ -652,8 +680,8 @@ The Vault server's name does not resolve from the Linux workstation; Windows
 reaches it over plain HTTP. Authenticated REST reads are verified from Windows
 with the Windows identity; Vault-account login (`POST /sessions`) is implemented
 but was not exercised live. The Python CLI has no integrated Windows
-authentication; the PowerShell helper supplies the token. One file has been
-written to Vault, by the gated executor. Automatic export job submission and LFS
+authentication; the PowerShell helper supplies the token. Two files have been
+written to Vault, each by the gated executor (2026-10-22, 2026-11-17). Automatic export job submission and LFS
 payload resolution are not implemented. Search is deliberately one page with the
 returned cursor preserved. ByRef COM calls (`CreateGeometryProxy`, translator
 `Open`) are made through the compiled C# helper. Export metadata counts come from

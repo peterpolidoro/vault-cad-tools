@@ -214,7 +214,9 @@ try {
     $folder = $mgr.DocumentService.GetFolderByPath($ExpectedFolder)
     $run.precheck = [ordered]@{ folder_id_from_server = [string]$folder.Id; folder_full_name = $folder.FullName }
     if ([string]$folder.Id -ne [string]$ExpectedFolderId) { $run.notes += "server folder id $($folder.Id) != expected $ExpectedFolderId"; Finish "refused_folder_id" 2 }
-    $latest = @($mgr.DocumentService.GetLatestFilesByFolderId($folder.Id, $true))
+    # An empty folder may answer with nothing, and @($null).Count is 1 in Windows PowerShell: leave a nothing out,
+    # so that the count recorded is the count of files (the add of 2026-11-17 recorded 1 for an empty folder).
+    $latest = @($mgr.DocumentService.GetLatestFilesByFolderId($folder.Id, $true) | Where-Object { $null -ne $_ })
     $run.precheck.latest_files_including_hidden = $latest.Count
     $collision = @($latest | Where-Object { $_.Name -ieq $name })
     $run.precheck.name_collision = $collision.Count

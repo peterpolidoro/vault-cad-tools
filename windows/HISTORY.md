@@ -8,6 +8,30 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — the first add from the new layout, into a test folder (2026-11-17)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-17-windows-publish-live-01/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261117T134510Z-...` after Peter allowed files in his test folder
+to be read and written. This entry was written on Linux from that report; nothing under `windows/` changed in
+the task.
+
+- One file was added, once: the monitor reference model of the enclosure as `aw2725q-monitor.step`, 652 556
+  bytes, request `48a71814-...`: master 998335, version 998336, version number 1.
+  `Publish-StepToVault.ps1 -Live` ran once with its five gates and the defaults (`-LicenseMode Token`,
+  `-Route Vdf`); before it the tests, `verify-request`, `plan-publish` again and the dry run (17 of 17).
+- `record-publish` verified it: the content downloaded has the payload's size, SHA-256 and CRC32. The
+  journal went `planned`, `uploading`, `uploaded`, `verified`.
+- What the server made of it is what it made of the file of 2026-10-22 in the project's folder: category
+  "Cutsheets & Fabrication Files", a lifecycle with the state "Work in Progress", revision 0, no visualization
+  attachment. The folder's own category plays no part. The server also filled two properties the request does
+  not name (a design department and a lab).
+- Sent besides the add: 2 sign-ins, 18 GET of which one download; through the SDK the sign-in, the two
+  pre-checks and the sign-out. Nothing else written.
+- Found: the pre-check recorded one file in an empty folder, because `@($null).Count` is 1 in Windows
+  PowerShell. It changed no decision (no file of that name). Corrected on Linux afterwards in the live branch:
+  a nothing is left out before counting. **That line has not run on Windows**; rehearse it offline before the
+  next live run.
+
 ## Result — a dry run of publishing from the new layout into a test folder (2026-11-16)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-16-windows-publish-dry-run-01/` (report `REPORT.md`, which records the

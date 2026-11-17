@@ -112,7 +112,9 @@ class PlanTests(PlanningFixture):
 
     def test_other_names_do_not_collide(self):
         files = [{"name": "new-part-v2.step", "version_id": "901", "master_id": "900", "version": 1, "size": 10}]
-        self.assertEqual(self.plan(catalog=self.catalog(files=files))["existing_files_in_folder"], 0)
+        plan = self.plan(catalog=self.catalog(files=files))
+        self.assertEqual((plan["files_in_folder"], plan["files_of_this_name_in_folder"]), (len(files), 0))
+        self.assertNotIn("existing_files_in_folder", plan)      # it counted the files of the name, and said the folder's
 
     def test_tampered_payload_refused_before_journal(self):
         (self.request_dir / "payload.step").write_bytes(STEP + b"x")

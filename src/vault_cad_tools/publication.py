@@ -373,7 +373,8 @@ def plan_publication(request_dir, catalog, journal, exchange=None, comment_prefi
         if readiness == "ready":
             journal.record(request_id, state="refused", note="destination folder does not exist")
         raise ExchangeError(f"Destination folder {destination['folder']} does not exist; folders are never created implicitly")
-    collisions = [f for f in catalog.files_in_folder(folder["id"]) if str(f.get("name", "")).casefold() == destination["name"].casefold()]
+    listed = catalog.files_in_folder(folder["id"])
+    collisions = [f for f in listed if str(f.get("name", "")).casefold() == destination["name"].casefold()]
     if collisions and readiness == "ready":
         journal.record(request_id, state="refused", note="name collision: " + ", ".join(
             f"{c['name']} (master {c.get('master_id')}, version {c.get('version_id')})" for c in collisions))
@@ -391,7 +392,9 @@ def plan_publication(request_dir, catalog, journal, exchange=None, comment_prefi
         "payload": {"path": str(payload), "sha256": request["payload"]["sha256"], "bytes": request["payload"]["bytes"]},
         "comment": f"{comment_prefix} request {request_id}; git {request['provenance']['git_commit']}; "
                    f"{request['provenance']['project_path']}",
-        "existing_files_in_folder": len(collisions),
+        # What the catalog lists in the folder, and how many of those carry the destination's name. A
+        # catalog may not show hidden files (REST on Vault 2025 does not); the executor asks the SDK.
+        "files_in_folder": len(listed), "files_of_this_name_in_folder": len(collisions),
         "sdk_route": SDK_ROUTE,
         "sdk_calls": [] if readiness != "ready" else [
             {"step": 1, "api": SDK_SIGN_IN, "arguments": {"vault": identity["name"]}},

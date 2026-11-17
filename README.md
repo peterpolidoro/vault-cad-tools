@@ -12,9 +12,10 @@ the enclosure pilot:
   bound to its acquired hash. The project imported them with provenance in
   `vault-lock.json`, and FreeCAD reconstructs the assembly's 479 solids from
   them.
-- **Repository to Vault.** One new STEP file was added through the Vault SDK
-  from a gated, journaled request and verified by an exact-byte re-download
-  (2026-10-22).
+- **Repository to Vault.** A new STEP file is added through the Vault SDK
+  from a gated, journaled request and verified by an exact-byte re-download.
+  Done twice: on 2026-10-22, and on 2026-11-17 for a part authored in the
+  new layout.
 - **Read-only audits.** The native BOM views, and the drawing and attachment
   associations of every acquired version.
 - **Pilots in a disposable copy only.** Native parameter-driven authoring,
@@ -287,7 +288,8 @@ Measurement and native authoring (added for the command-line pilot):
     (`-Route Vdf`, default) and journals `uploaded` with the returned ids and an
     `execution.json`, or `ambiguous` on any exception (no retry). Without either
     switch it refuses before touching anything. First verified live add: 2026-10-22
-    (`evidence/2026-10-22-windows-vault-pilot-01/`).
+    (`evidence/2026-10-22-windows-vault-pilot-01/`); the first from the new layout:
+    2026-11-17 (`evidence/2026-11-17-windows-publish-live-01/`).
 15. `Audit-NativeBom.ps1 -NativeAssembly IAM -WorkspaceRoot MIRROR -OutputDirectory NEW -Acquisition ... -Inventory ...`
     is the READ-ONLY native bill-of-materials audit: it binds every opened document to
     the acquisition record, records every row of the model-data, structured (all
