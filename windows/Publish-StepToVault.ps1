@@ -5,8 +5,11 @@ Windows executor for an `add_step_file` publication plan: dry run (reflection on
 .DESCRIPTION
 Dry run (no connection, no credential read, nothing sent):
     & .\windows\Publish-StepToVault.ps1 -Plan <exchange>\plans\<uuid>.json -OutputDirectory NEW -DryRun
-Re-verifies the payload bytes against the plan, resolves every SDK member the plan names by reflection
-against the installed Vault client assemblies and writes <OutputDirectory>\dry-run.json.
+Re-verifies the payload bytes against the plan, resolves by reflection against the installed Vault client
+assemblies every SDK member a live run calls (both license modes, both routes) and writes
+<OutputDirectory>\dry-run.json. Its `would_call` names the calls of the license mode and the route given
+(-LicenseMode, -Route; the defaults are those of a live run), not the calls of the other ones. No static
+member is invoked: whether an Autodesk ID is signed in on this machine is only asked by a live run.
 
 Live add (exactly one file, explicitly gated):
     & .\windows\Publish-StepToVault.ps1 -Plan ... -OutputDirectory NEW -Live -RequestId UUID `
@@ -83,7 +86,7 @@ $resolver = [ResolveEventHandler]{ param($s, $e) try { if (-not $clientDir) { re
 function Load($name) { $candidate = Join-Path $VaultClientDirectory "$name.dll"; if (-not (Test-Path -LiteralPath $candidate)) { throw "Assembly not installed: $candidate" }; [Reflection.Assembly]::LoadFrom($candidate) }
 
 if ($DryRun) {
-    $findings = [ordered]@{ generated_at = (Utc); plan = (Resolve-Path -LiteralPath $Plan).Path; request_id = $planObj.request_id; mode = "dry_run"; live_execution_refused = $true; network_access = $false; credentials_read = $false }
+    $findings = [ordered]@{ generated_at = (Utc); plan = (Resolve-Path -LiteralPath $Plan).Path; request_id = $planObj.request_id; mode = "dry_run"; live_execution_refused = $true; network_access = $false; credentials_read = $false; license_mode = $LicenseMode; route = $Route }
     $findings.payload = [ordered]@{ path = $payloadPath; verified = $payloadOk; note = $payloadNote; sha256 = $planObj.payload.sha256; bytes = $planObj.payload.bytes }
     if ($planObj.status -ne "planned_not_executed") { $findings.plan_status_note = "plan status is '$($planObj.status)'; nothing would be executed" }
     [AppDomain]::CurrentDomain.add_AssemblyResolve($resolver)
@@ -94,6 +97,7 @@ if ($DryRun) {
         $found = $null
         if ($kind -eq "ctor") { foreach ($c in $t.GetConstructors()) { $names = @($c.GetParameters() | ForEach-Object { $_.ParameterType.Name }); if ((@($names) -join ',') -eq ($paramTypeNames -join ',')) { $found = $c; break } } }
         elseif ($kind -eq "enum") { if ($t.IsEnum -and [Enum]::GetNames($t) -contains $memberName) { $found = $memberName } }
+        elseif ($kind -eq "static") { $found = $t.GetMethod($memberName, [Reflection.BindingFlags]'Public,Static', $null, [Type[]]@(), $null) }
         else { foreach ($m in $t.GetMethods()) { if ($m.Name -ne $memberName) { continue }; $names = @($m.GetParameters() | ForEach-Object { $_.ParameterType.Name }); if (-not $paramTypeNames -or (@($names) -join ',') -eq ($paramTypeNames -join ',')) { $found = $m; break } } }
         if ($found) { $script:resolved += [ordered]@{ type = $typeName; member = $(if ($kind -eq 'ctor') { '.ctor' } else { $memberName }); parameters = @($paramTypeNames); assembly = $asm.GetName().Name; file_version = [Diagnostics.FileVersionInfo]::GetVersionInfo($asm.Location).FileVersion } }
         else { $script:unresolved += "$typeName::$memberName($($paramTypeNames -join ','))" }
@@ -102,11 +106,15 @@ if ($DryRun) {
         $ws = Load "Autodesk.Connectivity.WebServices"; $vdf = Load "Autodesk.DataManagement.Client.Framework.Vault"
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.ServerIdentities" ".ctor" @() "ctor"
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WinAuthCredentials" ".ctor" @("ServerIdentities", "String", "Boolean", "NetworkCredential") "ctor"
+        # -LicenseMode Token, the default of a live run: the static queries of the Autodesk ID and the constructor that takes its token.
+        foreach ($query in "IsLoggedIn", "IsLoginValid", "GetUserId", "GetOAuthToken") { Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.AutodeskAccount" $query @() "static" }
+        Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WinAuthCredentials" ".ctor" @("ServerIdentities", "String", "String", "NetworkCredential") "ctor"
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WebServiceManager" ".ctor" @("IWebServiceCredentials", "Int32") "ctor"
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.Connection" ".ctor" @("WebServiceManager", "String", "Int64", "String", "AuthenticationFlags") "ctor"
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.AuthenticationFlags" "WindowsAuthentication" @() "enum"
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "GetFolderByPath" @("String")
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "GetLatestFilesByFolderId" @("Int64", "Boolean")
+        Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Entities.Folder" ".ctor" @("Connection", "Folder") "ctor"
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Services.Connection.IFileManager" "AddFile" @("Folder", "String", "String", "DateTime", "FileAssocParam[]", "BOM", "FileClassification", "Boolean", "Stream")
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.FilestoreService" "UploadFilePart" @("Stream")
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "AddUploadedFile" @("Int64", "String", "String", "DateTime", "FileAssocParam[]", "BOM", "FileClassification", "Boolean", "ByteArray")
@@ -114,13 +122,23 @@ if ($DryRun) {
     } catch { $unresolved += "assembly load: $($_.Exception.Message)" } finally { [AppDomain]::CurrentDomain.remove_AssemblyResolve($resolver) }
     $findings.sdk = [ordered]@{ client_directory = $VaultClientDirectory; resolved = $resolved; unresolved = $unresolved }
     $lastWrite = $(if ($payloadOk) { (Get-Item -LiteralPath $payloadPath).LastWriteTimeUtc.ToString("o") } else { $null })
+    # The calls of the license mode and the route given, as the live branch below makes them.
+    if ($LicenseMode -eq "Token") {
+        $signInCall = "AutodeskAccount.IsLoggedIn(), IsLoginValid(), GetUserId(), GetOAuthToken() (static; no Login dialog; refused when no valid Autodesk ID is signed in); new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, token, CredentialCache.DefaultNetworkCredentials), timeout)"
+        $signInCredentials = "current Windows identity, and the named-user license as the token of the Autodesk ID signed in to the Identity Manager on this machine; the token stays in memory; nothing written to disk"
+    } else {
+        $signInCall = "new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, false, CredentialCache.DefaultNetworkCredentials), timeout)"
+        $signInCredentials = "current Windows identity; never written to disk"
+    }
+    if ($Route -eq "Vdf") { $addCall = "new Connection(webServiceManager, vault, userId, server, AuthenticationFlags.WindowsAuthentication); new Entities.Folder(connection, folder); connection.FileManager.AddFile(folderEntity, filename, comment, lastWrite, null, null, FileClassification.None, false, stream)" }
+    else { $addCall = "FilestoreService.UploadFilePart(stream) -> ticket; DocumentService.AddUploadedFile(folderId, filename, comment, lastWrite, null, null, FileClassification.None, false, ticket)" }
     $findings.would_call = @(
-        [ordered]@{ step = 1; call = "new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, false, CredentialCache.DefaultNetworkCredentials), timeout)"; arguments = [ordered]@{ vault = $planObj.vault.name; server = $Server; credentials = "current Windows identity; never written to disk" } },
+        [ordered]@{ step = 1; call = $signInCall; arguments = [ordered]@{ vault = $planObj.vault.name; server = $Server; license_mode = $LicenseMode; credentials = $signInCredentials } },
         [ordered]@{ step = 2; call = "DocumentService.GetFolderByPath(path)"; arguments = [ordered]@{ path = $planObj.destination.folder }; expect = [ordered]@{ Id = $planObj.destination.folder_id } },
         [ordered]@{ step = 3; call = "DocumentService.GetLatestFilesByFolderId(folderId, true)"; arguments = [ordered]@{ folderId = $planObj.destination.folder_id }; expect = "no file named '$($planObj.destination.name)' (case-insensitive); otherwise refuse (if_exists: fail)" },
         [ordered]@{ step = 4; call = "vault-cad mark-uploading (journal planned -> uploading) BEFORE the mutating call" },
-        [ordered]@{ step = 5; call = "FilestoreService.UploadFilePart(stream) -> ticket; DocumentService.AddUploadedFile(folderId, filename, comment, lastWrite, null, null, FileClassification.None, false, ticket)"; arguments = [ordered]@{ filename = $planObj.destination.name; comment = $planObj.comment; lastWrite_utc = $lastWrite; classification = "None"; hidden = $false; contents_sha256 = $planObj.payload.sha256; contents_bytes = $planObj.payload.bytes }; on_exception = "vault-cad mark-ambiguous; no automatic retry; reconcile-publish inspects the folder" },
-        [ordered]@{ step = 6; call = "vault-cad mark-uploaded --master-id File.MasterId --version-id File.Id --execution execution.json; then vault-cad record-publish re-downloads version Id and compares folder listing, bytes, size and CRC32" }
+        [ordered]@{ step = 5; call = $addCall; arguments = [ordered]@{ route = $Route; filename = $planObj.destination.name; comment = $planObj.comment; lastWrite_utc = $lastWrite; classification = "None"; hidden = $false; contents_sha256 = $planObj.payload.sha256; contents_bytes = $planObj.payload.bytes }; on_exception = "vault-cad mark-ambiguous; no automatic retry; reconcile-publish inspects the folder" },
+        [ordered]@{ step = 6; call = "vault-cad mark-uploaded --master-id <the master id returned> --version-id <the version id returned> --execution execution.json; then vault-cad record-publish re-downloads version Id and compares folder listing, bytes, size and CRC32" }
     )
     $findings.verdict = [ordered]@{ payload_verified = $payloadOk; sdk_members_resolved = ($unresolved.Count -eq 0); resolved_count = $resolved.Count; unresolved_count = $unresolved.Count; dry_run_ok = ($payloadOk -and $unresolved.Count -eq 0) }
     $findings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory "dry-run.json") -Encoding UTF8

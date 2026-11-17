@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from test_workflow import NEW_PART, ProjectFixture, STEP  # noqa: E402
+from vault_cad_tools import publication  # noqa: E402
 from vault_cad_tools.api import VaultClient  # noqa: E402
 from vault_cad_tools.exchange import prepare_publication, verify_request  # noqa: E402
 from vault_cad_tools.project import ExchangeError, atomic_json  # noqa: E402
@@ -61,14 +62,32 @@ class PlanTests(PlanningFixture):
         self.assertEqual(plan["status"], "planned_not_executed")
         self.assertEqual(plan["destination"]["folder_id"], "77")
         self.assertEqual(plan["payload"]["sha256"], self.request["payload"]["sha256"])
-        self.assertIn("UploadFilePart", plan["sdk_calls"][4]["api"])
         self.assertEqual(self.state(), "planned")
         written = json.loads(Path(plan["plan_path"]).read_text(encoding="utf-8"))
         self.assertEqual(written["request_id"], self.rid)
         self.assertEqual(Path(plan["plan_path"]).parent.name, "plans")
         self.assertEqual(self.project().lock["publications"], [])
+
+    def test_plan_names_the_calls_of_the_executors_default_route(self):
+        """The sign-in with the Autodesk ID's token and the add through FileManager.AddFile: the route the
+        add of 2026-10-22 took. The two forms that failed that day are not what a plan lists."""
+        plan = self.plan()
+        calls = {call["step"]: call for call in plan["sdk_calls"]}
+        self.assertEqual(sorted(calls), [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual((calls[1]["api"], calls[5]["api"]), (publication.SDK_SIGN_IN, publication.SDK_ADD))
+        self.assertIn("GetOAuthToken", calls[1]["api"])
+        self.assertIn("FileManager.AddFile", calls[5]["api"])
+        for failed in ("readOnly=false", "UploadFilePart", "AddUploadedFile"):
+            self.assertNotIn(failed, json.dumps(plan["sdk_calls"]))
+        self.assertEqual(plan["sdk_route"], {"license_mode": "Token", "route": "Vdf", "note": publication.SDK_ROUTE["note"]})
+
+    def test_plan_holds_no_credential(self):
+        """Two constant texts name the token as a thing: the sign-in step and the route. Nothing else does."""
+        plan = self.plan()
+        rest = {key: value for key, value in plan.items() if key != "sdk_route"}
+        rest["sdk_calls"] = [dict(call, api="") if call["step"] == 1 else call for call in plan["sdk_calls"]]
         for secret in ("token", "password", "authorization"):
-            self.assertNotIn(secret, json.dumps(plan).lower())
+            self.assertNotIn(secret, json.dumps(rest).lower())
 
     def test_vault_mismatch_refused(self):
         with self.assertRaisesRegex(ExchangeError, "vault mismatch"):
@@ -322,7 +341,9 @@ class RestCatalogTests(unittest.TestCase):
                    "1": [{"id": "5", "name": "Projects", "fullName": "$/Projects"}],
                    "5": [{"id": "77", "name": "Incoming", "fullName": "$/Projects/Incoming"}],
                    "77": []}
-        contents = {"77": [{"id": "901", "name": "Existing.STEP", "version": 2, "size": 3, "file": {"id": "900"}, "isHidden": True}]}
+        contents = {"77": [{"id": "901", "name": "Existing.STEP", "version": 2, "size": 3, "file": {"id": "900"}, "isHidden": True,
+                            "entityType": "FileVersion"},
+                           {"id": "78", "name": "A sub-folder", "entityType": "Folder"}]}
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -373,6 +394,7 @@ class RestCatalogTests(unittest.TestCase):
         self.assertTrue(all(auth == "Bearer test-token" for _, _, auth in self.requests))
 
     def test_contents_include_hidden_paginate_and_map_ids(self):
+        """The listing of a folder holds its sub-folders as well; only what is not a folder is a file."""
         self.requests.clear()
         files = self.catalog.files_in_folder("77")
         self.assertEqual(files, [{"name": "Existing.STEP", "version_id": "901", "master_id": "900", "version": 2, "size": 3, "hidden": True}])

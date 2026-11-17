@@ -74,11 +74,20 @@ Offline suites, none of which needs Inventor or Vault:
 - Add files through `Connection.FileManager.AddFile` (`-Route Vdf`); the raw
   `FilestoreService.UploadFilePart` + `AddUploadedFile` pair answered Vault error 155 on
   this server and stays available only for diagnosis (`-Route Soap`).
+- Before a live add, `Publish-StepToVault.ps1 -DryRun` on the plan. It resolves by
+  reflection the seventeen SDK members of both license modes and both routes, and its
+  `would_call` names the calls of the mode and route given, which by default are those
+  of a live run. It invokes none of them: whether an Autodesk ID is signed in is asked
+  by the live run, which refuses before the journal moves.
 - Git: the shared clones under `U:\Repositories\github\` are the only remote used on
   this machine (`shared`); Peter pushes to GitHub and fast-forwards them.
 
 ## Rules that came out of the pilots
 
+- A walk to a Vault folder by its path (`vault-cad catalog-snapshot`, `plan-publish`,
+  `Discover-VaultFolder.ps1 -FolderPath`) asks the server for the sub-folders of every
+  level above it. In a personal area those are other people's folders: keep the
+  folders on the path, each with its id, and nothing of what else a level holds.
 - Every script that drives Inventor should start it through
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
   `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,

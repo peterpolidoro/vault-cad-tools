@@ -28,7 +28,7 @@ Processor. The synchronisation between Vault and a repository is a design
 document only (`docs/native-checkin-adapter-design.md`). Nothing writes to
 Vault without Peter's explicit request.
 
-The 106 portable tests pass in the Guix environment (2026-11-16). The Windows
+The 108 portable tests pass in the Guix environment (2026-11-17). The Windows
 side's own suites and results are recorded in `windows/HISTORY.md`.
 
 Where this work is going, and the layout of project repositories that the
@@ -273,9 +273,11 @@ Measurement and native authoring (added for the command-line pilot):
     were left, and a ninth came on 2026-11-16 (item 12).
 14. `Publish-StepToVault.ps1 -Plan plans/UUID.json -OutputDirectory NEW -DryRun`
     re-verifies the payload named by a plan from `vault-cad plan-publish`, resolves
-    the eleven SDK members of the add route by reflection against the installed Vault
-    Client 2025 assemblies without opening a connection or reading a credential, and
-    writes `dry-run.json` with the call sequence it would use. With `-Live -RequestId
+    by reflection against the installed Vault Client 2025 assemblies the seventeen SDK
+    members of both license modes and both routes, without opening a connection or
+    reading a credential, and writes `dry-run.json` with the call sequence of the
+    license mode and route given (by default those of a live run). It invokes no
+    member: whether an Autodesk ID is signed in is asked by the live run only. With `-Live -RequestId
     UUID -ExpectedFolder '$/...' -ExpectedFolderId N -ExpectedPayloadSha256 SHA -Journal
     FILE` it performs exactly one add: every gate must match the plan and the journal
     entry must be `planned`; it signs in with Windows authentication plus the Autodesk

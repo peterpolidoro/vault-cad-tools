@@ -511,6 +511,47 @@ Directives:
    - Not decided: where a verified test publication is recorded. The
      enclosure's `vault.json` need not take it; a scratch clone can.
 
+   The dry run came back the same day
+   (`evidence/2026-11-16-windows-publish-dry-run-01/`, 69 files, checked on
+   Linux on 2026-11-17 against its checksums; review in
+   `evidence/2026-11-17-linux-windows-publish-dry-run-review-01/`):
+   - Nothing was written to Vault. Windows sent 2 sign-ins and 21 GET, no
+     download. Seven of the GET are not made by the two commands asked for:
+     the folders on the path read by id, and the test folder read again
+     afterwards. Nothing of the levels above the test folder is kept.
+   - The folder is there and empty as far as REST lists (REST does not
+     show hidden files on this server; the live run's own check through
+     the SDK does). The plan is `planned_not_executed`; the journal on the
+     Windows host holds the request as `planned`.
+   - The dry run on the script as committed passed and showed a fault of
+     the record, not of the route: for the sign-in and for the add it named
+     the two forms that failed on 2026-10-22 (license error 319, Vault
+     error 155), not the calls a live run makes by default, and six members
+     of the default path were not resolved. Windows corrected the dry-run
+     branch only (`would_call` follows `-LicenseMode` and `-Route`;
+     seventeen members instead of eleven); the live branch is the same
+     text. Patch applied here on 2026-11-17.
+   - The plan had the same fault in `sdk_calls`, written by
+     `publication.py`. Corrected: steps 1 and 5 name the default route
+     (`SDK_SIGN_IN`, `SDK_ADD`), and the plan says which route it lists
+     (`sdk_route`). These texts describe; the executor does not read them
+     and the fingerprint does not cover them, so the plan on the share
+     (written by the older code) and its journal entry still stand. A plan
+     made again with this code would say the right calls.
+   - `RestCatalog.files_in_folder` took every named entry of a folder's
+     listing as a file; the listing holds sub-folders too. It now leaves
+     out what answers as `entityType` "Folder", the rule
+     `Discover-VaultFolder.ps1` has. Not met on real data: neither folder
+     read so far has a sub-folder. Two tests, 108 in all.
+   - What the dry run cannot show: whether an Autodesk ID is signed in on
+     the Windows machine (the live run asks, and refuses before the journal
+     moves), who else may use the folder, and which category and lifecycle
+     state the server gives a new STEP file there.
+   - Next: the live add, on Peter's explicit request for that request id.
+     Recommended with it: `plan-publish` once more just before (GET only),
+     so that the plan on record names the calls made and the folder is
+     seen empty the same hour.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`

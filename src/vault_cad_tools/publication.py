@@ -20,14 +20,23 @@ Journal states and the only legal transitions (M2):
 The executor journal lives on the executing host (P1); the Linux side ingests `results/`
 only and recomputes the fingerprint from the request directory.
 
-SDK route (Vault Professional 2025, 30.4.28; verified by reflection, WSDL and a read-only
-sign-in probe on 2026-10-22): WinAuthCredentials(ServerIdentities, vault, readOnly,
-DefaultNetworkCredentials) -> WebServiceManager; DocumentService.GetFolderByPath /
-GetLatestFilesByFolderId(folderId, includeHidden=true); FilestoreService.UploadFilePart(Stream)
--> ticket; DocumentService.AddUploadedFile(folderId, fileName, comment, lastWrite, null, null,
-FileClassification.None, hidden=false, ByteArray ticket) -> File {Id, MasterId, VerNum,
-FileSize, Cksum}. Vault's Cksum equals zlib CRC32 of the bytes (probe: 1252855278 on both
-sides). REST (API 2.0.16) has no upload; it is used here only to read and to re-download.
+SDK route (Vault Professional 2025, 30.4.28), the one the add of 2026-10-22 went through
+and the executor's default (`-LicenseMode Token -Route Vdf`): the static queries of
+AutodeskAccount (IsLoggedIn, IsLoginValid, GetUserId, GetOAuthToken; no Login dialog), then
+WinAuthCredentials(ServerIdentities, vault, token, DefaultNetworkCredentials) ->
+WebServiceManager; DocumentService.GetFolderByPath / GetLatestFilesByFolderId(folderId,
+includeHidden=true); Connection(WebServiceManager, vault, userId, server,
+AuthenticationFlags.WindowsAuthentication); Entities.Folder(Connection, Folder);
+Connection.FileManager.AddFile(Folder, fileName, comment, lastWrite, null, null,
+FileClassification.None, hidden=false, Stream) -> FileIteration {EntityIterationId (version
+id), EntityMasterId, VersionNumber, Size, Checksum}. Two other forms failed on this server
+on 2026-10-22 and stay in the executor for diagnosis only: the sign-in without the token
+(WinAuthCredentials(..., readOnly=false, ...), license error 319) and the raw pair
+FilestoreService.UploadFilePart + DocumentService.AddUploadedFile (`-Route Soap`, Vault
+error 155). SDK_SIGN_IN and SDK_ADD below are what a plan lists; the executor's dry run
+lists the calls of the license mode and route it is given. Vault's checksum equals zlib
+CRC32 of the bytes (probe: 1252855278 on both sides). REST (API 2.0.16) has no upload; it
+is used here only to read and to re-download.
 """
 import hashlib
 import json
@@ -56,6 +65,16 @@ TRANSITIONS = {
 RETRY_BLOCKING = ("uploading", "ambiguous")
 SETTLED = ("uploaded", "verified")
 TERMINAL_FAILED = ("failed",)
+# What a plan lists for the sign-in and for the add: the executor's default route. The texts
+# describe; the executor does not read them, and they are no part of the fingerprint.
+SDK_SIGN_IN = ("AutodeskAccount.IsLoggedIn(), IsLoginValid(), GetUserId(), GetOAuthToken() (static; no Login dialog; "
+               "refused when no valid Autodesk ID is signed in); WinAuthCredentials(ServerIdentities, vaultName, token, "
+               "DefaultNetworkCredentials) -> WebServiceManager")
+SDK_ADD = ("Connection(WebServiceManager, vaultName, userId, server, AuthenticationFlags.WindowsAuthentication); "
+           "Entities.Folder(Connection, Folder); Connection.FileManager.AddFile(Folder, fileName, comment, lastWrite, "
+           "null, null, FileClassification.None, hidden=false, Stream)")
+SDK_ROUTE = {"license_mode": "Token", "route": "Vdf",
+             "note": "the executor's defaults; its dry run names the calls of the mode and route it is given"}
 EXECUTION_FIELDS = {
     "executed_at": str, "executed_by_host": str, "comment_sent": str, "folder_id": str,
     "server_version_number": int, "server_file_size": int, "server_checksum": int,
@@ -228,6 +247,10 @@ class RestCatalog(Catalog):
         for fv in self._pages(self.prefix + "folders/" + component(folder_id) + "/contents", {"option[includeHidden]": "true"}):
             if not isinstance(fv, dict) or "name" not in fv:
                 continue
+            # The listing holds the folder's sub-folders too; a file answers as entityType "FileVersion".
+            # The rule of windows/Discover-VaultFolder.ps1: what is not a folder is taken as a file.
+            if str(fv.get("entityType", "")).casefold() == "folder":
+                continue
             master = fv.get("file") if isinstance(fv.get("file"), dict) else {}
             files.append({"name": fv["name"], "version_id": str(fv.get("id")), "master_id": str(master.get("id")),
                           "version": fv.get("version"), "size": fv.get("size"), "hidden": fv.get("isHidden")})
@@ -369,20 +392,20 @@ def plan_publication(request_dir, catalog, journal, exchange=None, comment_prefi
         "comment": f"{comment_prefix} request {request_id}; git {request['provenance']['git_commit']}; "
                    f"{request['provenance']['project_path']}",
         "existing_files_in_folder": len(collisions),
+        "sdk_route": SDK_ROUTE,
         "sdk_calls": [] if readiness != "ready" else [
-            {"step": 1, "api": "WinAuthCredentials(ServerIdentities, vaultName, readOnly=false, DefaultNetworkCredentials) -> WebServiceManager",
-             "arguments": {"vault": identity["name"]}},
+            {"step": 1, "api": SDK_SIGN_IN, "arguments": {"vault": identity["name"]}},
             {"step": 2, "api": "DocumentService.GetFolderByPath(path)", "arguments": {"path": destination["folder"]},
              "expect": {"Id": folder["id"]}},
             {"step": 3, "api": "DocumentService.GetLatestFilesByFolderId(folderId, includeHidden=true)",
              "arguments": {"folderId": folder["id"]}, "expect": {"no_file_named": destination["name"]}},
             {"step": 4, "api": "journal: mark-uploading (planned -> uploading) BEFORE the mutating call"},
-            {"step": 5, "api": "FilestoreService.UploadFilePart(Stream) -> ticket; DocumentService.AddUploadedFile(folderId, fileName, comment, lastWrite, null, null, FileClassification.None, hidden=false, ByteArray ticket)",
+            {"step": 5, "api": SDK_ADD,
              "arguments": {"folderId": folder["id"], "fileName": destination["name"], "comment": "see plan.comment",
                            "lastWrite": "payload file mtime (UTC)", "contents": "payload bytes, sha256 " + request["payload"]["sha256"]},
-             "returns": "File {Id (version id), MasterId, VerNum, FileSize, Cksum}",
+             "returns": "FileIteration {EntityIterationId (version id), EntityMasterId, VersionNumber, Size, Checksum}",
              "on_exception": "journal: mark-ambiguous; no automatic retry; reconcile-publish inspects the folder"},
-            {"step": 6, "api": "journal: mark-uploaded with File.MasterId / File.Id and the execution record"},
+            {"step": 6, "api": "journal: mark-uploaded with the master id and the version id returned, and the execution record"},
             {"step": 7, "api": "record-publish: catalog confirms the version sits in the folder under the name; REST GET "
                                + "vaults/" + identity["id"] + "/file-versions/{version_id}/content compared by size, SHA-256 and CRC32",
              "verify": {"sha256": request["payload"]["sha256"], "bytes": request["payload"]["bytes"]}},

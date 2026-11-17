@@ -8,6 +8,30 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — a dry run of publishing from the new layout into a test folder (2026-11-16)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-16-windows-publish-dry-run-01/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261116T164141Z-...`; Peter made the test folder by hand that
+day; reading it was allowed, writing was not. Sent to Vault: 2 sign-ins (`POST sessions/win-auth`) and 21 GET,
+and nothing else. Nothing was written to Vault, `Publish-StepToVault.ps1 -Live` was not run, Inventor was not
+started.
+
+- The request (`add_step_file`, the monitor reference model of the enclosure, 652 556 bytes) verifies as
+  `valid_not_uploaded`, and its payload is the file the provenance names at that commit.
+- The test folder exists, is empty and has the category of the enclosure's folder; the server says the
+  account may modify it. Read before the dry run and after it: the same in every field.
+- `plan-publish` against the server gives `planned_not_executed`; the journal on this host holds the request
+  as `planned`, beside the one of 2026-10-22.
+- `Publish-StepToVault.ps1 -DryRun`: payload verified, every member resolved against the Vault client
+  30.4.28, the assemblies the add of 2026-10-22 went through.
+- The dry run named the calls of the license mode and the route that failed in October (license error 319,
+  Vault error 155), not those a live run takes by default, and did not resolve six members of the default
+  path. Corrected in the dry-run branch only: `would_call` follows `-LicenseMode` and `-Route`, and seventeen
+  members are resolved instead of eleven. The live branch is unchanged.
+- Suites: hygiene over 31 scripts with a 16-case self-test, 39 session mock cases, 3 watchdog, 10 STEP unit, 27
+  STEP header and entity cases, 35 package format cases, 7 Vault facts, 8 folder discovery and 6 dependency
+  snapshot cases; 106 Python tests under Pixi.
+
 ## Result — reading from Vault again: nothing changed; an earlier version and the second root assembly acquired and exported (2026-11-16)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-16-windows-vault-read-tests-01/` (report `REPORT.md`, which records the
