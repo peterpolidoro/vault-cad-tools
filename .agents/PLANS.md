@@ -552,6 +552,28 @@ Directives:
      so that the plan on record names the calls made and the folder is
      seen empty the same hour.
 
+   Peter on 2026-11-17, after committing the above (19ff7f3): "I give the
+   windows agent permission to read and write files to the VAULT-CAD-TEST
+   folder". That is the test folder; outside it nothing is written to
+   Vault without his explicit request. Asked of Windows that day
+   (`to-windows/20261117T134510Z-...`):
+   - the one live add of that request, once, with the five gates; before
+     it the tests, `verify-request`, `plan-publish` again and the dry run,
+     each a condition of going on; after it `record-publish` and what the
+     server made of the file (category, state, revision);
+   - no second add and no second run of `-Live`, whatever the first
+     answers; after an ambiguous answer `reconcile-publish` without the
+     acknowledgement, which only reads;
+   - no update, check-out, check-in, rename or delete, and nothing
+     outside the folder. The live branch of the script is not changed in
+     the task.
+   The live run needs an Autodesk ID signed in on the Windows machine and
+   refuses before the journal moves when there is none.
+   When the result comes: into a scratch clone of the enclosure with
+   `import-publication-result`, not into the enclosure's repository. Then
+   `update_step_file` (a revision as a new version of the same file) is
+   to be designed and built on both sides.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`
