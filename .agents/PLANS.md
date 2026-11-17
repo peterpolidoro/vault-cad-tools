@@ -617,6 +617,39 @@ Directives:
    of 2026-11-17): the published file referenced from an Inventor assembly
    in the test folder, the revision, and these properties.
 
+   Done by Windows that day and reviewed on Linux
+   (`evidence/2026-11-17-windows-vault-reads-02/`, 119 files verified;
+   `evidence/2026-11-17-linux-windows-vault-reads-02-review-01/`, 57
+   checks): 5 sign-ins and 93 GET, nothing written, nothing downloaded.
+   - The corrected pre-check line counts files: rehearsed offline against
+     a stand-in with the real call's type, 9 of 9 cases; the line of
+     19ff7f3 gives 6 of 9. It has not run against Vault.
+   - Both published files carry the same lab, and it is the lab of neither
+     folder. The value does not follow the folder; where it comes from was
+     not read. For Peter: whether a published file should carry the lab of
+     its project, which would be a property written after the add.
+   - The second project's folder: 27 files, three roots. The assembly
+     `mouse-joysticks-mech` holds as a STEP file is in it and is not a
+     root (a later assembly of the folder uses it); its closure is 41
+     files, none checked out, and an acquisition reaches it by its version
+     id. The STEP file's header time lies between the check-out and the
+     check-in of that assembly's version 13, so it is an export of the
+     working copy that became that version; Vault's latest is version 14.
+     One root of the folder is checked out by another user.
+   - For `update_step_file`: the installed SDK offers `AcquireFiles` with
+     `Checkout`, `CheckinFile` and `UndoCheckoutFile` on the connection's
+     file manager (listed by reflection, not tried). A check-out is a
+     write of its own; a run that stops after it leaves the file checked
+     out, so the journal needs a state for that and the way back is a
+     third write.
+   - Agreed with Windows for its next task, as a patch with self-tests:
+     `Discover-VaultFolder.ps1` records the folders on the path; a
+     version with a check-in date of year 1 is the place of a check-out,
+     said so by the discovery and refused by
+     `Get-VaultDependencySnapshot.ps1`.
+   - Waiting for Peter: whether the second project is mirrored and from
+     which assembly, and his word for the next Windows task.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`

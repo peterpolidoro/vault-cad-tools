@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-16
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-17
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,46 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — three reads: the corrected pre-check line, the two published files' properties, a second project's folder (2026-11-17)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-17-windows-vault-reads-02/` (report `REPORT.md`, which records the
+commits it ran from). Requested by `to-windows/20261117T152717Z-...`; reviewed on Linux in
+`evidence/2026-11-17-linux-windows-vault-reads-02-review-01/` (57 checks against the raw answers). This entry
+was written on Linux from that report; nothing under `windows/` changed in the task. Sent to Vault: 5 sign-ins
+(`POST sessions/win-auth`) and 93 GET, and nothing else. Nothing was written, no file's content was downloaded,
+`Publish-StepToVault.ps1` was not run in any mode, Inventor was not started.
+
+- **The corrected pre-check line of the live branch, rehearsed offline.** The script's five pre-check
+  statements are taken from its text by the syntax tree and run against a stand-in whose
+  `GetLatestFilesByFolderId` returns the real call's type with real `File` objects of the installed client
+  (30.4.28). The line counts 0 for an answer that is nothing and 2 for two files, and a file of the
+  destination's name is still refused, in capitals and hidden too: 9 of 9 cases. The line of 19ff7f3 gives 6
+  of 9 in the same rehearsal, so the rehearsal tells the two apart. What the real call answers for an empty
+  folder was not asked again: the corrected line has still not run against Vault.
+- **The two published files side by side.** The server gave both the same category, lifecycle definition,
+  state, revision scheme, revision, design department and lab. The lab is the lab of neither folder: it does
+  not follow the folder. Where the value comes from was not read. Beyond dates, ids and names, only the size,
+  the comment and the folder differ.
+- **A read-only discovery of a second project's folder** (`Discover-VaultFolder.ps1 -FolderPath`, 84 GET): 27
+  files, three roots, one sub-folder. What it met:
+  - The assembly wanted is in the folder and is not a root, because a later assembly of the same folder uses
+    it. A discovery does not offer it; an acquisition reaches it by its version id.
+  - One root is checked out by another user. The version the listing names for it has the check-in date of
+    year 1: the place of a check-out, not a version checked in. `Get-VaultDependencySnapshot.ps1` would
+    record `is_checked_out` and not refuse; `-AsCheckedIn` would refuse at the first child.
+  - `Discover-VaultFolder.ps1` does not record the ids of the folders it walks through; they were read one
+    folder object at a time.
+  - The longest Vault path in the closures has 165 characters: a mirror root of more than 95 characters puts
+    that file beyond the 259 a Windows path may have.
+- **For a new version of an existing file** (members listed by reflection, none invoked): the connection's
+  file manager has `AcquireFiles` with the option `Checkout`, `CheckinFile`, and `UndoCheckoutFile` as the way
+  back; the document service has `CheckoutFile` and `CheckinUploadedFile`, whose upload ticket comes from the
+  call that answered error 155 on 2026-10-22.
+- Agreed for the next Windows task, as a patch with self-test cases: the discovery records the folders on the
+  path, and a version with a check-in date of year 1 is said to be the place of a check-out and refused by
+  the snapshot.
+- Suites: the nine offline suites as in the entry of 2026-11-16 below, and 108 Python tests under Pixi.
 
 ## Result — the first add from the new layout, into a test folder (2026-11-17)
 
