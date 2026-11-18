@@ -9,6 +9,42 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 (`docs/direction.md`). Finished checkpoints, with their evidence runs, are in
 .agents/HISTORY.md and windows/HISTORY.md.
 
+## Start here (state of 2026-11-18)
+
+The short version. The record is below, in .agents/HISTORY.md and in
+windows/HISTORY.md; where the wider work stands is in
+`mechanical-cad/.agents/PLANS.md`, "Start here".
+
+- **Works**: the acquisition of a root assembly with what it uses, at exact
+  versions (`windows/Get-VaultDependencySnapshot.ps1`); the export package
+  and its import (`windows/Export-Package.ps1`, `import-snapshot`);
+  `sync-status`; and the publication of a new STEP file, planned, run dry,
+  run live behind gates, verified and imported, done twice.
+- **Stopped on real data**: the export of a second project, at a
+  sub-assembly used in two model states. What the package holds for that
+  is decided (`mechanical-cad/docs/exporter-package.md`, "Model states and
+  suppressed occurrences") and `import-snapshot` needed no change. The
+  exporter is not changed yet.
+- **Ready and not run**: the reference route, a wrapper part and an
+  assembly that reference a published STEP file
+  (`windows/New-ReferenceRouteDocuments.ps1`,
+  `windows/Publish-ReferenceRoutePilot.ps1`). Its live branch has never
+  run, not even against a stand-in.
+- **Designed and not built**: a revision as a new version of the same file
+  (`docs/update-step-file-design.md`). Windows reads it before the Linux
+  half is built.
+- **Asked of Windows on 2026-11-18**, nothing written to Vault (next work
+  below has the parts): the rehearsal of the live branch, one read through
+  the SDK, the exporter with model states run on the mirror, a member at a
+  check-out place, and the design to read. Peter starts the agent, after
+  the shared clones are brought level at his word.
+- **Peter's**: his word for the live run of the reference route, which
+  adds two files to his test folder; the payload of the revision's pilot;
+  and whether server, vault and folder names stay in tracked files (open
+  items).
+- Tests on Linux, from the `mechanical-cad` checkout:
+  `guix shell --pure -m manifest.scm -- python3 -B -m pytest -q PATH/TO/vault-cad-tools/tests`.
+
 ## Current state (2026-11-12)
 
 Demonstrated, each once, on the enclosure pilot:
