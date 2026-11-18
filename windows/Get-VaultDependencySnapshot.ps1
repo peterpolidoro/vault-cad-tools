@@ -27,7 +27,17 @@ checked in at or before the root version, and that version's own children in the
 file-versions/{id}/uses without recursion for every version followed, GET files/{master}/versions for every
 child. It is a rule applied to dates, not a record read from Vault; dependency-inventory.json says which of the
 two ways was used ("resolution"), and a child without a version that early stops the run.
-    & .\windows\Get-VaultDependencySnapshot.ps1 -SelfTest      # offline cases for the rule
+
+ONLY VERSIONS CHECKED IN ARE PINNED. A file that is checked out is named by the place of its check-out, a row with
+a check-in date of year 1 that is not a version checked in (Vault-Version.ps1); the server names a checked-out
+child that way under every parent. Such a row is refused, as the root and as a member: nothing is downloaded,
+the files are named with what uses them, snapshot-receipt.json has the status refused_check_out_place (or
+refused_no_check_in_date for a row without a date that can be read) and the exit code is 2. As a root it is
+refused before its closure is asked for. As a member it is refused after the inventory is written, which says of
+every file what its row is (version_is). With -AsCheckedIn a member is never such a row: the rule takes versions
+checked in only, so a child that is checked out today comes at its newest version checked in by then.
+isCheckedOut is true on every row of a checked-out file and decides nothing here.
+    & .\windows\Get-VaultDependencySnapshot.ps1 -SelfTest      # offline cases for both rules
 #>
 param(
     [string]$RootVersionId,
@@ -42,6 +52,30 @@ param(
     [switch]$SelfTest
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Vault-Version.ps1")
+
+function Find-NotCheckedIn {
+    <# Pure. Which rows of a closure are not versions checked in (Vault-Version.ps1). $Top: the file-version record
+       of the root. $Rows: the association rows (parentFile, childFile), as the server gave them or as
+       Resolve-ClosureByDate chose them. Returns one record for each such row, the root first, a member once with
+       everything that uses it; nothing when every row is a version checked in. No user is named. #>
+    param($Top, $Rows)
+    $found = @(); $index = @{}
+    $candidates = @([pscustomobject]@{ row = $Top; place = "root"; parent = $null })
+    foreach ($association in @($Rows)) { if ($null -ne $association -and $null -ne $association.childFile) { $candidates += [pscustomobject]@{ row = $association.childFile; place = "member"; parent = $association.parentFile } } }
+    foreach ($candidate in $candidates) {
+        $standing = Get-VaultVersionStanding $candidate.row.checkinDate
+        if ($standing -eq "checked_in") { continue }
+        $id = [string]$candidate.row.id
+        if (-not $index.ContainsKey($id)) {
+            $index[$id] = [pscustomobject]@{ version_id = $id; master_id = [string]$candidate.row.file.id; name = [string]$candidate.row.name; version = $candidate.row.version; as = $candidate.place; version_is = $standing
+                checked_out_since = $(if ($standing -eq "check_out_place") { $candidate.row.checkoutDate } else { $null }); folder_id = [string]$candidate.row.parentFolderId; used_by = @() }
+            $found += $index[$id]
+        }
+        if ($null -ne $candidate.parent) { $user = "$($candidate.parent.name)@$($candidate.parent.id)"; if ($index[$id].used_by -notcontains $user) { $index[$id].used_by += $user } }
+    }
+    return $found   # bare: callers wrap with @(...)
+}
 
 function Resolve-ClosureByDate {
     <# What a version of a file used when it was checked in, rebuilt by date. Pure: it sends nothing itself.
@@ -51,8 +85,11 @@ function Resolve-ClosureByDate {
        that master. Both throw when the server cannot be read; no rows means no children.
        Returns rows shaped like the server's (parentFile, childFile, fileAssocType, id), where childFile is the
        version chosen, with reported_version_id beside it: the version the server named.
+       A row that is not a version checked in (the place of a check-out, whose date is of year 1 and so "before"
+       every root) is never chosen and never the root.
        Refused: a child with no version checked in at or before the root version, and a master without versions. #>
     param($Top, [scriptblock]$GetUses, [scriptblock]$GetVersions)
+    if ((Get-VaultVersionStanding $Top.checkinDate) -ne "checked_in") { throw "'$($Top.name)' version $($Top.id) is not a version checked in (check-in date '$($Top.checkinDate)'): there is no date to rebuild by; refused" }
     $moment = [DateTimeOffset]::Parse([string]$Top.checkinDate, [Globalization.CultureInfo]::InvariantCulture)
     $rows = @(); $followed = @{}; $pending = New-Object System.Collections.Queue
     $pending.Enqueue($Top)
@@ -65,7 +102,7 @@ function Resolve-ClosureByDate {
             if ($master -eq [string]$Top.file.id) { throw "'$($parent.name)' version $($parent.id) uses the root itself; refused" }
             $all = @(& $GetVersions $master)
             if ($all.Count -eq 0) { throw "The server listed no version of '$($reported.name)' (master $master); refused" }
-            $early = @($all | Where-Object { [DateTimeOffset]::Parse([string]$_.checkinDate, [Globalization.CultureInfo]::InvariantCulture) -le $moment } | Sort-Object { [int]$_.version })
+            $early = @($all | Where-Object { (Get-VaultVersionStanding $_.checkinDate) -eq "checked_in" } | Where-Object { [DateTimeOffset]::Parse([string]$_.checkinDate, [Globalization.CultureInfo]::InvariantCulture) -le $moment } | Sort-Object { [int]$_.version })
             if ($early.Count -eq 0) { throw "'$($reported.name)' has no version checked in at or before $($Top.checkinDate), when '$($Top.name)' version $($Top.id) was checked in; refused" }
             $chosen = $early[-1]
             $rows += [pscustomobject]@{ id = $row.id; fileAssocType = $row.fileAssocType; parentFile = $parent; childFile = $chosen; reported_version_id = [string]$reported.id }
@@ -124,6 +161,43 @@ if ($SelfTest) {
         $loop = @{ "11" = @((Row $rootOld $rootNew)) }
         Assert (Throws { Resolve-ClosureByDate $rootOld { param($id) $loop[$id] } $getVersions } "uses the root itself") "a root used by itself passed"
     }
+    # ---- rows that are not versions checked in ----
+    function Place($master, $id, $number, $name, $since) { [pscustomobject]@{ id = "$id"; version = $number; checkinDate = "0001-01-01T00:00:00Z"; name = $name; isCheckedOut = $true; checkoutDate = $since; checkoutUserName = "SOMEBODY ELSE"; parentFolderId = "30"; file = [pscustomobject]@{ id = "$master" } } }
+    Case "S7 a row with a check-in date of year 1 is the place of a check-out, whatever isCheckedOut says" {
+        $cases = @(@("2026-08-14T21:54:28.797Z", "checked_in"), @("0001-01-01T00:00:00Z", "check_out_place"), @($null, "no_check_in_date"), @("", "no_check_in_date"), @("soon", "no_check_in_date"), @([DateTime]::MinValue, "check_out_place"))
+        foreach ($pair in $cases) { $got = Get-VaultVersionStanding $pair[0]; Assert ($got -eq $pair[1]) "'$($pair[0])' is $got, expected $($pair[1])" }
+        $earlier = Version 5 51 1 "2026-02-01T00:00:00Z" "RIG.iam"; $earlier | Add-Member -NotePropertyName isCheckedOut -NotePropertyValue $true
+        Assert (@(Find-NotCheckedIn $earlier @()).Count -eq 0) "a version checked in of a file that is checked out was taken for the place of the check-out"
+        "$($cases.Count) dates"
+    }
+    Case "S8 a root that is the place of a check-out is found, with since when and without a user's name" {
+        $found = @(Find-NotCheckedIn (Place 5 52 2 "RIG.iam" "2026-08-18T18:19:12.86Z") @())
+        Assert ($found.Count -eq 1 -and $found[0].as -eq "root" -and $found[0].version_is -eq "check_out_place" -and $found[0].name -eq "RIG.iam" -and $found[0].version_id -eq "52" -and $found[0].master_id -eq "5" -and $found[0].checked_out_since -eq "2026-08-18T18:19:12.86Z") "found: $($found | ConvertTo-Json -Compress -Depth 4)"
+        Assert (($found | ConvertTo-Json -Compress -Depth 4) -notmatch "SOMEBODY ELSE") "the record names a user"
+    }
+    Case "S9 a member that is the place of a check-out is found once, with every parent that uses it; a closure of versions checked in gives nothing" {
+        $platePlace = Place 6 62 2 "PLATE.ipt" "2026-09-01T10:00:00Z"
+        $rows = @((Row $rootNew $frame3), (Row $rootNew $platePlace), (Row $frame3 $pin), (Row $frame3 $platePlace))
+        $found = @(Find-NotCheckedIn $rootNew $rows)
+        Assert ($found.Count -eq 1 -and $found[0].as -eq "member" -and $found[0].name -eq "PLATE.ipt" -and $found[0].version_id -eq "62" -and (@($found[0].used_by) -join ",") -eq "ROOT.iam@12,FRAME.iam@23") "found: $($found | ConvertTo-Json -Compress -Depth 4)"
+        Assert (@(Find-NotCheckedIn $rootNew @((Row $rootNew $frame3), (Row $frame3 $pin), (Row $frame3 $clip))).Count -eq 0) "versions checked in were found"
+        $undated = [pscustomobject]@{ id = "71"; version = 1; name = "ODD.ipt"; file = [pscustomobject]@{ id = "7" } }
+        $odd = @(Find-NotCheckedIn $rootNew @((Row $rootNew $undated)))
+        Assert ($odd.Count -eq 1 -and $odd[0].version_is -eq "no_check_in_date" -and $null -eq $odd[0].checked_out_since) "a row without a check-in date: $($odd | ConvertTo-Json -Compress -Depth 4)"
+        Assert (@(Find-NotCheckedIn (Place 5 52 2 "RIG.iam" "2026-08-18T18:19:12.86Z") @((Row $rootNew $platePlace))).Count -eq 2) "the root and a member, both"
+    }
+    Case "S10 by check-in date a child that is checked out today comes at its newest version checked in, never at the place of its check-out" {
+        $plate1 = Version 6 61 1 "2026-02-20T00:00:00Z" "PLATE.ipt"; $platePlace = Place 6 62 2 "PLATE.ipt" "2026-09-01T10:00:00Z"
+        $table = @{ "12" = @((Row $rootNew $platePlace)); "61" = @(); "62" = @() }
+        $rows = @(Resolve-ClosureByDate $rootNew { param($id) $table[$id] } { param($master) @($platePlace, $plate1) })
+        Assert ($rows.Count -eq 1 -and $rows[0].childFile.id -eq "61" -and $rows[0].reported_version_id -eq "62") "rows: $($rows | ForEach-Object { $_.childFile.name + '@' + $_.childFile.id })"
+        Assert (@(Find-NotCheckedIn $rootNew $rows).Count -eq 0) "the version chosen is not a version checked in"
+        Assert (Throws { Resolve-ClosureByDate $rootNew { param($id) $table[$id] } { param($master) @($platePlace) } } "PLATE\.ipt' has no version checked in at or before") "a file with nothing but the place of a check-out was taken"
+        "version 1, where the server names the place of the check-out as version 2"
+    }
+    Case "S11 by check-in date a root that is the place of a check-out is refused: there is no date to rebuild by" {
+        Assert (Throws { Resolve-ClosureByDate (Place 5 52 2 "RIG.iam" "2026-08-18T18:19:12.86Z") $getUses $getVersions } "RIG\.iam' version 52 is not a version checked in") "the place of a check-out was taken as a root"
+    }
     $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
     Write-Output "$passed passed, $failed failed"
     if ($failed -gt 0) { exit 1 }
@@ -142,6 +216,7 @@ function Utc { [DateTime]::UtcNow.ToString("o") }
 $started = Utc
 # Every request this script sends, by kind. The sign-in is the one request that is not a GET.
 $requests = [ordered]@{ sign_in_post = 0; get = 0; download_get = 0 }
+$root = $null; $list = @(); $uses = @{ results = @(); pages = $null; total = 0 }; $resolution = $null; $notCheckedIn = @()
 
 $body = @{ input = @{ vault = $VaultName; appCode = $AppCode } } | ConvertTo-Json -Depth 3
 $requests["sign_in_post"]++
@@ -156,8 +231,20 @@ function Write-SnapshotReceipt([string]$status, [int]$downloaded, [int]$failed) 
         method = "one POST sessions/win-auth (the sign-in, Windows-integrated; its token and the session's id are not recorded), then GET only: file-versions/{id}, file-versions/{id}/uses, files/{master}/versions (with -AsCheckedIn), folders/{id}, and file-versions/{id}/content for every download"
         requests = $requests; root_version_id = $RootVersionId; root_name = $root.name; root_version = $root.version; files_in_the_inventory = $list.Count; association_count = $uses.results.Count
         resolution = $resolution; as_checked_in = [bool]$AsCheckedIn; children_at_another_version_than_the_server_names = $(if ($AsCheckedIn) { $moved.Count } else { $null })
-        no_download = [bool]$NoDownload; cache_root = $(if ($NoDownload) { $null } else { (Resolve-Path -LiteralPath $CacheRoot).Path }); downloaded = $downloaded; problems = $failed } |
+        not_checked_in = @($notCheckedIn)
+        no_download = [bool]$NoDownload; cache_root = $(if ($NoDownload -or -not (Test-Path -LiteralPath $CacheRoot)) { $null } else { (Resolve-Path -LiteralPath $CacheRoot).Path }); downloaded = $downloaded; problems = $failed } |
         ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutputDirectory "snapshot-receipt.json") -Encoding UTF8
+}
+function Stop-NotCheckedIn {
+    # Nothing is pinned and nothing downloaded: the files are named, the receipt says why, and the run ends with 2.
+    $status = $(if (@($notCheckedIn | Where-Object { $_.version_is -eq "check_out_place" }).Count -gt 0) { "refused_check_out_place" } else { "refused_no_check_in_date" })
+    foreach ($entry in $notCheckedIn) {
+        $what = $(if ($entry.version_is -eq "check_out_place") { "the place of a check-out$(if ($entry.checked_out_since) { " since $($entry.checked_out_since)" }), not a version checked in" } else { "a row without a check-in date that can be read" })
+        Write-Output "REFUSED $($entry.as) '$($entry.name)' (version id $($entry.version_id), master $($entry.master_id)$(if ($entry.vault_path) { ", $($entry.vault_path)" })): $what$(if (@($entry.used_by).Count) { "; used by $(@($entry.used_by) -join ', ')" })"
+    }
+    Write-SnapshotReceipt $status 0 0
+    Write-Output "Status: $status. Nothing was downloaded. Requests: $($requests["sign_in_post"]) sign-in, $($requests["get"]) GET, $($requests["download_get"]) download"
+    exit 2
 }
 function GetOnePage($rel) {
     # ONE page, never a cursor: this server's paging cursor repeats and skips rows (Discover-VaultFolder.ps1).
@@ -184,6 +271,9 @@ function GetAll($rel) {
 $root = GetJ "vaults/$VaultId/file-versions/$RootVersionId"
 $root | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $OutputDirectory "file-version-$RootVersionId.json") -Encoding UTF8
 $moved = @()
+# The root must be a version checked in. If it is not, its closure is not asked for.
+$notCheckedIn = @(Find-NotCheckedIn $root @())
+if ($notCheckedIn.Count -gt 0) { Stop-NotCheckedIn }
 if ($AsCheckedIn) {
     $versionLists = @{}
     $byDate = @(Resolve-ClosureByDate $root { param($id) GetOnePage "vaults/$VaultId/file-versions/$id/uses?option%5BgetLatestAssocs%5D=false&limit=1000" } {
@@ -208,7 +298,7 @@ foreach ($fid in $folderIds) { $f = GetJ "vaults/$VaultId/folders/$fid"; $folder
 function Record($v, $role) {
     [ordered]@{ version_id = [string]$v.id; master_id = [string]$v.file.id; name = $v.name; version = $v.version; revision = $v.revision; state = $v.state
         folder_id = [string]$v.parentFolderId; vault_path = "$($folders[[string]$v.parentFolderId])/$($v.name)"; size = $v.size
-        checkin_date = $v.checkinDate; is_checked_out = $v.isCheckedOut; role = $role; parents = @() }
+        checkin_date = (Get-VaultCheckinDate $v.checkinDate); version_is = (Get-VaultVersionStanding $v.checkinDate); is_checked_out = $v.isCheckedOut; role = $role; parents = @() }
 }
 $files = [ordered]@{}
 $files[[string]$root.id] = Record $root "root"
@@ -220,11 +310,15 @@ foreach ($a in $uses.results) {
 $list = @($files.Values | Sort-Object { $_.vault_path })
 $dupNames = @($list | Group-Object name | Where-Object Count -gt 1 | ForEach-Object Name)
 $checkedOut = @($list | Where-Object is_checked_out | ForEach-Object name)
+# Every member must be a version checked in. The records name the files with their Vault paths.
+$notCheckedIn = @(Find-NotCheckedIn $root $uses.results)
+foreach ($entry in $notCheckedIn) { $entry | Add-Member -NotePropertyName vault_path -NotePropertyValue "$($folders[$entry.folder_id])/$($entry.name)" }
 $inventory = [ordered]@{ captured_at = Utc; base_uri = "$B/"; vault_id = $VaultId; vault_name = $VaultName; resolution = $resolution; root = $files[[string]$root.id]
     association_count = $uses.results.Count; association_total = $uses.total; association_types = @($uses.results | Group-Object fileAssocType | ForEach-Object { "$($_.Name)=$($_.Count)" })
-    folders = $folders; duplicate_names = $dupNames; checked_out = $checkedOut; files = $list }
+    folders = $folders; duplicate_names = $dupNames; checked_out = $checkedOut; not_checked_in = @($notCheckedIn | ForEach-Object { $_.name }); files = $list }
 $inventory | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory "dependency-inventory.json") -Encoding UTF8
-Write-Output "Inventory: $($list.Count) unique files (incl. root), duplicate names: $(if ($dupNames) { $dupNames -join ', ' } else { 'none' }), checked out: $(if ($checkedOut) { $checkedOut -join ', ' } else { 'none' })"
+Write-Output "Inventory: $($list.Count) unique files (incl. root), duplicate names: $(if ($dupNames) { $dupNames -join ', ' } else { 'none' }), checked out: $(if ($checkedOut) { $checkedOut -join ', ' } else { 'none' }), not a version checked in: $(if ($notCheckedIn.Count) { $notCheckedIn.Count } else { 'none' })"
+if ($notCheckedIn.Count -gt 0) { Stop-NotCheckedIn }
 
 if ($NoDownload) { Write-SnapshotReceipt "complete" 0 0; Write-Output "Download skipped (-NoDownload). Requests: $($requests["sign_in_post"]) sign-in, $($requests["get"]) GET"; return }
 $acq = @(); $problems = 0

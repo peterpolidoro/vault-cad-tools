@@ -14,11 +14,19 @@ For every component the project mirrors (references/):
 
     in_sync         the project holds the version Vault names today
     vault_newer     Vault names another version: the file was checked in again
+    checked_out     Vault lists the file by the place of a check-out, not by a version checked in
     not_in_closure  the project holds it and the root's closure in Vault no longer does
+
+A file that is checked out is listed by a row that is not a version (windows/Vault-Version.ps1; the discovery
+says `version_is` of every row since 2026-11-17). Its id is not that of anything checked in, so it is never
+`vault_newer`; and the discovery does not say which version was checked in last, so it is not `in_sync` either,
+and `current` is false while any file is `checked_out`. A discovery written before that day has no `version_is`
+and is read as before.
 
 `new_in_vault` lists what the root's closure has and the project does not. For every publication of the project
 (a part under designs/ with a vault.json): `in_sync` when Vault still holds the version that was published,
-`vault_newer` when it holds another, `not_in_folder` when the folder that was discovered does not have the file;
+`vault_newer` when it holds another, `checked_out` as above, `not_in_folder` when the folder that was discovered
+does not have the file;
 and whether the part's part.step is still the file that was published. `other_files_in_the_folder` are what the
 folder holds that belongs neither to the root's closure nor to a publication, another root assembly for one.
 `current` says whether a refresh would change anything in references/.
@@ -37,6 +45,15 @@ KINDS = {"native_part": "part", "native_assembly": "assembly", "step": "step"}
 
 def _text(value):
     return value if isinstance(value, str) and value else None
+
+
+def _standing(vault, held_version_id, missing):
+    """What a file the project holds is beside the row Vault lists for it today."""
+    if vault is None:
+        return missing
+    if vault.get("version_is") not in (None, "checked_in"):         # the place of a check-out, or a row without a date
+        return "checked_out"
+    return "in_sync" if vault["version_id"] == held_version_id else "vault_newer"
 
 
 def _discovery(path):
@@ -93,8 +110,8 @@ def sync_status(project_dir, discovery_path, output=None):
         vault = today.get(index["master_id"])
         row = {"key": key, "kind": index["kind"], "master_id": index["master_id"], "held_version_id": index["version_id"],
                "vault_version_id": vault["version_id"] if vault else None,
-               "state": "not_in_closure" if vault is None else "in_sync" if vault["version_id"] == index["version_id"] else "vault_newer"}
-        if vault and vault.get("is_checked_out"):
+               "state": _standing(vault, index["version_id"], "not_in_closure")}
+        if vault and (vault.get("is_checked_out") or row["state"] == "checked_out"):
             row["checked_out_in_vault"] = True
         components.append(row)
     new = sorted(({"name": f.get("name"), "kind": KINDS.get(f.get("kind"), f.get("kind")), "master_id": master,
@@ -109,13 +126,13 @@ def sync_status(project_dir, discovery_path, output=None):
         publications.append({
             "key": pub.get("key"), "master_id": pub.get("master_id"), "published_version_id": pub.get("version_id"),
             "vault_version_id": vault["version_id"] if vault else None,
-            "state": "not_in_folder" if vault is None else "in_sync" if vault["version_id"] == pub.get("version_id") else "vault_newer",
+            "state": _standing(vault, pub.get("version_id"), "not_in_folder"),
             "part_step_is_the_published_file": step.is_file() and hashlib.sha256(step.read_bytes()).hexdigest() == pub.get("step_sha256")})
     others = sorted(({"name": f.get("name"), "kind": KINDS.get(f.get("kind"), f.get("kind")), "role": f.get("role"),
                       "master_id": master} for master, f in folder.items()
                      if master not in today and master not in published_masters), key=lambda r: (r["name"] or "", r["master_id"]))
 
-    counts = {state: sum(1 for c in components if c["state"] == state) for state in ("in_sync", "vault_newer", "not_in_closure")}
+    counts = {state: sum(1 for c in components if c["state"] == state) for state in ("in_sync", "vault_newer", "checked_out", "not_in_closure")}
     counts["new_in_vault"] = len(new)
     result = {"schema_version": SCHEMA_VERSION,
               "discovery": {"generated_at": discovery.get("generated_at"), "vault_id": discovery["vault_id"]},

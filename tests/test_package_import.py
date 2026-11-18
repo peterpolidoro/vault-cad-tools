@@ -444,6 +444,45 @@ class PackageImportTests(unittest.TestCase):
         mid = self.load("references/assemblies/mid/assembly.json")
         self.assertEqual(mid["children"][0]["overrides"], [{"path": ["B:1"], "transform": matrix(3)}])
 
+    def test_one_file_in_two_model_states_is_two_components(self):
+        """A sub-assembly placed in its primary model state and in another: each state leaves out the other's parts."""
+        held = files()
+        held["c"] = part("C", "400", folder="PROJECT")
+        held["sub"]["source"]["native"]["suppressed_occurrences"] = [{"name": "C:1"}]
+        other = copy.deepcopy(held["sub"])
+        other["source"]["model_state"] = "Mirrored"
+        other["source"]["native"]["suppressed_occurrences"] = [{"name": "B:1"}]
+        other["assembly"]["children"] = [child("A:1", "part", "100", matrix(1)), child("C:1", "part", "400", matrix(-2))]
+        held["sub-mirrored"] = other
+        placed = child("SUB:2", "assembly", "300", matrix(20))
+        placed["model_state"] = "Mirrored"
+        held["root"]["assembly"]["children"][2] = placed
+        package = self.package(held)
+        self.assertEqual(sorted(p.name for p in (package / "files").iterdir()),
+                         ["100_primary", "200_primary", "300_mirrored", "300_primary", "400_primary", "900_primary"])
+        result = import_package(package, self.dest, "run-1")
+        self.assertEqual((result["parts"], result["assemblies"]), (3, 3))
+        self.assertEqual(result["new"], ["a", "b", "c", "root", "sub", "sub@mirrored"])
+        first, second = (self.load(f"references/assemblies/{key}/source.json") for key in ("sub", "sub@mirrored"))
+        self.assertEqual((first["model_state"], second["model_state"]), (STATE, "Mirrored"))
+        self.assertEqual(first["vault"], second["vault"])                                # one Vault file, one native hash
+        self.assertEqual((first["native"]["suppressed_occurrences"], second["native"]["suppressed_occurrences"]),
+                         ([{"name": "C:1"}], [{"name": "B:1"}]))
+        root = self.load("references/assemblies/root/assembly.json")
+        self.assertEqual([(c["name"], c["component"], c["model_state"]) for c in root["children"]],
+                         [("A:1", "a", STATE), ("SUB:1", "sub", STATE), ("SUB:2", "sub@mirrored", "Mirrored")])
+        self.assertEqual([c["component"] for c in self.load("references/assemblies/sub@mirrored/assembly.json")["children"]], ["a", "c"])
+        self.assertTrue(all(c["suppressed"] is False for key in ("sub", "sub@mirrored")
+                            for c in self.load(f"references/assemblies/{key}/assembly.json")["children"]))
+        lock = self.load("vault-lock.json")
+        self.assertEqual([(c["key"], c["model_state"], c["master_id"]) for c in lock["components"] if c["master_id"] == "300"],
+                         [("sub", STATE, "300"), ("sub@mirrored", "Mirrored", "300")])
+        again = import_package(self.package(held), self.dest, "run-2")                    # the same package: nothing to write
+        self.assertEqual((again["new"], again["updated"], again["rewritten"]), ([], [], []))
+        # a child that names a state the package does not hold is refused
+        placed["model_state"] = "Another"
+        self.refused("master id 300 in model state Another is not in the package", held, run="run-3")
+
     def test_command_line(self):
         package = self.package()
         self.assertEqual(main(["import-snapshot", str(package), "--into", str(self.dest), "--run", "run-1"]), 0)

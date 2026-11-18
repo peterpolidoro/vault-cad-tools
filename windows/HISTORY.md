@@ -8,6 +8,59 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — check-out places told apart, a mirror of a second project, the reference route made ready (2026-11-17)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-17-windows-mirror-and-reference-route-01/` (report `REPORT.md`, which
+records the commits it ran from). Requested by `to-windows/20261117T191339Z-...`. Nothing was written to Vault:
+REST only, 5 sign-ins and 68 GET, of which 43 were downloads (the 42 files of the mirror and the published
+STEP file). No SDK member was invoked. `Publish-StepToVault.ps1` was not run, and no `-Live` of any script.
+
+- **The folders on a path are recorded** (`Discover-VaultFolder.ps1`, `folders_on_the_path`): id, name, path
+  and category of each, the root first, and nothing else of any level. By path they are the one row of each
+  listing the walk follows; by `-FolderId` no level is listed and the folders above are read one by one.
+- **A row with a check-in date of year 1 is the place of a check-out** (`Vault-Version.ps1`, new, used by
+  both scripts). `isCheckedOut` is true on every row of a checked-out file, so only the date tells them
+  apart. The discovery says of every file, parent, child and closure member what its row is (`version_is`),
+  records no check-in date for such a row, and counts them; a root is still a root.
+  `Get-VaultDependencySnapshot.ps1` refuses such a row as the root (before its closure is asked for) and as
+  a member (after the inventory is written): status `refused_check_out_place`, exit code 2, nothing
+  downloaded. By check-in date (`-AsCheckedIn`) such a row was until now "before" every root and would have
+  been chosen as a child's newest version; it is no candidate any more.
+- Both changes were rehearsed whole against a stand-in server on this machine that answers as the real one
+  was seen to (25 checks); the scripts as they were fail the same rehearsal where they should (8 checks: a
+  checked-out member was pinned and its content downloaded). The schema number of `discovery.json` stays 1.
+- **Where the lab on a published file comes from** (one GET): both properties the server fills in are text
+  properties that take one of a list, and each has an initial value in its definition. The value on the two
+  published files is that initial value, and it is the first of the list (3 and 131 entries). Of the lists
+  only the length and the place of the value were kept.
+- **A mirror of the second project** in a directory of its own under `vault-cad-exchange/mirrors/`: the
+  assembly by its version id and its closure, 42 files, acquired there and read again against the record.
+  Every file is at the version the discovery of the same day read.
+- **`Export-Package.ps1` refuses that assembly**, at the first document whose file's active model state is
+  not the primary one: the root places one sub-assembly twice, once in its primary model state and once in
+  another. The exporter was not changed. A read-only survey of every document and occurrence (an evidence
+  tool, not in this directory) shows what else it would meet: the two model states are two documents with
+  one file name, each with 52 occurrences of which 3 and 4 are suppressed; two flexible occurrences; two
+  parts derived from another part; no adaptive occurrence, no factory, no view. The mirror was hashed before
+  and after each of the four Inventor runs on it (the export and three of the survey): unchanged.
+- **The reference route made ready** (design 5.5), without a write. `New-ReferenceRouteDocuments.ps1` (new)
+  made, in a scratch workspace laid out as the test folder is, a wrapper part whose only content is the
+  published STEP file as a reference model, and an assembly that places only the wrapper. The wrapper holds
+  the STEP file by a name relative to itself: the three files, copied to another root with the first set
+  aside, open with the link held, up to date, and nothing to save.
+  `Publish-ReferenceRoutePilot.ps1` (new) prepares the request, runs it dry and holds the gated live branch:
+  two adds, the wrapper with a Dependency on the STEP file's version and the assembly with a Dependency on
+  the wrapper's new version, with a journal of its own. The dry run resolved 21 SDK members and wrote every
+  call of a live run. **The live branch has not been run**, and its SDK calls have not been rehearsed.
+- Not known, and to be read before a live run: what the Inventor add-in writes into an association's
+  `RefId`, `Source` and `ExpectedVaultPath` (REST does not show them; `GetFileAssociationsByIds` would).
+  Native files checked in by the add-in have the classification `None` and a hidden `.dwf` attachment; the
+  two STEP files added through `AddFile` have the classification `None` and no visualization attachment.
+- Suites: ten offline suites (the nine of the entry of 2026-11-16 below, with `Discover-VaultFolder.ps1
+  -SelfTest` now 16 cases and `Get-VaultDependencySnapshot.ps1 -SelfTest` 11, and
+  `Publish-ReferenceRoutePilot.ps1 -SelfTest`, 9 cases); the hygiene suite checks 34 scripts; 108 Python
+  tests under Pixi.
+
 ## Result — three reads: the corrected pre-check line, the two published files' properties, a second project's folder (2026-11-17)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-17-windows-vault-reads-02/` (report `REPORT.md`, which records the

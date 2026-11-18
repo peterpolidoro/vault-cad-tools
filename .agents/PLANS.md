@@ -678,6 +678,52 @@ Directives:
    three points for Peter; the first, which payload the pilot's update
    uses, has to be settled before the pilot.
 
+   **Delivered on 2026-11-17, reviewed on Linux on 2026-11-18**
+   (`evidence/2026-11-17-windows-mirror-and-reference-route-01/`, 319 files
+   verified; the mirror, 48 files verified;
+   `evidence/2026-11-18-linux-windows-mirror-and-reference-route-01-review-01/`,
+   66 checks, none failed). Nothing was written to Vault: 5 sign-ins, 25
+   GET, 43 downloads.
+   - A: the patch is applied here (seven paths under `windows/`; the entry
+     in `windows/HISTORY.md` is the Windows side's own, with one line
+     reworded so that the mirror's directory is not named). Applied to
+     6f71031 it gives the tree of the Windows working tree. New:
+     `windows/Vault-Version.ps1` (a row with a check-in date of year 1 is
+     the place of a check-out; `isCheckedOut` is true on every row of a
+     checked-out file and decides nothing), `folders_on_the_path` in the
+     discovery, the snapshot's refusal with exit code 2, and a correction
+     of `-AsCheckedIn`, which would have chosen such a row. On Linux:
+     `sync-status` calls a file listed by such a row `checked_out`
+     (`src/vault_cad_tools/sync_status.py`, with a test).
+   - B: the lab on a published file is the property's initial value, the
+     first entry of its list. Nothing ties it to a folder.
+   - C: the mirror is on the share. `Export-Package.ps1` stops at the
+     first document that is not in its primary model state: the root
+     places one sub-assembly in two model states, and each suppresses
+     occurrences of the other. Decided on 2026-11-18 in
+     `mechanical-cad/docs/exporter-package.md`, "Model states and
+     suppressed occurrences": the format does not change; a suppressed
+     occurrence is not a child and is named under
+     `native.suppressed_occurrences`. `import-snapshot` needed no change
+     (`tests/test_package_import.py`, one file in two model states). The
+     exporter is not changed yet. Not decided: a part without a body.
+   - D: `New-ReferenceRouteDocuments.ps1` and
+     `Publish-ReferenceRoutePilot.ps1` are in the patch. The wrapper
+     holds the STEP file by a relative name and the link holds after a
+     move. The pilot ran dry; **its live branch has not been run and its
+     SDK calls have not been rehearsed**. A live run adds two files to the
+     test folder and nothing else; it waits for Peter's word.
+   **Asked of Windows on 2026-11-18**, nothing written to Vault
+   (`to-windows/20261118T140617Z-...`): a first step that stops unless
+   the shared clone holds the patch; (A) the live branch rehearsed against
+   a stand-in; (B) one sign-in through the SDK and one read of what the
+   Inventor add-in writes into `RefId`, `Source` and `ExpectedVaultPath`;
+   (C) the exporter with model states, run on the mirror; (D) a member at
+   a check-out place taken at its last version checked in, and
+   `Get-VaultFileFacts.ps1` with the same rule; (E)
+   `docs/update-step-file-design.md` read and corrected. The Windows
+   machine was off that day.
+
 ## Open items
 
 - The name an authored part gets in Vault. `prepare-publish` uses `<key>.step`

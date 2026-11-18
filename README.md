@@ -527,8 +527,9 @@ offline: `discovery.json` is written on Windows by
 `windows/Discover-VaultFolder.ps1` (REST, GET only) for the project's Vault
 folder, and nothing in the project changes. Every mirrored component is
 `in_sync` (the project holds the version Vault names today), `vault_newer`
-(the file was checked in again) or `not_in_closure` (the root assembly no
-longer uses it); `new_in_vault` lists what the root's closure has and the
+(the file was checked in again), `checked_out` (Vault lists the file by the
+place of a check-out, which is not a version; since 2026-11-18) or
+`not_in_closure` (the root assembly no longer uses it); `new_in_vault` lists what the root's closure has and the
 project does not; every publication is compared with the file in the folder;
 and what else the folder holds, another root assembly for one, is listed
 apart. `current` says whether a refresh would change anything under

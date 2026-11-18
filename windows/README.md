@@ -60,7 +60,7 @@ Offline suites, none of which needs Inventor or Vault:
 `Test-StepHeader.ps1`,
 `Test-PackageFormat.ps1`, `Get-VaultFileFacts.ps1 -SelfTest`,
 `Discover-VaultFolder.ps1 -SelfTest`, `Get-VaultDependencySnapshot.ps1 -SelfTest`,
-`Test-ScriptHygiene.ps1`.
+`Publish-ReferenceRoutePilot.ps1 -SelfTest`, `Test-ScriptHygiene.ps1`.
 
 ## Operating preconditions for live Vault writes
 
@@ -79,6 +79,17 @@ Offline suites, none of which needs Inventor or Vault:
   `would_call` names the calls of the mode and route given, which by default are those
   of a live run. It invokes none of them: whether an Autodesk ID is signed in is asked
   by the live run, which refuses before the journal moves.
+- The reference route (design 5.5) is a pilot and its live branch has not been run.
+  `New-ReferenceRouteDocuments.ps1` makes the wrapper part and the assembly in a
+  scratch workspace laid out as the Vault folder is; `Publish-ReferenceRoutePilot.ps1
+  -Prepare` writes the request and a journal entry of its own (not the publication
+  journal), `-DryRun` checks both, resolves the SDK members by reflection and writes
+  every call a live run would make, each add with its file, hash and association.
+  `-Live` has its gates (request id, folder and folder id, the STEP file's version,
+  both hashes, the journal) and adds two files, the wrapper and then the assembly;
+  it needs the folder owner's word for exactly that request. What the Inventor
+  add-in writes into an association's `RefId`, `Source` and `ExpectedVaultPath` is
+  not known: the request carries them, null as prepared.
 - Git: the shared clones under `U:\Repositories\github\` are the only remote used on
   this machine (`shared`); Peter pushes to GitHub and fast-forwards them.
 
@@ -88,17 +99,48 @@ Offline suites, none of which needs Inventor or Vault:
   `Discover-VaultFolder.ps1 -FolderPath`) asks the server for the sub-folders of every
   level above it. In a personal area those are other people's folders: keep the
   folders on the path, each with its id, and nothing of what else a level holds.
+  `Discover-VaultFolder.ps1` records them so (`folders_on_the_path`: id, name, path
+  and category, the root first). Given `-FolderId` alone it lists no level: it reads
+  the folders above one by one, each by the parent the one below names.
+- A file that is checked out is listed by the place of its check-out, a row that
+  is not a version checked in. The row stands above the file's versions with the
+  next version number and a check-in date of year 1; `folders/{id}/contents` names
+  the file by it, `files/{master}/versions` lists it last, and a parent that is
+  checked out is named by it. `isCheckedOut` is true on every row of such a file,
+  on its earlier versions too, so only the date tells them apart
+  (`Vault-Version.ps1`). `Discover-VaultFolder.ps1` says of every file, parent,
+  child and closure member what its row is (`version_is`), records no check-in
+  date for such a row and counts them; a root is still a root.
+  `Get-VaultDependencySnapshot.ps1` refuses such a row as the root and as a
+  member: nothing is downloaded, `snapshot-receipt.json` has the status
+  `refused_check_out_place` and names the files, the exit code is 2. With
+  `-AsCheckedIn` a member is never such a row.
 - Every script that drives Inventor should start it through
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
   `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
   `Invoke-MonitorPlacementPilot.ps1`, `Invoke-ReferenceModelProbe.ps1`,
   `Invoke-StepExportProbe.ps1`,
   `Get-PartFeatureDump.ps1`, `Invoke-AssemblyStepProbe.ps1`,
-  `Invoke-StepImportProbe.ps1` and `Export-Package.ps1` do.
+  `Invoke-StepImportProbe.ps1`, `New-ReferenceRouteDocuments.ps1` and
+  `Export-Package.ps1` do.
   `Compare-NativeAndStepAssembly.ps1`,
   `Invoke-NativeAuthoringPilot.ps1` and `Invoke-NativeParameterPilot.ps1` do not
   yet: use them only in the single-user interactive session they were
   qualified in.
+- A wrapper part holds its STEP file by a name relative to itself, and an
+  assembly its wrapper likewise (`FileDescriptor.RelativeFileName` is the bare
+  file name when the files share a folder). Moved together to another root, the
+  three files open with the link held and nothing to save; Inventor then says
+  that the location differs (`ReferenceLocationDifferent`) and that nothing is
+  missing. `File.ReferencedFileDescriptors` holds `FileDescriptor` objects, not
+  `ReferencedFileDescriptor`: they have no `DocumentFound` and no logical-name
+  call. A document made from Autodesk's standard templates holds no iLogic rule
+  and no event trigger, so saving it runs none.
+- A sub-assembly used in two model states is two documents with one file name
+  (`FullDocumentName` ends in `<state>` for the one that is not primary), and
+  each has its own suppressed occurrences. `Export-Package.ps1` refuses such an
+  assembly at the first document whose file's active model state is not the
+  primary one.
 - A run that ends `complete_with_dialogs` had a dialog dismissed by the
   watchdog. Read the receipt's `dialogs` field before accepting it.
 - A package is complete only after a run that ended `complete`. When a run of

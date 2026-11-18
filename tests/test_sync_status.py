@@ -58,7 +58,7 @@ class SyncStatusTests(unittest.TestCase):
     def test_a_mirror_of_what_vault_holds_is_current(self):
         result = self.status(discovery(files()))
         self.assertTrue(result["current"])
-        self.assertEqual(result["counts"], {"in_sync": 4, "vault_newer": 0, "not_in_closure": 0, "new_in_vault": 0})
+        self.assertEqual(result["counts"], {"in_sync": 4, "vault_newer": 0, "checked_out": 0, "not_in_closure": 0, "new_in_vault": 0})
         self.assertEqual(self.states(result), {"a": "in_sync", "b": "in_sync", "root": "in_sync", "sub": "in_sync"})
         self.assertEqual((result["root"], result["new_in_vault"], result["publications"]),
                          ({"key": "root", "master_id": "900"}, [], []))
@@ -78,6 +78,24 @@ class SyncStatusTests(unittest.TestCase):
         data = discovery(files())
         data["roots"][0]["version_id"] = "9002"
         self.assertEqual(self.states(self.status(data))["root"], "vault_newer")
+
+    def test_a_file_listed_by_the_place_of_its_check_out_is_not_newer_and_not_in_sync(self):
+        """A checked-out file is listed by a row of its own, one version number up, that is not a version checked in."""
+        def checked_out(closure):
+            closure["b"].update(version_id="2002", version=2, is_checked_out=True, version_is="check_out_place")
+            closure["a"]["version_is"] = "checked_in"
+            closure["sub"].update(is_checked_out=True, version_is="checked_in")       # an earlier row of a checked-out file
+        result = self.status(discovery(files(), checked_out))
+        self.assertEqual(self.states(result), {"a": "in_sync", "b": "checked_out", "root": "in_sync", "sub": "in_sync"})
+        self.assertFalse(result["current"])
+        self.assertEqual(result["counts"], {"in_sync": 3, "vault_newer": 0, "checked_out": 1, "not_in_closure": 0, "new_in_vault": 0})
+        rows = {c["key"]: c for c in result["components"]}
+        self.assertEqual((rows["b"]["held_version_id"], rows["b"]["vault_version_id"]), ("2001", "2002"))
+        self.assertTrue(rows["b"]["checked_out_in_vault"] and rows["sub"]["checked_out_in_vault"])
+        # a row without a date that can be read is not known to be a version either
+        self.assertEqual(self.states(self.status(discovery(files(), lambda c: c["b"].update(version_is="no_check_in_date"))))["b"], "checked_out")
+        # a discovery from before the rule says nothing of its rows and is read as before
+        self.assertEqual(self.states(self.status(discovery(files(), lambda c: c["b"].update(version_id="2002"))))["b"], "vault_newer")
 
     def test_what_the_assembly_gained_and_lost_is_named(self):
         def other_closure(closure):
