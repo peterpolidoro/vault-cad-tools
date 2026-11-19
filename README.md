@@ -50,6 +50,16 @@ guix shell --pure -m manifest.scm -- python3 run.py --help
 guix shell --pure -m manifest.scm -- python3 -m unittest discover -s tests -v
 ```
 
+Three tests compare the index the import writes (`vault-lock.json`) with the
+one the sibling `mechanical-cad` repository derives from the same directories
+(`tests/test_index_agreement.py`). They need that checkout, where
+`MECHANICAL_CAD` says, beside this repository, or as the directory the tests
+are run from, and are skipped without it:
+
+```sh
+MECHANICAL_CAD=/path/to/mechanical-cad guix shell --pure -E '^MECHANICAL_CAD$' -m manifest.scm -- python3 -m unittest discover -s tests -v
+```
+
 Windows uses Pixi as the standard environment. Install Pixi once following
 https://pixi.sh/latest/installation/, then run these from a local tools checkout:
 

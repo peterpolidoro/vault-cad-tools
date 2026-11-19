@@ -44,6 +44,14 @@ windows/HISTORY.md; where the wider work stands is in
   items).
 - Tests on Linux, from the `mechanical-cad` checkout:
   `guix shell --pure -m manifest.scm -- python3 -B -m pytest -q PATH/TO/vault-cad-tools/tests`.
+- Since 2026-11-19 a test compares the two derivations of the index: what
+  the import writes as `vault-lock.json` and what `mechanical-cad` derives
+  from the same directories (`tests/test_index_agreement.py`: a first
+  import, a new version with a new file, one file in two model states). The
+  two agree. It needs the `mechanical-cad` checkout, named by
+  `MECHANICAL_CAD`, beside this repository, or as the directory the tests
+  are run from, as in the command above, and is skipped without it; with
+  it, 113 tests pass.
 
 ## Current state (2026-11-12)
 
