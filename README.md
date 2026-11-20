@@ -449,9 +449,13 @@ Measurement and native authoring (added for the command-line pilot):
     Inventor returns as nothing. A document's dirty flag after the export is required:
     a read that fails stops the run, and so does a flag that Inventor returns as
     nothing, because the run says which documents were dirty. The receipt
-    is `schema_version` 4 since 2026-11-20 (3 since 2026-11-13): its guards are named for
-    model states and suppressed occurrences, and it counts the files opened, the files in
-    more than one model state and the suppressed occurrences. The reads of the dirty flag
+    is `schema_version` 5 since 2026-11-20 (4 earlier that day, 3 since 2026-11-13): its
+    guards are named for model states and suppressed occurrences, it counts the files
+    opened, the files in more than one model state and the suppressed occurrences, and
+    since 5 it names the parts without a solid body and counts them and the parts with
+    work surfaces. A part's `source.json` says its work surfaces under
+    `native.bodies.work_surfaces`, only when it has one; the import holds the key to the
+    rule of the exporter's own check (an integer of 1 or more, on a part only). The reads of the dirty flag
     are not among the guards it counts, since a dirty document is warned of and does not
     stop a run.
     Draft 3 of the specification follows the exporter

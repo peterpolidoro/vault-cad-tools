@@ -45,11 +45,13 @@ a native file, and never a STEP file that was exported from a native.
     `DocumentService.GetLatestFilesByFolderId`, which the reference-route pilot resolves and has
     rehearsed, gives `File` with `CheckedOut`, `CkOutUserId`, `Locked`, `Hidden` and
     `ControlledByChangeOrder`.
-- **The connection is made with user id 0 today**, and both adds ran that way: the line that reads the
-  id asks the credentials for a `SecurityHeader`, which they do not have; the id is under the
-  credentials' `Session.User`. An add did not need it. Whether a check-out or a check-in through such
-  a connection works at all is not known. It is corrected, with a review of its own, before anything
-  of this design is built on Windows.
+- **The connection was made with user id 0 until 2026-11-20**, and both adds ran that way: the line
+  that read the id asked the credentials for a `SecurityHeader`, which they do not have; the id is
+  under the credentials' `Session.User`. An add did not need it. Corrected that day in both publishing
+  scripts, as a change reviewed by itself: the id is read from the session right after the sign-in,
+  and a session that gives none, or 0, is refused before the folder is asked, with the journal not
+  moved. Rehearsed whole against the stand-in, never run against Vault. Whether a check-out or a
+  check-in works through a connection made with the id is still not known.
 - In Windows PowerShell a null given to a text parameter or property of a .NET member arrives as an
   empty text (found by the rehearsal of the reference route on 2026-11-20). Where a null is meant it
   is sent as `[NullString]::Value`, or the property is not set.

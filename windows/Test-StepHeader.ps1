@@ -221,6 +221,43 @@ try {
         $one = Get-StepFileInfo -Path $inventorFile
         Assert (@($one.header.schemas).Count -eq 1 -and $one.header.schemas[0] -eq $one.header.schema) "one schema: $(@($one.header.schemas) -join ' | ')"
     }
+    # A hidden construction surface with a name, as the translator writes the pitch diameter of a generated gear: the
+    # surface #26 is listed in a representation, as the rule wants, and is also in the item list of a group assignment.
+    function New-GroupFile([string]$name, [string]$assignment, [string]$items) {
+        New-Data $name @("#10=MANIFOLD_SOLID_BREP('Solid1',#100);", "#26=SHELL_BASED_SURFACE_MODEL('Srf1',(#25));", "#27=SHELL_BASED_SURFACE_MODEL('Srf2',(#29));", "#28=STYLED_ITEM('',(#30),#26);", "#31=STYLED_ITEM('',(#30),#27);",
+            "#24=INVISIBILITY((#28,#28));", "#20=GROUP('Pitch Diameter',`$);", $assignment, "#50=SHAPE_REPRESENTATION('',($items),#70);")
+    }
+    Case "H28 an invisible item may also be in the item list of a named group: the form is understood and the group is named" {
+        $found = Get-StepInvisibility -Path (New-GroupFile "group.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,(#26));" "#10,#26,#27")
+        Assert ($found.form_understood -and @($found.problems).Count -eq 0 -and @($found.hidden_items).Count -eq 1) "result: $($found | ConvertTo-Json -Compress -Depth 5)"
+        $item = $found.hidden_items[0]
+        Assert ($item.item -eq 26 -and $item.item_type -eq "SHELL_BASED_SURFACE_MODEL" -and (@($item.representations) -join ',') -eq "#50 SHAPE_REPRESENTATION" -and (@($item.groups) -join ',') -eq "#19 APPLIED_GROUP_ASSIGNMENT") "item: $($item | ConvertTo-Json -Compress -Depth 5)"
+        $none = Get-StepInvisibility -Path $hiddenBodies
+        Assert (@($none.hidden_items | Where-Object { @($_.groups).Count -ne 0 }).Count -eq 0) "a hidden item that no group holds names a group"
+    }
+    Case "H29 a visible item in the same group, and one hidden item in two groups: understood, both groups named" {
+        $beside = Get-StepInvisibility -Path (New-GroupFile "beside.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,(#27,#26));" "#10,#26,#27")
+        Assert ($beside.form_understood -and (@($beside.hidden_items | ForEach-Object { $_.item }) -join ',') -eq "26" -and (@($beside.hidden_items[0].groups) -join ',') -eq "#19 APPLIED_GROUP_ASSIGNMENT") "beside: $($beside | ConvertTo-Json -Compress -Depth 5)"
+        $twice = Get-StepInvisibility -Path (New-GroupFile "twice.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,(#26));`n#18=APPLIED_GROUP_ASSIGNMENT(#20,(#10,#26));" "#10,#26,#27")
+        Assert ($twice.form_understood -and @($twice.hidden_items).Count -eq 1 -and (@($twice.hidden_items[0].groups | Sort-Object) -join ',') -eq "#18 APPLIED_GROUP_ASSIGNMENT,#19 APPLIED_GROUP_ASSIGNMENT") "twice: $($twice | ConvertTo-Json -Compress -Depth 5)"
+    }
+    Case "H30 the group does not stand for the representation: an item that only a group lists is refused" {
+        $found = Get-StepInvisibility -Path (New-GroupFile "onlygroup.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,(#26));" "#10,#27")
+        $text = @($found.problems) -join ';'
+        Assert (-not $found.form_understood -and @($found.problems).Count -eq 1 -and $text -match '#26 is marked invisible but is not an item of any representation') "problems: $text"
+    }
+    Case "H31 the item as the group itself, an assignment with a third parameter, a list of items that holds a list: each refused" {
+        $asGroup = Get-StepInvisibility -Path (New-GroupFile "asgroup.step" "#19=APPLIED_GROUP_ASSIGNMENT(#26,(#27));" "#10,#26,#27")
+        Assert (-not $asGroup.form_understood -and (@($asGroup.problems) -join ';') -match '#19 APPLIED_GROUP_ASSIGNMENT uses an invisible item outside its list of items') "the item as the group: $(@($asGroup.problems) -join ';')"
+        $third = Get-StepInvisibility -Path (New-GroupFile "third.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,(#27),#26);" "#10,#26,#27")
+        Assert (-not $third.form_understood -and (@($third.problems) -join ';') -match '#19 APPLIED_GROUP_ASSIGNMENT uses an invisible item outside its list of items') "a third parameter: $(@($third.problems) -join ';')"
+        $nested = Get-StepInvisibility -Path (New-GroupFile "nested.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,((#26)));" "#10,#26,#27")
+        Assert (-not $nested.form_understood -and (@($nested.problems) -join ';') -match 'the items of #19 APPLIED_GROUP_ASSIGNMENT hold something that is not a reference') "a list in the list: $(@($nested.problems) -join ';')"
+        $notAList = Get-StepInvisibility -Path (New-GroupFile "notalist.step" "#19=APPLIED_GROUP_ASSIGNMENT(#20,#26);" "#10,#26,#27")
+        Assert (-not $notAList.form_understood -and (@($notAList.problems) -join ';') -match 'the items of #19 APPLIED_GROUP_ASSIGNMENT are not a list') "items that are not a list: $(@($notAList.problems) -join ';')"
+        $other = Get-StepInvisibility -Path (New-GroupFile "other.step" "#19=APPLIED_DATE_ASSIGNMENT(#20,(#26));" "#10,#26,#27")
+        Assert (-not $other.form_understood -and (@($other.problems) -join ';') -match '#26 is marked invisible and is used by #19 \(APPLIED_DATE_ASSIGNMENT\)') "another assignment was accepted: $(@($other.problems) -join ';')"
+    }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
 Write-Output "$passed passed, $failed failed"

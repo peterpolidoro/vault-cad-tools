@@ -47,8 +47,11 @@ A field the request leaves empty is not set at all: assigned a nothing, a text p
 empty text, which is not the same thing to send (found by the rehearsal of 2026-11-20). -Prepare takes the three
 for each association (-WrapperRefId and so on); without them they are empty.
 The BOM is null and the classification None; no visualization attachment is made by AddFile.
-The connection is made with the user id 0, as both adds of Publish-StepToVault.ps1 were: the line that reads the
-id asks the credentials for a SecurityHeader, which they do not have (reflection, 2026-11-20). Left as it ran.
+The connection is made with the user id of this account, read from the session the sign-in leaves with the
+credentials (WebServiceCredentials.Session.User.Id). A session that gives no id, or 0, is refused right after the
+sign-in ("refused_no_session_user_id"): the folder is not asked, the journal does not move, nothing is uploaded.
+The number is not written to live-run.json. (Until 2026-11-20 the line asked the credentials for a SecurityHeader,
+which they do not have, and the connection was made with the id 0, as both adds of Publish-StepToVault.ps1 were.)
 
     & .\windows\Publish-ReferenceRoutePilot.ps1 -SelfTest      # offline cases: the request, the gates, the folder listing, the journal
 #>
@@ -173,6 +176,22 @@ function Test-FolderListing($Req, $Files) {
         step_version_in_folder = $(if ($step.Count -eq 1) { [string]$step[0].Id } else { $null }); step_master_in_folder = $(if ($step.Count -eq 1) { [string]$step[0].MasterId } else { $null }); name_collisions = $taken }
 }
 
+function Get-SessionUserId($Manager) {
+    # The user id of the account that signed in, from the session the sign-in left with the credentials
+    # (WebServiceCredentials.Session.User.Id: three getters that read a field; nothing is asked of a service).
+    # 0 when there is no session, no user, no id, an id that is not a whole number, or a read that fails: the
+    # caller refuses 0. The session's own id and its authorization are never read.
+    try {
+        $session = $Manager.WebServiceCredentials.Session
+        if ($null -eq $session) { return [int64]0 }
+        $sessionUser = $session.User
+        if ($null -eq $sessionUser) { return [int64]0 }
+        $id = $sessionUser.Id
+        if ($id -is [long] -or $id -is [int]) { return [int64]$id }
+    } catch { }
+    return [int64]0
+}
+
 function Get-AssociationTexts($Declared) {
     # The text fields a FileAssocParam is to be given, from an association of the request: only those the request
     # states. A field that is nothing is left out, and the SDK object keeps its own nothing for it.
@@ -290,6 +309,22 @@ if ($SelfTest) {
         $taken = Test-FolderListing $sample @((Listed "model.step" "41" "40"), (Listed "MODEL-REFERENCE.IPT" "61" "60"))
         Assert ($taken.verdict -eq "refused_collision" -and $taken.name_collisions.Count -eq 1 -and $taken.name_collisions[0] -eq "MODEL-REFERENCE.IPT (master 60, version 61)") "taken: $($taken | ConvertTo-Json -Compress)"
         Assert ((Test-FolderListing $sample @((Listed "model.step" "41" "40"), (Listed "pilot.iam" "71" "70"))).verdict -eq "refused_collision") "an assembly of the name passed"
+    }
+    Case "U1 the user id of the connection is the one of the session of the sign-in: no session, no user, no id, an id that is not a whole number or a read that throws give 0, which the live branch refuses" {
+        $manager = { param($session) [pscustomobject]@{ WebServiceCredentials = [pscustomobject]@{ Session = $session } } }
+        $with = { param($id) [pscustomobject]@{ User = [pscustomobject]@{ Id = $id } } }
+        $given = Get-SessionUserId (& $manager (& $with ([int64]990011223344)))
+        Assert ($given -eq 990011223344 -and $given -is [int64]) "a session with a user id gives '$given'"
+        Assert ((Get-SessionUserId (& $manager (& $with 12))) -eq 12) "an id that is an Int32 is not given"
+        Assert ((Get-SessionUserId (& $manager (& $with ([int64]0)))) -eq 0) "an id of 0 is not 0"
+        Assert ((Get-SessionUserId (& $manager $null)) -eq 0) "no session is not 0"
+        Assert ((Get-SessionUserId (& $manager ([pscustomobject]@{ User = $null }))) -eq 0) "a session without a user is not 0"
+        Assert ((Get-SessionUserId (& $manager (& $with $null))) -eq 0 -and (Get-SessionUserId (& $manager (& $with "12"))) -eq 0 -and (Get-SessionUserId (& $manager (& $with 1.5))) -eq 0) "an id that is nothing, a text or a fraction is not 0"
+        Assert ((Get-SessionUserId ([pscustomobject]@{ })) -eq 0 -and (Get-SessionUserId $null) -eq 0) "a manager without credentials is not 0"
+        $throws = New-Object psobject; $throws | Add-Member -MemberType ScriptProperty -Name WebServiceCredentials -Value { throw "no credentials" }
+        Assert ((Get-SessionUserId $throws) -eq 0) "a read that throws is not 0"
+        $text = [IO.File]::ReadAllText($PSCommandPath)
+        Assert ($text -notmatch 'SecurityHeader\.UserId' -and ([regex]::Matches($text, 'Get-SessionUserId \$mgr')).Count -eq 1 -and $text -match 'Finish "refused_no_session_user_id" 2') "the live branch does not read the id from the session once, or does not refuse"
     }
     Case "A1 an association is given only the texts the request states: a field that is nothing is not set, an empty text is an empty text" {
         $sample = New-Sample
@@ -411,6 +446,7 @@ if ($DryRun) {
         elseif ($kind -eq "enum") { if ($t.IsEnum -and [Enum]::GetNames($t) -contains $memberName) { $found = $memberName } }
         elseif ($kind -eq "static") { $found = $t.GetMethod($memberName, [Reflection.BindingFlags]'Public,Static', $null, [Type[]]@(), $null) }
         elseif ($kind -eq "property") { $property = $t.GetProperty($memberName); if ($property -and $property.CanWrite -and $property.PropertyType.Name -eq $paramTypeNames[0]) { $found = $property } }
+        elseif ($kind -eq "readable") { $property = $t.GetProperty($memberName); if ($property -and $property.CanRead -and $property.PropertyType.Name -eq $paramTypeNames[0]) { $found = $property } }
         else { foreach ($m in $t.GetMethods()) { if ($m.Name -ne $memberName) { continue }; $names = @($m.GetParameters() | ForEach-Object { $_.ParameterType.Name }); if (-not $paramTypeNames -or (@($names) -join ',') -eq ($paramTypeNames -join ',')) { $found = $m; break } } }
         if ($found) { $script:resolved += [ordered]@{ type = $typeName; member = $(if ($kind -eq 'ctor') { '.ctor' } else { $memberName }); kind = $kind; parameters = @($paramTypeNames); assembly = $asm.GetName().Name; file_version = [Diagnostics.FileVersionInfo]::GetVersionInfo($asm.Location).FileVersion } }
         else { $script:unresolved += "${typeName}::$memberName($($paramTypeNames -join ','))" }
@@ -421,6 +457,11 @@ if ($DryRun) {
         foreach ($query in "IsLoggedIn", "IsLoginValid", "GetUserId", "GetOAuthToken") { Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.AutodeskAccount" $query @() "static" }
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WinAuthCredentials" ".ctor" @("ServerIdentities", "String", "String", "NetworkCredential") "ctor"
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WebServiceManager" ".ctor" @("IWebServiceCredentials", "Int32") "ctor"
+        # the user id of the connection: read from the session the sign-in leaves with the credentials
+        Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WebServiceManager" "WebServiceCredentials" @("IWebServiceCredentials") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.IWebServiceCredentials" "Session" @("Session") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServices.Session" "User" @("User") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServices.User" "Id" @("Int64") "readable"
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "GetFolderByPath" @("String")
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "GetLatestFilesByFolderId" @("Int64", "Boolean")
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.Connection" ".ctor" @("WebServiceManager", "String", "Int64", "String", "AuthenticationFlags") "ctor"
@@ -445,7 +486,9 @@ if ($DryRun) {
             makes = "a new file (master and version 1) in the folder; no visualization attachment (AddFile has no parameter for one)"; on_exception = "the journal moves to ambiguous_$($add.role); nothing is retried" }
     }
     $findings.would_send = @(
-        [ordered]@{ step = 1; kind = "sign-in"; writes_to_vault = $false; call = "AutodeskAccount.IsLoggedIn(), IsLoginValid(), GetUserId(), GetOAuthToken() (static; no Login dialog); new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, token, CredentialCache.DefaultNetworkCredentials), timeout)"; arguments = [ordered]@{ vault = $req.vault.name; server = $req.vault.server; credentials = "current Windows identity, and the named-user license as the token of the Autodesk ID signed in on this machine; the token stays in memory; nothing written to disk" } },
+        [ordered]@{ step = 1; kind = "sign-in"; writes_to_vault = $false; call = "AutodeskAccount.IsLoggedIn(), IsLoginValid(), GetUserId(), GetOAuthToken() (static; no Login dialog); new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, token, CredentialCache.DefaultNetworkCredentials), timeout)"; arguments = [ordered]@{ vault = $req.vault.name; server = $req.vault.server; credentials = "current Windows identity, and the named-user license as the token of the Autodesk ID signed in on this machine; the token stays in memory; nothing written to disk" }
+            then = "the user id of this account is read from the session the sign-in left with the credentials (WebServiceCredentials.Session.User.Id; from memory, no request); the connection of step 4 is made with it"
+            otherwise = "refused_no_session_user_id when the session gives no user id, or 0: the folder is not asked and the journal has not moved" },
         [ordered]@{ step = 2; kind = "read"; writes_to_vault = $false; call = "DocumentService.GetFolderByPath(path)"; arguments = [ordered]@{ path = $req.destination.folder }; expect = [ordered]@{ Id = $req.destination.folder_id }; otherwise = "refused_folder_id" },
         [ordered]@{ step = 3; kind = "read"; writes_to_vault = $false; call = "DocumentService.GetLatestFilesByFolderId(folderId, true)"; arguments = [ordered]@{ folderId = $req.destination.folder_id; includeHidden = $true }
             expect = "one file named '$($req.referenced_step.name)' with Id $($req.referenced_step.version_id) and MasterId $($req.referenced_step.master_id); no file named '$($adds[0].name)' or '$($adds[1].name)' (case-insensitive); a nothing in the answer is not counted as a file"; otherwise = "refused_step_not_in_folder, refused_step_version or refused_collision; the journal has not moved" },
@@ -537,6 +580,11 @@ try {
     $cred = New-Object Autodesk.Connectivity.WebServicesTools.WinAuthCredentials($si, $VaultName, $token, [System.Net.CredentialCache]::DefaultNetworkCredentials)
     $token = $null
     $mgr = New-Object Autodesk.Connectivity.WebServicesTools.WebServiceManager($cred, $TimeoutMilliseconds)
+    # The user id of this account, from the session the sign-in left. A session that gives no id, or 0, is refused
+    # here: before the folder is asked, before the journal moves, before anything is uploaded. The number is not written.
+    $uid = Get-SessionUserId $mgr
+    $run.sign_in.session_user_id_is_a_number_other_than_0 = ($uid -ne 0)
+    if ($uid -eq 0) { $run.notes += "the session of the sign-in gives no user id, or 0; a connection is not made with the id 0"; Finish "refused_no_session_user_id" 2 }
     # ---- pre-checks, BEFORE the journal moves ----
     $serverFolder = $mgr.DocumentService.GetFolderByPath($ExpectedFolder)
     $run.precheck = [ordered]@{ folder_id_from_server = [string]$serverFolder.Id; folder_full_name = $serverFolder.FullName }
@@ -548,7 +596,6 @@ try {
     if ($listing.verdict -ne "ok") { $run.notes += "the folder is not as the request needs it: $($listing.verdict)"; Finish $listing.verdict 2 }
     $vdf = Load "Autodesk.DataManagement.Client.Framework.Vault"
     $flagsT = $vdf.GetType("Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.AuthenticationFlags")
-    $uid = [int64]0; try { $uid = [int64]$mgr.WebServiceCredentials.SecurityHeader.UserId } catch { }
     $conn = New-Object Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.Connection($mgr, $VaultName, $uid, $Server, [Enum]::Parse($flagsT, "WindowsAuthentication"))
     $folderEntity = New-Object Autodesk.DataManagement.Client.Framework.Vault.Currency.Entities.Folder($conn, $serverFolder)
     if ([string]$folderEntity.Id -ne [string]$ExpectedFolderId) { throw "VDF folder entity id $($folderEntity.Id) != expected $ExpectedFolderId" }

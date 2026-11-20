@@ -203,7 +203,11 @@ What REST cannot answer, so the SDK (or Inventor) is needed:
 - hidden files: earlier runs showed folder listings omit hidden files even with
   `includeHidden=true`; `DocumentService.GetLatestFilesByFolderId(id, true)` lists them;
 - the reference strings as stored inside an IAM (`RefId`, `Source`) that `CheckinFile`
-  associations require: SDK `GetFileAssociationsByIds` or Inventor's `ReferencedFileDescriptors`;
+  associations require: SDK `GetFileAssociationsByIds` or Inventor's `ReferencedFileDescriptors`.
+  Read through the SDK on 2026-11-20 for the six direct children of one assembly: `Source` is the
+  text `INVENTOR`, `ExpectedVaultPath` the child's own Vault path, and `RefId` a whole number as
+  text, different for each child. Inventor's interface was not found to give that number
+  (reflection over the interop assembly: an internal name, a reference key and flags, no id);
 - any write (section 6 uses `FileManager.AddFile`, `CheckoutFile`, `CheckinFile`,
   `UndoCheckoutFile`, property updates);
 - which non-Inventor files an Inventor file references when they are not in Vault (only the

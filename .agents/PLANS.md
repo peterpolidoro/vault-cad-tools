@@ -60,26 +60,37 @@ windows/HISTORY.md; where the wider work stands is in
   Windows, the user id of the connection is corrected: the publishing
   scripts make their connection with user id 0, which an add did not
   mind.
-- **Asked of Windows on 2026-11-20**, one sign-in through the SDK and one
-  read, nothing written to Vault (next work 5 has the parts), in this
-  order: the read once more, with Peter's Vault client open; the reader
-  follows the invisibility rule; a part's work surfaces; the second
-  project exported; two reads in Inventor on the mirrors, added at
-  Peter's word (appearances and materials; constraints, joints and
-  degrees of freedom); and, only if there was time, the user id of the
-  connection as a patch of its own. The shared clones were brought level
-  on his word that day and the task's gate holds. A part may come back
-  as not begun.
-- **Peter's**: his word for the live run of the reference route, which
-  adds two files to his test folder; the payload of the revision's pilot;
-  and whether server, vault and folder names stay in tracked files (open
-  items).
-- Tests on Linux, from the `mechanical-cad` checkout:
-  `guix shell --pure -m manifest.scm -- python3 -B -m pytest -q PATH/TO/vault-cad-tools/tests`.
-  115 pass. Three of them compare the two derivations of the index
-  (`tests/test_index_agreement.py`); they need the `mechanical-cad`
-  checkout, named by `MECHANICAL_CAD`, beside this repository, or as the
-  directory the tests are run from, and are skipped without it.
+- **That task, of seven parts, delivered and reviewed the same day**
+  (53 checks on Linux, none failed). Nothing was written to Vault. **The
+  read through the SDK was made after the delivery**, at Peter's word in
+  the Windows session with his Vault client open, one sign-in and one
+  read: for the six direct children of the second project's root the
+  add-in recorded `Source` `INVENTOR`, `ExpectedVaultPath` the child's own
+  Vault path, and `RefId` a whole number as text, different for each and
+  rising with the order in which the files came into Vault. Where that
+  number comes from is not known, so the pilot's two associations cannot
+  be given what the add-in gives, and no new request was prepared; what
+  the add-in records for a part that holds a STEP file was not seen. The
+  session's user id is a number other than 0. Both Windows patches are applied as delivered:
+  `Get-StepInvisibility` follows the rule for a named group; a part's
+  `native.bodies.work_surfaces` and the receipt's warning of a part without
+  a solid (receipt schema 5); and, by itself, the user id of the connection
+  read from the session in both publishing scripts, a session without one
+  refused before the folder is asked. On Linux the import holds
+  `work_surfaces` to the rule of the Windows check, with a test (116).
+  **The second project's package exists and is imported** into a scratch
+  project outside every repository; `mechanical-cad/.agents/PLANS.md` has
+  what it showed. Appearances, materials, constraints, joints and degrees
+  of freedom were read in Inventor into the evidence; no tool of this
+  repository reads them yet.
+- **Asked of Windows after that** (the third prompt of 2026-11-20),
+  nothing sent to Vault: an export of the second project's root assembly
+  from its mirror as one STEP file, as a check of the recorded placements;
+  a page for Peter on checking one wrapper part and one assembly into his
+  test folder from Inventor, under other names than the pilot's, so that
+  one more read can show what the add-in records for exactly the pilot's
+  two relations; and a line for the read in `windows/HISTORY.md`. Its gate
+  needs Peter's commit and push and the shared clones level.
 
 ## Current state (2026-11-12)
 
@@ -836,10 +847,27 @@ Directives:
    project's assembly. The order is T0, D, A, B, C, F, G, E, with E only
    if there is time.
 
-   When it delivers, on Linux: the package imported into a scratch project
-   outside every repository (its paths name a lab), measured, validated
-   and built, and set beside the project made from the same assembly's
-   STEP file (`mechanical-cad`, ignored `tmp/dual-lever-from-step/`).
+   Delivered and reviewed the same day, with nothing written to Vault and
+   nothing asked of it: all of it but the read of part D, for which the
+   Vault client was not running. Both patches are applied as delivered.
+   The package was imported on Linux into a scratch project outside every
+   repository (its paths name a lab), measured and validated, and set
+   beside the project made from the same assembly's STEP file
+   (`mechanical-cad`, ignored `tmp/dual-lever-from-step/`): the parts
+   agree one for one, the assembly built from the records is not that
+   file's. The import now holds `native.bodies.work_surfaces` to the rule
+   of the Windows check.
+
+   The read of part D was made after the delivery, at Peter's word ("Start
+   here" has what it showed).
+
+   **Asked of Windows after that** (the third prompt of 2026-11-20), nothing
+   sent to Vault: an export of the second project's root assembly from its
+   mirror as one STEP file, to hold the recorded placements against, and a
+   page for Peter on checking one such pair in from Inventor. Then, on his
+   word, either one more read of what the add-in made of that pair and a
+   pilot that sends the same, or the live run of the reference route as it
+   stands.
 
 ## Open items
 
@@ -865,11 +893,16 @@ Directives:
   session they were qualified in until they are moved.
 - The material and appearance claim per part and body
   (`docs/authoring-and-materials.md` 4.1) is not recorded by the exporter.
-- `Export-Package.ps1` has written no package of a project with model
-  states or suppressed occurrences yet: the second project's run stopped
-  later, at an `INVISIBILITY` in another form (decided, not yet followed by
-  the Windows reader). Its stop for a document with a view has not fired on
-  real data. Not met on real data either: a part in a model state other
+  An evidence tool read it for both projects on 2026-11-20 and found three
+  things a recorder must know: the colour value of a metal's asset is one
+  grey and not what one sees; a document's asset does not say which
+  library it came from; and a part first asked after the libraries were
+  listed answers with a library asset of the same name.
+- `Export-Package.ps1` has written one package of a project with model
+  states and suppressed occurrences, the second project's, on 2026-11-20.
+  Whether the placements it records are the assembly's is not yet held
+  against an export of the assembly itself. Its stop for a document with a
+  view has not fired on real data. Not met on real data either: a part in a model state other
   than its primary one, a flexible instance inside
   a flexible instance, two instances of one document flexed differently,
   thread features, patterns of holes other than a mirror.

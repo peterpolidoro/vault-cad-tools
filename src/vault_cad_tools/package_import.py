@@ -158,6 +158,7 @@ def _read_package(package):
             raise ExchangeError(f"{where}: master id {identity[0]} in model state {identity[1]} is in the package twice")
         entry = {"where": where, "kind": kind, "source": source, "identity": identity,
                  "suppressed": _suppressed_names(where, kind, source)}
+        _check_work_surfaces(where, kind, source)
         if set(held) !={"source.json", "part.step" if kind == "part" else "assembly.json"}:
             raise ExchangeError(f"{where}: a {kind} has source.json and "
                                 + ("part.step" if kind == "part" else "assembly.json") + ", and nothing else")
@@ -196,6 +197,25 @@ def _read_package(package):
         raise ExchangeError(f"package.json counts {counts}; the package holds {have}")
     overrides = _read_occurrences(package, files, root_identity)
     return manifest, files, root_identity, overrides
+
+
+def _check_work_surfaces(where, kind, source):
+    """native.bodies.work_surfaces: the number of a part's work surfaces, written only when it is not 0.
+
+    The exporter's own check of a package holds the key to the same rule; a number written 1.0 is not an integer
+    in either.
+    """
+    native = source.get("native")
+    bodies = native.get("bodies") if isinstance(native, dict) else None
+    if not isinstance(bodies, dict) or "work_surfaces" not in bodies:
+        return
+    at = f"{where}/source.json"
+    if kind != "part":
+        raise ExchangeError(f"{at}: only a part says its work surfaces")
+    number = bodies["work_surfaces"]
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise ExchangeError(f"{at}: native.bodies.work_surfaces must be an integer of 1 or more; a part without a "
+                            "work surface does not have the key")
 
 
 def _suppressed_names(where, kind, source):

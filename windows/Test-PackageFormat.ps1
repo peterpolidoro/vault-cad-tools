@@ -552,8 +552,8 @@ try {
         $read = $exporter.IndexOf('Get-RequiredValue "dirty flag of '); $written = $exporter.IndexOf('$packageWritten = $true')
         Assert ($read -ge 0 -and $written -gt $read) "the dirty flags are not read before the package is said to be written (read at $read, written at $written)"
     }
-    Case "P35 the exporter's receipt names schema 4 wherever it is written, the receipt of a run that could not write it in full included" {
-        Assert ($PackageReceiptSchemaVersion -is [int] -and $PackageReceiptSchemaVersion -eq 4) "the schema of the receipt is '$PackageReceiptSchemaVersion'"
+    Case "P35 the exporter's receipt names schema 5 wherever it is written, the receipt of a run that could not write it in full included" {
+        Assert ($PackageReceiptSchemaVersion -is [int] -and $PackageReceiptSchemaVersion -eq 5) "the schema of the receipt is '$PackageReceiptSchemaVersion'"
         $sample = '$receipt = [ordered]@{ schema_version = 2; status = $status }; $manifest = [ordered]@{ schema_version = $PackageSchemaVersion; kind = $PackageKind }; $short = [ordered]@{ schema_version = $PackageReceiptSchemaVersion; status = "FAILED" }'
         Assert ((@(Get-ReceiptSchemas $sample) -join ",") -ceq '2,$PackageReceiptSchemaVersion') "the check does not find the receipts of a script: $(@(Get-ReceiptSchemas $sample) -join ',')"
         $written = @(Get-ReceiptSchemas ([IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1"))))
@@ -618,6 +618,42 @@ try {
         Assert ($throws.Count -eq 0) "the exporter still stops at a suppressed occurrence: $($throws -join ' | ')"
         $keyed = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and $args[0].Left.Extent.Text -match '^\$documents\[' }, $true) | ForEach-Object { $_.Left.Extent.Text })
         Assert ($keyed.Count -eq 1 -and $keyed[0] -ceq '$documents[$documentKey]') "the documents are kept by: $($keyed -join ', ')"
+    }
+    Case "P40 a part's work surfaces: an integer of 1 or more passes, and so does a part without the key; 0, a text, a fraction, true, nothing, and the key on an assembly are refused" {
+        $bodies = { param($count) $all = [ordered]@{ solid_bodies = 0; visible_solid_bodies = 0; surface_bodies = 0 }; if ($count.Length -gt 0) { $all.work_surfaces = $count[0] }; return $all }
+        $model = New-Model; $model.sources["100_primary"].native.bodies = (& $bodies @(1))
+        Assert ((Test-PackageOutputs -Directory (Write-Model $model "work-surfaces-one")).ok) "a part with one work surface does not pass: $((Get-Failures $model 'work-surfaces-one-again') -join ' | ')"
+        $model = New-Model; $model.sources["100_primary"].native.bodies = (& $bodies @(12))
+        Assert ((Test-PackageOutputs -Directory (Write-Model $model "work-surfaces-twelve")).ok) "a part with twelve work surfaces does not pass"
+        $model = New-Model; $model.sources["100_primary"].native.bodies = (& $bodies @())
+        Assert ((Test-PackageOutputs -Directory (Write-Model $model "work-surfaces-no-key")).ok) "a part whose bodies do not name work surfaces does not pass"
+        $number = 0
+        foreach ($wrong in @(0, -1, "1", 1.5, $true, $null)) {
+            $number++
+            $model = New-Model; $model.sources["100_primary"].native.bodies = (& $bodies @($wrong))
+            if ($null -eq $wrong) { $model.sources["100_primary"].native.bodies["work_surfaces"] = $null }
+            Assert ((Get-Failures $model "work-surfaces-wrong-$number") -match "100_primary/source.json: native.bodies.work_surfaces must be an integer of 1 or more") "work_surfaces = '$wrong' ($(if ($null -ne $wrong) { $wrong.GetType().Name } else { 'nothing' })) passed"
+        }
+        $model = New-Model; $model.sources["300_primary"].native.bodies = [ordered]@{ work_surfaces = 1 }
+        Assert ((Get-Failures $model "work-surfaces-on-an-assembly") -match "300_primary/source.json: only a part says its work surfaces") "the key on an assembly passed"
+    }
+    Case "P41 the exporter counts a part's work surfaces as a collection that must exist, writes the key only when the number is not 0, and warns of a part without a solid body instead of stopping; the receipt is schema 5" {
+        $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1")); $tree = Get-ScriptTree $text
+        $counted = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and $args[0].Left.Extent.Text -ceq '$workSurfaces' }, $true) | ForEach-Object { $_.Right.Extent.Text })
+        Assert ($counted.Count -eq 1 -and $counted[0] -match '^Get-RequiredCount ' -and $counted[0] -match '\$definition\.WorkSurfaces$') "the work surfaces are counted by: $($counted -join ' | ')"
+        $written = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and $args[0].Left.Extent.Text -match 'work_surfaces$' -and $args[0].Left.Extent.Text -match '^\$native' }, $true))
+        Assert ($written.Count -eq 1) "the key is written in $($written.Count) place(s)"
+        $condition = $written[0].Parent; while ($null -ne $condition -and $condition -isnot [System.Management.Automation.Language.IfStatementAst]) { $condition = $condition.Parent }
+        Assert ($null -ne $condition -and $condition.Clauses.Count -eq 1 -and $condition.Clauses[0].Item1.Extent.Text -ceq '$workSurfaces -gt 0' -and $null -eq $condition.ElseClause) "the key is written under: $(if ($condition) { $condition.Clauses[0].Item1.Extent.Text } else { 'no condition' })"
+        $literal = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $true) | Where-Object { @($_.KeyValuePairs | Where-Object { $_.Item1.Extent.Text -ceq 'solid_bodies' }).Count -gt 0 -and @($_.KeyValuePairs | Where-Object { $_.Item1.Extent.Text -ceq 'surface_bodies' }).Count -gt 0 -and @($_.KeyValuePairs | Where-Object { $_.Item1.Extent.Text -ceq 'visible_solid_bodies' }).Count -gt 0 })
+        Assert ($literal.Count -eq 1 -and @($literal[0].KeyValuePairs | Where-Object { $_.Item1.Extent.Text -ceq 'work_surfaces' }).Count -eq 0) "native.bodies is written with work_surfaces whatever the number"
+        $throws = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) | ForEach-Object { $_.Extent.Text } | Where-Object { $_ -match 'no solid|work surface' })
+        Assert ($throws.Count -eq 0) "the exporter stops at a part without a solid body or at a work surface: $($throws -join ' | ')"
+        $warned = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and $args[0].Left.Extent.Text -ceq '$warnings' -and $args[0].Right.Extent.Text -match 'has no solid body and is placed by' }, $true))
+        Assert ($warned.Count -eq 1 -and $warned[0].Right.Extent.Text -match 'master id' -and $warned[0].Right.Extent.Text -match 'model state' -and $warned[0].Right.Extent.Text -match '\$\(\$record\.Placed\)') "the warning: $(@($warned | ForEach-Object { $_.Right.Extent.Text }) -join ' | ')"
+        $under = $warned[0].Parent; while ($null -ne $under -and $under -isnot [System.Management.Automation.Language.IfStatementAst]) { $under = $under.Parent }
+        Assert ($null -ne $under -and $under.Clauses[0].Item1.Extent.Text -ceq '$solids -eq 0') "the warning is given under: $(if ($under) { $under.Clauses[0].Item1.Extent.Text } else { 'no condition' })"
+        Assert ($PackageReceiptSchemaVersion -eq 5 -and $text -match 'parts_without_a_solid_body = @\(\$withoutSolid\)' -and $text -match 'parts_with_work_surfaces = \$withWorkSurfaces') "the receipt does not name the parts without a solid body, or is not schema 5"
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count

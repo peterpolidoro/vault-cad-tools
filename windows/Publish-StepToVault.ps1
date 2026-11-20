@@ -98,6 +98,7 @@ if ($DryRun) {
         if ($kind -eq "ctor") { foreach ($c in $t.GetConstructors()) { $names = @($c.GetParameters() | ForEach-Object { $_.ParameterType.Name }); if ((@($names) -join ',') -eq ($paramTypeNames -join ',')) { $found = $c; break } } }
         elseif ($kind -eq "enum") { if ($t.IsEnum -and [Enum]::GetNames($t) -contains $memberName) { $found = $memberName } }
         elseif ($kind -eq "static") { $found = $t.GetMethod($memberName, [Reflection.BindingFlags]'Public,Static', $null, [Type[]]@(), $null) }
+        elseif ($kind -eq "readable") { $property = $t.GetProperty($memberName); if ($property -and $property.CanRead -and $property.PropertyType.Name -eq $paramTypeNames[0]) { $found = $property } }
         else { foreach ($m in $t.GetMethods()) { if ($m.Name -ne $memberName) { continue }; $names = @($m.GetParameters() | ForEach-Object { $_.ParameterType.Name }); if (-not $paramTypeNames -or (@($names) -join ',') -eq ($paramTypeNames -join ',')) { $found = $m; break } } }
         if ($found) { $script:resolved += [ordered]@{ type = $typeName; member = $(if ($kind -eq 'ctor') { '.ctor' } else { $memberName }); parameters = @($paramTypeNames); assembly = $asm.GetName().Name; file_version = [Diagnostics.FileVersionInfo]::GetVersionInfo($asm.Location).FileVersion } }
         else { $script:unresolved += "$typeName::$memberName($($paramTypeNames -join ','))" }
@@ -110,6 +111,11 @@ if ($DryRun) {
         foreach ($query in "IsLoggedIn", "IsLoginValid", "GetUserId", "GetOAuthToken") { Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.AutodeskAccount" $query @() "static" }
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WinAuthCredentials" ".ctor" @("ServerIdentities", "String", "String", "NetworkCredential") "ctor"
         Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WebServiceManager" ".ctor" @("IWebServiceCredentials", "Int32") "ctor"
+        # the user id of the connection: read from the session the sign-in leaves with the credentials
+        Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.WebServiceManager" "WebServiceCredentials" @("IWebServiceCredentials") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServicesTools.IWebServiceCredentials" "Session" @("Session") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServices.Session" "User" @("User") "readable"
+        Resolve-Member $ws "Autodesk.Connectivity.WebServices.User" "Id" @("Int64") "readable"
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.Connection" ".ctor" @("WebServiceManager", "String", "Int64", "String", "AuthenticationFlags") "ctor"
         Resolve-Member $vdf "Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.AuthenticationFlags" "WindowsAuthentication" @() "enum"
         Resolve-Member $ws "Autodesk.Connectivity.WebServices.DocumentService" "GetFolderByPath" @("String")
@@ -130,7 +136,7 @@ if ($DryRun) {
         $signInCall = "new WebServiceManager(new WinAuthCredentials(serverIdentities, vault, false, CredentialCache.DefaultNetworkCredentials), timeout)"
         $signInCredentials = "current Windows identity; never written to disk"
     }
-    if ($Route -eq "Vdf") { $addCall = "new Connection(webServiceManager, vault, userId, server, AuthenticationFlags.WindowsAuthentication); new Entities.Folder(connection, folder); connection.FileManager.AddFile(folderEntity, filename, comment, lastWrite, null, null, FileClassification.None, false, stream)" }
+    if ($Route -eq "Vdf") { $addCall = "userId = WebServiceCredentials.Session.User.Id, read right after the sign-in from the session it left (refused_no_session_user_id when the session gives none, or 0: nothing is asked of the folder, the journal does not move, nothing is uploaded); new Connection(webServiceManager, vault, userId, server, AuthenticationFlags.WindowsAuthentication); new Entities.Folder(connection, folder); connection.FileManager.AddFile(folderEntity, filename, comment, lastWrite, null, null, FileClassification.None, false, stream)" }
     else { $addCall = "FilestoreService.UploadFilePart(stream) -> ticket; DocumentService.AddUploadedFile(folderId, filename, comment, lastWrite, null, null, FileClassification.None, false, ticket)" }
     $findings.would_call = @(
         [ordered]@{ step = 1; call = $signInCall; arguments = [ordered]@{ vault = $planObj.vault.name; server = $Server; license_mode = $LicenseMode; credentials = $signInCredentials } },
@@ -151,6 +157,21 @@ if ($DryRun) {
 # ======================================================================================================
 # LIVE: one gated add
 # ======================================================================================================
+function Get-SessionUserId($Manager) {
+    # The user id of the account that signed in, from the session the sign-in left with the credentials
+    # (WebServiceCredentials.Session.User.Id: three getters that read a field; nothing is asked of a service).
+    # 0 when there is no session, no user, no id, an id that is not a whole number, or a read that fails: the
+    # caller refuses 0. The session's own id and its authorization are never read.
+    try {
+        $session = $Manager.WebServiceCredentials.Session
+        if ($null -eq $session) { return [int64]0 }
+        $sessionUser = $session.User
+        if ($null -eq $sessionUser) { return [int64]0 }
+        $id = $sessionUser.Id
+        if ($id -is [long] -or $id -is [int]) { return [int64]$id }
+    } catch { }
+    return [int64]0
+}
 $run = [ordered]@{ generated_at = (Utc); plan = (Resolve-Path -LiteralPath $Plan).Path; request_id = $planObj.request_id; mode = "live"; host = $env:COMPUTERNAME; status = "not_started"; gates = [ordered]@{}; notes = @() }
 function Finish($status, $exitCode) {
     $run.status = $status; $run.finished_at = (Utc)
@@ -210,6 +231,12 @@ try {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $mgr = New-Object Autodesk.Connectivity.WebServicesTools.WebServiceManager($cred, $TimeoutMilliseconds)
     $run.sign_in.seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 2)
+    # The user id of this account, from the session the sign-in left with the credentials. The route that makes a
+    # connection needs it: a session that gives no id, or 0, is refused here, before the folder is asked, before
+    # the journal moves, before anything is uploaded. The number is not written.
+    $uid = Get-SessionUserId $mgr
+    $run.sign_in.session_user_id_is_a_number_other_than_0 = ($uid -ne 0)
+    if ($Route -eq "Vdf" -and $uid -eq 0) { $run.notes += "the session of the sign-in gives no user id, or 0; a connection is not made with the id 0"; Finish "refused_no_session_user_id" 2 }
     # ---- pre-checks, BEFORE the journal moves ----
     $folder = $mgr.DocumentService.GetFolderByPath($ExpectedFolder)
     $run.precheck = [ordered]@{ folder_id_from_server = [string]$folder.Id; folder_full_name = $folder.FullName }
@@ -234,7 +261,6 @@ try {
         # registration itself (the raw single-part UploadFilePart call answered Vault error 155 on this server).
         $vdf = Load "Autodesk.DataManagement.Client.Framework.Vault"
         $flagsT = $vdf.GetType("Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.AuthenticationFlags")
-        $uid = [int64]0; try { $uid = [int64]$mgr.WebServiceCredentials.SecurityHeader.UserId } catch { }
         $conn = New-Object Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections.Connection($mgr, $VaultName, $uid, $Server, [Enum]::Parse($flagsT, "WindowsAuthentication"))
         $folderEntity = New-Object Autodesk.DataManagement.Client.Framework.Vault.Currency.Entities.Folder($conn, $folder)
         if ([string]$folderEntity.Id -ne [string]$ExpectedFolderId) { throw "VDF folder entity id $($folderEntity.Id) != expected $ExpectedFolderId" }

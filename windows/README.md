@@ -170,14 +170,26 @@ Offline suites, none of which needs Inventor or Vault:
   occurrences place is under `not_exported`.
 - A STEP file may mark an item invisible that is also a member of a named group
   (`APPLIED_GROUP_ASSIGNMENT`); the parts of Inventor's gear generator do, for
-  the surface of the pitch diameter. `Get-StepInvisibility` does not understand
-  that form and the exporter stops at such a part. Nothing was loosened: what
-  the reader should do with it is for `mechanical-cad` to decide, since its
-  reader has the same rule.
-- A part without a body (a composite of surfaces and no solid) does not stop
-  the exporter: its STEP file holds open shells and no solid, and its record
-  has no solid body, no surface body and a volume of 0. Whether a package
-  should hold such a part is not decided.
+  the surface of the pitch diameter. Decided in `mechanical-cad`
+  (`docs/exporter-package.md`, "A hidden item in a named group") and built in
+  `Get-StepInvisibility` by the rule of `mechanical_cad/stepfile.py`: such an
+  item may be in the item list of a group assignment that has exactly two
+  parameters, and it must still be listed directly in a representation. The
+  group is left as it is. Still refused: the item as the group itself, a third
+  parameter, a list that holds something other than references, anything else
+  that uses the item. `Test-StepHeader.ps1` (H28 to H31) has the cases. When
+  the rule changes, change it in both readers and hold the Windows one against
+  `stepfile.py` on the same files.
+- A part without a solid body (a composite of surfaces, say) is kept and
+  placed: its STEP file holds open shells and no solid, and its record has a
+  volume of 0, which stays 0. The receipt warns of every such part that an
+  occurrence places (`parts_without_a_solid_body`: master id, model state,
+  number of occurrences). A warning, not a stop.
+- A part says how many work surfaces it has: `native.bodies.work_surfaces`,
+  written only when the number is not 0, so that a part without one keeps the
+  bytes of its `source.json`. The package check takes the key as an integer of
+  1 or more and refuses it as 0, as anything else, and on an assembly
+  (`Test-PackageFormat.ps1`, P40 and P41).
 - A run that ends `complete_with_dialogs` had a dialog dismissed by the
   watchdog. Read the receipt's `dialogs` field before accepting it.
 - A package is complete only after a run that ended `complete`. When a run of
@@ -196,14 +208,16 @@ Offline suites, none of which needs Inventor or Vault:
   the last attempt to remove it (`Get-PackageOutcome`). A `package.json`
   that could not be removed is reported as present and fails the run: to
   whoever reads the directory it says "complete", whatever the receipt says.
-- The exporter's receipt, `export-package-receipt.json`, is `schema_version` 4
+- The exporter's receipt, `export-package-receipt.json`, is `schema_version` 5
   (`$PackageReceiptSchemaVersion` in `Package-Format.ps1`). Since 3 it says
   whether `package.json` is in the directory (`package_json_present`), and
   `validation.stage` can be `withheld`. Since 4 its guards are named for model
   states and suppressed occurrences, and its counts say how many files were
   opened, how many of them in more than one model state, and how many
-  suppressed occurrences were named. `Test-PackageFormat.ps1` (P35) holds
-  both places where the exporter writes a receipt to that number.
+  suppressed occurrences were named. Since 5 it names the parts without a
+  solid body and counts them and the parts with work surfaces.
+  `Test-PackageFormat.ps1` (P35) holds both places where the exporter writes
+  a receipt to that number.
 - Production documents are opened from the acquired mirror and never saved.
   Pilots that save anything work in a disposable copy of the mirror.
 - All automation so far ran in an interactive desktop session. Unattended

@@ -528,6 +528,21 @@ class PackageImportTests(unittest.TestCase):
         for change, message in cases:
             self.refused(message, held(change))
 
+    def test_a_parts_work_surfaces_are_an_integer_of_one_or_more_and_only_a_part_has_them(self):
+        """native.bodies.work_surfaces, which the exporter writes since 2026-11-20 only when a part has a work surface."""
+        def held(value, on="a"):
+            out = files()
+            native = out[on]["source"].get("native") or {}
+            native["bodies"] = {"solid_bodies": 1, "visible_solid_bodies": 1, "surface_bodies": 1, "work_surfaces": value}
+            out[on]["source"]["native"] = native
+            return out
+
+        result = import_package(self.package(held(1)), self.dest, "run-1")
+        self.assertEqual((result["parts"], result["assemblies"]), (2, 2))
+        for wrong in (0, -1, "1", 1.5, 1.0, True, None):
+            self.refused("100_primary/source.json: native.bodies.work_surfaces must be an integer of 1 or more", held(wrong))
+        self.refused("300_primary/source.json: only a part says its work surfaces", held(1, on="sub"))
+
     def test_a_package_written_before_the_count_of_suppressed_occurrences_is_still_read(self):
         package = self.package(edit_counts=lambda c: c.pop("suppressed_occurrences"))
         self.assertEqual(json.loads((package / "package.json").read_text(encoding="utf-8-sig"))["counts"], {"parts": 2, "assemblies": 2})

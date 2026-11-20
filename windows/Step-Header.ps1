@@ -317,7 +317,11 @@ function Get-StepInvisibility {
        to STYLED_ITEMs or OVER_RIDING_STYLED_ITEMs; the item each of them styles is its THIRD parameter (the
        fourth of an OVER_RIDING_STYLED_ITEM is the style it over-rides, not an item); every such item is used,
        apart from its styled items, only in the item list (the second parameter) of representations, is in at
-       least one, and no representation loses every item. Anything else is listed under problems. #>
+       least one, and no representation loses every item. One thing more may use such an item: an
+       APPLIED_GROUP_ASSIGNMENT with exactly two parameters whose second is a list of references may hold it in
+       that list (a hidden construction surface that has a name; the group places nothing and is left as it is).
+       The group does not stand for the representation: the item must still be listed in one. Anything else is
+       listed under problems. #>
     param([Parameter(Mandatory = $true)][string]$Path)
     $result = [ordered]@{ invisibility_entities = 0; hidden_items = @(); form_understood = $true; problems = @() }
     $data = Get-StepDataText -Path $Path
@@ -341,7 +345,7 @@ function Get-StepInvisibility {
             $fields = Split-StepElements $member.Body
             $item = $(if ($null -ne $fields -and $fields.Count -ge 3) { [regex]::Match($fields[2], $oneReference) } else { $null })
             if ($null -eq $item -or -not $item.Success) { $problems += "#$($member.Id) $($member.Type) does not name the item it styles"; continue }
-            $hidden[[int]$item.Groups[1].Value] = [ordered]@{ invisibility = $entity.Id; styled_item = $member.Id; styled_item_type = $member.Type; representations = @() }
+            $hidden[[int]$item.Groups[1].Value] = [ordered]@{ invisibility = $entity.Id; styled_item = $member.Id; styled_item_type = $member.Type; representations = @(); groups = @() }
         }
     }
     $result.invisibility_entities = $count
@@ -357,6 +361,18 @@ function Get-StepInvisibility {
             if ($used.Count -eq 0) { continue }
             $typeName = $(if ($entity.Type) { $entity.Type } else { "a complex instance" })
             $label = "#$($entity.Id) $typeName"
+            if ($entity.Type -eq "APPLIED_GROUP_ASSIGNMENT") {
+                # A named group may hold an invisible item beside the representation that lists it. A group is not a
+                # shape: it places nothing. Still refused: the item as the group itself, an assignment that does not
+                # have exactly two parameters, a list of items that holds something other than references.
+                $groupFields = Split-StepElements $entity.Body
+                if ($null -eq $groupFields -or $groupFields.Count -ne 2 -or $anyHidden.IsMatch([regex]::Replace($groupFields[0], $stringLiteral, "''"))) { $problems += "$label uses an invisible item outside its list of items"; continue }
+                $groupItems = Split-StepElements $groupFields[1]
+                if ($null -eq $groupItems) { $problems += "the items of $label are not a list"; continue }
+                if (@($groupItems | Where-Object { -not [regex]::IsMatch($_, $oneReference) }).Count -gt 0) { $problems += "the items of $label hold something that is not a reference"; continue }
+                foreach ($itemId in @($groupItems | ForEach-Object { [int][regex]::Match($_, $oneReference).Groups[1].Value } | Where-Object { $hidden.ContainsKey($_) } | Sort-Object -Unique)) { $hidden[$itemId].groups += $label }
+                continue
+            }
             $fields = $(if ($entity.Type.EndsWith("REPRESENTATION")) { Split-StepElements $entity.Body } else { $null })
             if ($null -eq $fields -or $fields.Count -lt 2) { $problems += "#$($used[0]) is marked invisible and is used by #$($entity.Id) ($typeName); only items listed directly in a representation can be left out"; continue }
             $items = Split-StepElements $fields[1]
@@ -374,7 +390,7 @@ function Get-StepInvisibility {
             $itemEntity = $null; [void]$entities.TryGetValue([int]$itemId, [ref]$itemEntity)
             if (@($hidden[$itemId].representations).Count -eq 0) { $problems += "#$itemId is marked invisible but is not an item of any representation" }
             $result.hidden_items += [ordered]@{ item = [int]$itemId; item_type = $(if ($itemEntity) { $itemEntity.Type } else { $null }); styled_item = $hidden[$itemId].styled_item; styled_item_type = $hidden[$itemId].styled_item_type
-                invisibility = $hidden[$itemId].invisibility; representations = @($hidden[$itemId].representations) }
+                invisibility = $hidden[$itemId].invisibility; representations = @($hidden[$itemId].representations); groups = @($hidden[$itemId].groups) }
         }
     }
     $result.problems = $problems; $result.form_understood = ($problems.Count -eq 0)

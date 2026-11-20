@@ -53,6 +53,12 @@ MODEL STATES AND SUPPRESSED OCCURRENCES (mechanical-cad/docs/exporter-package.md
     the root an occurrence must be suppressed exactly where its document says so.
   - A part in a model state other than the primary one stops the export: none has been met, and what the
     translator writes for one has not been seen.
+  - A part without a solid body is kept and placed: it is a part of the assembly, and its STEP file holds what
+    the translator wrote for it (open shells, no solid). The receipt warns of every such part that an occurrence
+    places: its master id, its model state and the number of its occurrences. A warning, not a stop; a volume
+    of 0 stays 0.
+  - A part says how many work surfaces it has, under native.bodies.work_surfaces. The key is written only when
+    the number is not 0, so that a part without one keeps the bytes of its source.json.
 Refused in addition:
   - a document that has a view (the STEP translator would write that view's camera);
   - a part.step that marks items invisible in a form that is not understood (Get-StepInvisibility);
@@ -310,7 +316,7 @@ $guards = New-PackageGuardLedger @("inputs_bound_to_the_acquisition", "document_
     "file_schema_names_the_ap242_schema_alone", "attempts_have_the_same_data_section", "step_length_unit_determined", "invisibility_form_understood", "opened_files_unchanged_on_disk", "mirror_unchanged",
     "package_checked_before_package_json", "package_checked_with_package_json", "run_status_allows_a_complete_package")
 $session = $null; $app = $null; $project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $completion = $null
-$inputs = @(); $documents = [ordered]@{}; $rootRecord = $null; $script:context = @(); $translatorOptions = $null; $rawOutputs = [ordered]@{}; $headerNames = @(); $partTimings = @(); $timings = [ordered]@{}
+$inputs = @(); $documents = [ordered]@{}; $rootRecord = $null; $script:context = @(); $translatorOptions = $null; $rawOutputs = [ordered]@{}; $headerNames = @(); $partTimings = @(); $withoutSolid = @(); $withWorkSurfaces = 0; $timings = [ordered]@{}
 $retried = @(); $packageWritten = $false; $mirrorBefore = $null; $mirror = $null; $status = "FAILED"; $withheld = $null
 $script:suppressedInContext = 0; $suppressedMasters = @{}   # suppressed occurrences met in the context of the root; the Vault files suppressed occurrences would place
 $changed = @(); $placed = @(); $notExported = @(); $forbidden = @(); $packageComplete = $false; $manifestPresent = $null; $outcome = $null; $prospective = $null; $completion = $null
@@ -621,6 +627,15 @@ try {
             foreach ($body in $bodyList) { $bodies++; if (Get-RequiredValue "IsSolid of a body in '$($record.What)'" { $body.IsSolid }) { $solids++; if (Get-RequiredValue "Visible of a body in '$($record.What)'" { $body.Visible }) { $visible++ } } }
             if ($bodies -ne $expectedBodies) { throw "Refused: '$($record.What)' counts $expectedBodies bodies and gave $bodies" }
             Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
+            # the work surfaces: a collection that must exist and must count its items; nothing of a surface is read
+            $workSurfaces = Get-RequiredCount "work surfaces of '$($record.What)'" $definition.WorkSurfaces
+            if ($workSurfaces -gt 0) { $withWorkSurfaces++ }
+            # a part with no solid body that an occurrence places is kept and placed, and the receipt says so
+            if ($solids -eq 0) {
+                $withoutSolid += [ordered]@{ file = $record.What; directory = $record.Folder; master_id = $record.Vault.master_id; model_state = $record.ModelState; occurrences = $record.Placed
+                    surface_bodies = $bodies; work_surfaces = $workSurfaces; solid_instances_in_file = $step.SolidsInFile }
+                $warnings += "'$($record.What)' (master id $($record.Vault.master_id), model state $($record.ModelState)) has no solid body and is placed by $($record.Placed) occurrence(s): kept and placed. Its surface bodies: $bodies; its work surfaces: $workSurfaces"
+            }
             if ($step.SolidsInFile -ne $solids) { $warnings += "'$($record.What)': the file has $($step.SolidsInFile) solid instances and the part $solids solid bodies" }
             $failuresBefore = $script:PackageOptionalReadFailures
             $parameters = Read-Parameters $definition $doc.UnitsOfMeasure "'$($record.What)'"
@@ -641,6 +656,8 @@ try {
                 bodies = [ordered]@{ solid_bodies = $solids; visible_solid_bodies = $visible; surface_bodies = $bodies }
                 parameter_values = "value is in Inventor's database units (centimetre, radian); value_text is the same value in the parameter's own unit"
                 parameters = $parameters; holes = $features.holes; patterns = $features.patterns }
+            # the key is written only when the part has a work surface: a part without one keeps its bytes
+            if ($workSurfaces -gt 0) { $native.bodies.work_surfaces = $workSurfaces }
             Write-PackageJsonFile (Join-Path $directory "source.json") ([ordered]@{ schema_version = $PackageLayoutSchemaVersion; kind = "part"; name = $record.Name; model_state = $record.ModelState; vault = $record.Vault
                     step = [ordered]@{ sha256 = $step.Normalised.output_sha256; data_sha256 = $step.Normalised.data_sha256; bytes = $step.Normalised.output_bytes; protocol = $step.Protocol; length_unit = $step.Unit; header_normalised = $true; received_sha256 = $null }
                     export = [ordered]@{ translator_result = $step.Result }; properties = $properties
@@ -751,7 +768,9 @@ try {
             files_opened = @($inputs).Count; files_in_more_than_one_model_state = @($documents.Values | Group-Object { $_.Vault.master_id } | Where-Object { $_.Count -gt 1 }).Count
             suppressed_occurrences_named = $(if ($documents.Count) { ($documents.Values | ForEach-Object { @($_.Suppressed).Count } | Measure-Object -Sum).Sum } else { 0 }); suppressed_occurrences_in_context = $script:suppressedInContext
             occurrences = @($script:context).Count; occurrences_that_differ_from_definition = @($script:context | Where-Object { $_.differs_from_definition }).Count
-            occurrences_whose_flags_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count; feature_values_not_read = $script:PackageOptionalReadFailures }
+            occurrences_whose_flags_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count; feature_values_not_read = $script:PackageOptionalReadFailures
+            parts_with_work_surfaces = $withWorkSurfaces; parts_without_a_solid_body = @($withoutSolid).Count }
+        parts_without_a_solid_body = @($withoutSolid)
         display_names_that_are_not_the_file_name = @($documents.Values | Where-Object { $_.DisplayName -and $_.DisplayName -ne $_.Name -and [IO.Path]::GetFileNameWithoutExtension($_.DisplayName) -ne $_.Name } | ForEach-Object { [ordered]@{ file = $_.What; display_name = $_.DisplayName } })
         flags_that_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 } | ForEach-Object { [ordered]@{ occurrence = ($_.path -join "/"); flags = $_.flags_that_differ_from_definition } })
         timings = $timings; parts = $partTimings; translator_options = $translatorOptions; translator_outputs = $rawOutputs; exported_more_than_once = $retried; maximum_attempts = $maximumAttempts; header_names_found_in_translator_output = @($headerNames | Sort-Object -Unique)

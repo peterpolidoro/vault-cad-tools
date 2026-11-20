@@ -52,7 +52,7 @@ $PackageOccurrencesSchemaVersion = 1
 # 4: the guards are named for model states and suppressed occurrences (a document names its model state, an occurrence
 # is in the model state of its document, a suppressed occurrence is named and not exported), and the counts say how
 # many files were opened, how many are in more than one model state and how many occurrences are suppressed.
-$PackageReceiptSchemaVersion = 4
+$PackageReceiptSchemaVersion = 5
 # What may be written of an occurrence that a document suppresses (source.json of the assembly, native.suppressed_occurrences).
 $PackageSuppressedFields = @("name", "master_id", "path")
 $PackageVaultFields = @("vault_id", "master_id", "version_id", "version_number", "revision", "lifecycle_state", "checkin_date", "path", "native_sha256")
@@ -365,6 +365,13 @@ function Test-PackageOutputs {
                 if (($fields -contains "master_id") -ne ($fields -contains "path")) { $failures.Add("$where/source.json: the suppressed occurrence $($entry.name) has a master id without a path, or a path without a master id") }
                 foreach ($field in @("master_id", "path")) { if (($fields -contains $field) -and ($entry.$field -isnot [string] -or -not $entry.$field)) { $failures.Add("$where/source.json: $field of the suppressed occurrence $($entry.name) must be a non-empty string, or not be there") } }
             }
+        }
+        # A part says how many work surfaces it has, under native.bodies, and only when it has one: the key is an
+        # integer of 1 or more, or it is not there. An assembly has no such key.
+        if ((Test-PackageHas $source "native") -and $null -ne $source.native -and (Test-PackageHas $source.native "bodies") -and $null -ne $source.native.bodies -and (Test-PackageHas $source.native.bodies "work_surfaces")) {
+            $workSurfaces = $source.native.bodies.work_surfaces
+            if ($source.kind -ne "part") { $failures.Add("$where/source.json: only a part says its work surfaces") }
+            elseif (($workSurfaces -isnot [int] -and $workSurfaces -isnot [long]) -or $workSurfaces -lt 1) { $failures.Add("$where/source.json: native.bodies.work_surfaces must be an integer of 1 or more; a part without a work surface does not have the key") }
         }
         $documents[$identity] = $record
         $held = @($present.Keys | Where-Object { $_.StartsWith("$where/") } | ForEach-Object { ($_ -split '/')[2] } | Sort-Object)

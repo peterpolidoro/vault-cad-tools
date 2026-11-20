@@ -8,6 +8,54 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — a hidden item in a named group, a part's work surfaces, the second project exported, appearances and joints read (2026-11-20)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-20-windows-invisibility-export-sdk-read-user-id-01/` (report `REPORT.md`, which
+records the commits it ran from). Requested by `to-windows/20261120T182216Z-...` and `to-windows/20261120T183439Z-...`.
+Nothing was written to Vault and nothing was read from it. The one contact allowed, a sign-in through the SDK and
+one read of associations, was not made: the Vault client was not running, and the prompt forbids the sign-in
+without it. No REST request, and no `-Live` of any script on a command line.
+
+- **`Get-StepInvisibility` follows the rule decided in `mechanical-cad`.** An invisible item may also be in the
+  item list of an `APPLIED_GROUP_ASSIGNMENT` that has exactly two parameters; it must still be listed directly
+  in a representation, and the group is left as it is. `Test-StepHeader.ps1` has four cases more (31). Held
+  against `mechanical_cad/stepfile.py` itself, read-only, on the translator's files of the 38 parts of the
+  second project, twice (the files of the probe of the same day and the files of the export below): both say
+  the same of every file. Two files hide one item each, the surface of the pitch diameter of a generated gear,
+  which a group also names; 36 hide nothing; none is refused.
+- **A part says its work surfaces, and a part without a solid is kept.** `native.bodies.work_surfaces` is the
+  number of work surfaces of a part, written only when it is not 0. The package check takes it as an integer
+  of 1 or more and refuses it as 0, as anything else, and on an assembly. The receipt, now schema 5, warns of
+  a part with no solid body that an occurrence places and names it. `Test-PackageFormat.ps1` has two cases
+  more (41).
+- **The second project exports.** From its mirror: 38 parts and 5 assemblies in 43 documents (one file in two
+  model states), 115 occurrences in the context of the root, 7 suppressed occurrences named and left out, 60
+  solid bodies, three parts with a work surface, one part without a solid (placed twice; the one warning of
+  the run). The package passes its check. The mirror was the same files before and after, and nothing was
+  saved. 2 minutes 57 seconds.
+- **The first project exports as before.** 90 files, 89 of them the bytes of the package before; `package.json`
+  alone differs (the time, the exporter's version, the translator's outputs). None of its parts has a work
+  surface, so no `source.json` changed.
+- **Read in Inventor, with evidence tools that are not part of this directory:** the material and the
+  appearance of every part of both mirrors, with each body's own appearance and the number of faces that have
+  one; and the constraints, the joints and the degrees of freedom of the second project's assemblies. Nothing
+  was solved, driven or moved, no document was dirty afterwards, and the mirrors were unchanged. Three things
+  Inventor does that a reader of those files must know: a part first asked for its appearance after the
+  libraries' assets were listed answers with a library asset of the same name; an occurrence below a
+  sub-assembly gives its degrees of freedom in the coordinates of the document that holds it, not the root's;
+  and it gives none until that document's own occurrences have been asked.
+- **The user id of the connection, as a change of its own.** `Publish-StepToVault.ps1` and
+  `Publish-ReferenceRoutePilot.ps1` read the id from the session the sign-in leaves with the credentials, and a
+  session that gives none, or 0, is refused before the folder is asked, with the journal not moved. Rehearsed
+  offline against the stand-in for the SDK, never with `-Live` on a command line: the pilot's branch whole (45
+  checks) and the add's branch whole (17 checks, with a stand-in for the journal's commands), each with a
+  negative control. Delivered beside the other changes, to be taken by itself; this entry does not say that
+  it is applied.
+- **The reader of the associations is ready and was not run.** It waits once between asking whether the login
+  is valid and asking for the token, says of a failure the type of every exception and an error code where
+  there is one, and says of the session's user id only whether it is a number other than 0. Rehearsed against
+  the stand-in: 20 checks.
+
 ## Result — the live branch of the reference route rehearsed, model states in the exporter, a check-out taken at its last check-in (2026-11-20)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-20-windows-rehearsal-sdk-read-model-states-01/` (report `REPORT.md`, which
