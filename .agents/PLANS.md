@@ -89,8 +89,9 @@ windows/HISTORY.md; where the wider work stands is in
   a page for Peter on checking one wrapper part and one assembly into his
   test folder from Inventor, under other names than the pilot's, so that
   one more read can show what the add-in records for exactly the pilot's
-  two relations; and a line for the read in `windows/HISTORY.md`. Its gate
-  needs Peter's commit and push and the shared clones level.
+  two relations; and a line for the read in `windows/HISTORY.md`. Peter
+  committed and pushed that evening, the shared clones were brought level
+  on his word, and the task's gate holds.
 
 ## Current state (2026-11-12)
 
