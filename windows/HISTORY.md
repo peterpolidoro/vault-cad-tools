@@ -8,6 +8,39 @@ Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
 
+## Result — the read of the associations, made; Inventor's own STEP export of the second project's root (2026-11-20)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-20-windows-sdk-read-of-the-associations-01/` (the read) and
+`vault-cad-exchange/evidence/2026-11-20-windows-root-assembly-step-and-a-page-for-peter-01/` (the export; report `REPORT.md`,
+which records the commits it ran from). Requested by `to-windows/20261120T183439Z-...` (the read, its part D) and
+`to-windows/20261120T200959Z-...`.
+
+- **The one read through the SDK was made**, after the entry below was written: at Peter's word in the session,
+  with his Vault client open. One sign-in and one `DocumentService.GetFileAssociationsByIds` for one version of
+  an assembly, its direct Dependency children; nothing written, nothing else asked, the manager disposed. The
+  reader was the one rehearsed, byte for byte. The session gave a user id other than 0; the number was not
+  written.
+- **What Inventor's add-in records for a relation**, seen on six relations from an assembly to Inventor files:
+  `Source` is the text `INVENTOR`; `ExpectedVaultPath` is the child's own Vault path, folder and file name,
+  letter for letter what the REST inventory has for that child version; `RefId` is a whole number written as
+  text, a different one for each child and not consecutive, rising with the order in which the children came
+  into Vault. It reads as a counter of references inside the parent file. Inventor's programming interface
+  offers no property that reads as such a number (reflection over the interop assembly), so no script here
+  can give it.
+- **So no new request was prepared for the reference route**, and the pilot still sends nothing in the three
+  fields. A relation from a part to a STEP file was not among the six. The next step is Peter's: one such pair
+  made and checked in from Inventor by hand, then one more read. A page for him is in the evidence.
+- **`Invoke-AssemblyStepProbe.ps1` on the second project's root**, from its mirror, once: one AP242 file of the
+  whole assembly, as the translator wrote it, in 14 seconds; no representation changed, nothing saved, nothing
+  dirty, the mirror the same files before and after. The script needed no change for a file in two model
+  states. Inventor counts 109 part and 6 sub-assembly occurrences below the root and 7 suppressed ones, none
+  invisible: the numbers of the package, and the 115 world placements Inventor gave are those the package
+  records, cell for cell. The file has 43 products (the assembly in two model states is two of them), 111
+  occurrences of one product in another, 60 solids, and one `INVISIBILITY` that hides two surfaces a group also
+  names, which `Get-StepInvisibility` now understands. **Its contexts do not agree on the length unit** (inch in
+  42, millimetre in 2), so the file as a whole has no one unit. Whether the file places the solids where the
+  package's records do is compared on Linux.
+
 ## Result — a hidden item in a named group, a part's work surfaces, the second project exported, appearances and joints read (2026-11-20)
 
 Evidence: `vault-cad-exchange/evidence/2026-11-20-windows-invisibility-export-sdk-read-user-id-01/` (report `REPORT.md`, which

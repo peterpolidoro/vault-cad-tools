@@ -83,15 +83,21 @@ windows/HISTORY.md; where the wider work stands is in
   what it showed. Appearances, materials, constraints, joints and degrees
   of freedom were read in Inventor into the evidence; no tool of this
   repository reads them yet.
-- **Asked of Windows after that** (the third prompt of 2026-11-20),
-  nothing sent to Vault: an export of the second project's root assembly
-  from its mirror as one STEP file, as a check of the recorded placements;
-  a page for Peter on checking one wrapper part and one assembly into his
-  test folder from Inventor, under other names than the pilot's, so that
-  one more read can show what the add-in records for exactly the pilot's
-  two relations; and a line for the read in `windows/HISTORY.md`. Peter
-  committed and pushed that evening, the shared clones were brought level
-  on his word, and the task's gate holds.
+- **A third task that day, delivered and reviewed** (17 checks on Linux,
+  none failed), nothing sent to Vault. `Invoke-AssemblyStepProbe.ps1`, as
+  committed, exported the second project's root from its mirror as one
+  STEP file, and **that file is the assembly the package's records
+  describe**: 153 of 153 solids where the records put them
+  (`mechanical-cad/tools/compare_assembly_step.py`), and Inventor's 115
+  occurrences are those of `occurrences.json`, cell for cell. With it: a
+  page for Peter on checking one wrapper part and one assembly into his
+  test folder from Inventor by hand, under other names than the pilot's
+  (in the evidence, not tried), and a line for the read in
+  `windows/HISTORY.md`, applied as delivered.
+- **No Windows task is written now.** The next is Peter's choice: after he
+  has checked that pair in, one sign-in and two reads of what the add-in
+  recorded for it, and a pilot that sends the same; or the live run of the
+  reference route as it stands, on his word for one request.
 
 ## Current state (2026-11-12)
 
@@ -862,13 +868,12 @@ Directives:
    The read of part D was made after the delivery, at Peter's word ("Start
    here" has what it showed).
 
-   **Asked of Windows after that** (the third prompt of 2026-11-20), nothing
-   sent to Vault: an export of the second project's root assembly from its
-   mirror as one STEP file, to hold the recorded placements against, and a
-   page for Peter on checking one such pair in from Inventor. Then, on his
-   word, either one more read of what the add-in made of that pair and a
-   pilot that sends the same, or the live run of the reference route as it
-   stands.
+   A third task that day, nothing sent to Vault, delivered and reviewed:
+   Inventor's own STEP export of the second project's root is the assembly
+   the package records ("Start here"), and Peter has a page on checking
+   one such pair in from Inventor. Next, on his word, either one more read
+   of what the add-in made of that pair and a pilot that sends the same,
+   or the live run of the reference route as it stands.
 
 ## Open items
 
@@ -901,8 +906,8 @@ Directives:
   listed answers with a library asset of the same name.
 - `Export-Package.ps1` has written one package of a project with model
   states and suppressed occurrences, the second project's, on 2026-11-20.
-  Whether the placements it records are the assembly's is not yet held
-  against an export of the assembly itself. Its stop for a document with a
+  The placements it records are the assembly's: Inventor's own export of
+  that root has every solid where they put it. Its stop for a document with a
   view has not fired on real data. Not met on real data either: a part in a model state other
   than its primary one, a flexible instance inside
   a flexible instance, two instances of one document flexed differently,
