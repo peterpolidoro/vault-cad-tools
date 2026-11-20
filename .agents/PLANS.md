@@ -61,12 +61,15 @@ windows/HISTORY.md; where the wider work stands is in
   scripts make their connection with user id 0, which an add did not
   mind.
 - **Asked of Windows on 2026-11-20**, one sign-in through the SDK and one
-  read, nothing written to Vault (next work 5 has the parts): the reader
+  read, nothing written to Vault (next work 5 has the parts), in this
+  order: the read once more, with Peter's Vault client open; the reader
   follows the invisibility rule; a part's work surfaces; the second
-  project exported; the read once more, with Peter's Vault client open;
-  the user id of the connection, as a patch of its own. Peter starts the
-  agent, after he has committed and pushed and the shared clones are
-  brought level at his word.
+  project exported; two reads in Inventor on the mirrors, added at
+  Peter's word (appearances and materials; constraints, joints and
+  degrees of freedom); and, only if there was time, the user id of the
+  connection as a patch of its own. The shared clones were brought level
+  on his word that day and the task's gate holds. A part may come back
+  as not begun.
 - **Peter's**: his word for the live run of the reference route, which
   adds two files to his test folder; the payload of the revision's pilot;
   and whether server, vault and folder names stay in tracked files (open
@@ -823,7 +826,15 @@ Directives:
    the session's user id read; then what the pilot's associations should
    carry, a new request if that is something, run dry; (E) the user id of
    the connection read from the session in both publishing scripts, as a
-   patch of its own, rehearsed against the stand-in.
+   patch of its own, rehearsed against the stand-in. Added the same day
+   at Peter's word, in a second message, both read in Inventor on the
+   mirrors with no request to Vault and with evidence tools, not scripts
+   of this repository: (F) for every part of both mirrors what
+   `docs/authoring-and-materials.md`, 4.1, lists of its material and
+   appearance, and the occurrences that override an appearance; (G) the
+   constraints, the joints and the degrees of freedom of the second
+   project's assembly. The order is T0, D, A, B, C, F, G, E, with E only
+   if there is time.
 
    When it delivers, on Linux: the package imported into a scratch project
    outside every repository (its paths name a lab), measured, validated
