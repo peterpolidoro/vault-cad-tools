@@ -34,15 +34,32 @@ component definition; the placements a flexible instance gives its descendants a
 occurrences.json holds every occurrence as Inventor places it in the root's context and says which differ from
 their definition; the import command derives the overrides from it.
 
-Supported subset: primary model states, master level of detail and positional representation, rigid placements;
-no factories, adaptive or substitute occurrences. Every guard query fails closed, and every opened document is
-bound strictly to the acquisition record. Refused in addition:
+Supported subset: master positional representation, rigid placements; no factories, adaptive or substitute
+occurrences. Every guard query fails closed, and every opened document is bound strictly to the acquisition record.
+
+MODEL STATES AND SUPPRESSED OCCURRENCES (mechanical-cad/docs/exporter-package.md, decided 2026-11-18):
+  - A document of the package is a Vault file in a model state. A file that the root uses in two model states is
+    two documents in Inventor with one file name, and two directories here (files/<master id>_<state>/), both bound
+    to the one acquired file. A document is found by its full document name, and its state is the document's own
+    (Document.ModelStateName): the state the file was saved in is the same for both and does not tell them apart.
+  - A level of detail is a model state under its earlier name. An occurrence may have the level of detail that is
+    named after its own model state; an assembly document may report one that names a model state of its file
+    (it reports the state the file was saved in, for every document of that file). Any other level of detail that
+    is not the master stops the export, as before.
+  - A suppressed occurrence is not a child: Inventor loads no document for it, so it has no identity and no
+    placement to write. The assembly's source.json names every one under native.suppressed_occurrences (the name,
+    and the master id and Vault path of the file it would place where they can be read without unsuppressing
+    anything; the key is there only when the document has one), and package.json counts them. In the context of
+    the root an occurrence must be suppressed exactly where its document says so.
+  - A part in a model state other than the primary one stops the export: none has been met, and what the
+    translator writes for one has not been seen.
+Refused in addition:
   - a document that has a view (the STEP translator would write that view's camera);
   - a part.step that marks items invisible in a form that is not understood (Get-StepInvisibility);
   - a part whose translator file does not name the AP242 schema alone in FILE_SCHEMA in three attempts (the
     translator sometimes puts a second, unrelated name in front; such a file is never repaired or delivered,
     the part is exported again and every attempt is recorded);
-  - a suppressed occurrence (its document is not loaded; not implemented for want of real data);
+  - an occurrence that is suppressed in the context of the root and not in its document, or the other way round;
   - an occurrence whose placement differs from its definition without an enclosing flexible occurrence;
   - an instance whose children are not those of its document; two files that would share a directory;
   - a BOM structure the layout does not know; a text of the workstation in any file of the package;
@@ -60,7 +77,7 @@ so such a run writes none. What the receipt says about package.json is asked of 
 attempt to remove it; a package.json that could not be removed fails the run. A value Inventor returns as nothing
 is null, and a read of a document's length unit that fails stops the run. A document's dirty flag after the
 export is required: a read that fails stops the run, and so does a flag that Inventor returns as nothing.
-The receipt is schema_version 3 ($PackageReceiptSchemaVersion). Exit code 1 unless a complete package was left.
+The receipt is schema_version 4 ($PackageReceiptSchemaVersion). Exit code 1 unless a complete package was left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$NativeAssembly,
@@ -286,14 +303,16 @@ function Read-Features($definition, $what) {
 }
 
 # ---- the guards of this run, and how often each was evaluated and let the run pass (0: the run did not reach it) ----
-$guards = New-PackageGuardLedger @("inputs_bound_to_the_acquisition", "document_type_known", "no_document_has_a_view", "primary_model_state", "master_positional_representation_and_level_of_detail", "no_factory",
-    "occurrence_not_suppressed_adaptive_or_substitute", "occurrence_places_a_bound_document", "rigid_placement", "bom_structure_known", "collection_gives_as_many_items_as_it_counts",
+$guards = New-PackageGuardLedger @("inputs_bound_to_the_acquisition", "document_type_known", "no_document_has_a_view", "document_names_its_model_state", "part_in_its_primary_model_state",
+    "occurrence_in_the_model_state_of_its_document", "master_positional_representation_and_a_level_of_detail_that_is_a_model_state", "no_factory",
+    "occurrence_not_adaptive_or_substitute", "suppressed_occurrence_named_and_not_exported", "suppression_in_context_is_the_documents", "occurrence_places_a_bound_document", "rigid_placement", "bom_structure_known", "collection_gives_as_many_items_as_it_counts",
     "definition_equals_native_occurrence", "instance_has_its_documents_children", "placement_that_differs_has_a_flexible_occurrence_above", "translator_reports_successful",
     "file_schema_names_the_ap242_schema_alone", "attempts_have_the_same_data_section", "step_length_unit_determined", "invisibility_form_understood", "opened_files_unchanged_on_disk", "mirror_unchanged",
     "package_checked_before_package_json", "package_checked_with_package_json", "run_status_allows_a_complete_package")
 $session = $null; $app = $null; $project = $null; $errors = @(); $warnings = @(); $shutdown = $null; $watchdog = $null; $dialogs = $null; $completion = $null
 $inputs = @(); $documents = [ordered]@{}; $rootRecord = $null; $script:context = @(); $translatorOptions = $null; $rawOutputs = [ordered]@{}; $headerNames = @(); $partTimings = @(); $timings = [ordered]@{}
 $retried = @(); $packageWritten = $false; $mirrorBefore = $null; $mirror = $null; $status = "FAILED"; $withheld = $null
+$script:suppressedInContext = 0; $suppressedMasters = @{}   # suppressed occurrences met in the context of the root; the Vault files suppressed occurrences would place
 $changed = @(); $placed = @(); $notExported = @(); $forbidden = @(); $packageComplete = $false; $manifestPresent = $null; $outcome = $null; $prospective = $null; $completion = $null
 # Inventor is started INSIDE the try whose finally stops it: nothing between the start and the try can fail and
 # leave the instance running.
@@ -325,8 +344,12 @@ try {
         Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
         foreach ($doc in $openedDocuments) {
             $file = Get-RequiredValue "file name of an opened document" { $doc.FullFileName } -Kind string; $lower = $file.ToLowerInvariant()
-            if ($documents.Contains($lower)) { continue }
-            $what = Relative $file
+            # A file used in two model states is two documents with one file name: a document is found by its full
+            # document name (the file name, and "<state>" after it for a state that is not the primary one).
+            $fullName = Get-RequiredValue "full document name of an opened document" { $doc.FullDocumentName } -Kind string; $documentKey = $fullName.ToLowerInvariant()
+            if (-not $documentKey.StartsWith($lower)) { throw "Refused: the document '$fullName' is not named after its file '$file'" }
+            if ($documents.Contains($documentKey)) { continue }
+            $what = Relative $fullName
             $acquired = $acqByPath[$lower]; if (-not $acquired) { throw "Opened document is not in the acquisition record: $what" }
             $listed = $invByVersion[[string]$acquired.version_id]; if (-not $listed) { throw "Acquisition version $($acquired.version_id) is not in the dependency inventory" }
             $typeCode = Get-RequiredValue "document type of '$what'" { $doc.DocumentType } -Kind int
@@ -337,50 +360,74 @@ try {
             $views = Get-RequiredCount "views of '$what'" $viewList
             if ($views -gt 0) { throw "Refused: '$what' has $views view(s); a STEP file exported from it would carry that view's camera" }
             Add-PackageGuardCheck $guards "no_document_has_a_view"
-            $definition = $doc.ComponentDefinition
-            $state = Get-RequiredValue "model state of '$what'" { $definition.ModelStates.ActiveModelState.Name } -Kind string
-            if ($masterNames -notcontains $state) { throw "Unsupported: '$what' is in model state '$state' (tested subset: primary model states only)" }
-            Add-PackageGuardCheck $guards "primary_model_state"
+            # The model state of THIS document. The state its file was saved in is the same for every document of the
+            # file and is not asked for here.
+            $state = Get-RequiredValue "model state of '$what'" { $doc.ModelStateName } -Kind string
+            if (-not $state) { throw "Refused: '$what' names no model state" }
+            Add-PackageGuardCheck $guards "document_names_its_model_state"
+            if ($kind -eq "part") {
+                if ($masterNames -notcontains $state) { throw "Unsupported: the part '$what' is in model state '$state' (a part in a model state other than the primary one has not been met: what the translator writes for it has not been seen)" }
+                Add-PackageGuardCheck $guards "part_in_its_primary_model_state"
+            }
             $vault = New-PackageVaultBlock -VaultId $vaultId -AcquisitionRecord $acquired -InventoryRecord $listed
             $folder = Get-PackageDirectoryName $vault.master_id $state
             foreach ($other in $documents.Values) { if ($other.Folder -ieq $folder) { throw "Refused: '$what' and '$($other.What)' would share the directory $folder" } }
             # null is for a unit Inventor returns as nothing; a read that fails stops the run, as it always did
             $unitCode = Get-GivenValue "length unit of '$what'" { $doc.UnitsOfMeasure.LengthUnits } "int"
-            $documents[$lower] = [pscustomobject]@{ Document = $doc; What = $what; Kind = $kind; Name = [IO.Path]::GetFileNameWithoutExtension($file); ModelState = $state; Vault = $vault; Folder = $folder
-                Placed = 0; Children = @(); ChildByName = @{}; LengthUnit = $(if ($null -ne $unitCode) { $lengthUnitNames[$unitCode] } else { $null }); DisplayName = (Get-OptionalValue { $doc.DisplayName } "string") }
+            $documents[$documentKey] = [pscustomobject]@{ Document = $doc; What = $what; Kind = $kind; Name = [IO.Path]::GetFileNameWithoutExtension($file); ModelState = $state; Vault = $vault; Folder = $folder
+                Placed = 0; Children = @(); ChildByName = @{}; Suppressed = @(); SuppressedByName = @{}; LengthUnit = $(if ($null -ne $unitCode) { $lengthUnitNames[$unitCode] } else { $null }); DisplayName = (Get-OptionalValue { $doc.DisplayName } "string") }
         }
-        $rootRecord = $documents[$NativeAssembly.ToLowerInvariant()]; $rootRecord.Placed = 1
+        $rootRecord = $documents[(Get-RequiredValue "full document name of the root" { $asm.FullDocumentName } -Kind string).ToLowerInvariant()]
+        if (-not $rootRecord) { throw "The root assembly is not among the opened, bound documents" }
+        $rootRecord.Placed = 1
         $rootDef = $asm.ComponentDefinition
         if (Get-RequiredValue "root IsiAssemblyFactory" { $rootDef.IsiAssemblyFactory }) { throw "Unsupported: root assembly is an iAssembly factory" }
         Add-PackageGuardCheck $guards "no_factory"
         function Get-Target($o, $what) {
             # The record of the document an occurrence places, with the guards on that occurrence. It emits the record only.
-            if (Get-RequiredValue "Suppressed of '$what'" { $o.Suppressed }) { throw "Unsupported: suppressed occurrence '$what' (its document is not loaded; the package mode does not export it yet)" }
+            # The callers have asked whether the occurrence is suppressed: one that is does not come here.
             if (Get-RequiredValue "Adaptive of '$what'" { $o.Adaptive }) { throw "Unsupported: adaptive occurrence '$what'" }
             if (Get-RequiredValue "IsSubstituteOccurrence of '$what'" { $o.IsSubstituteOccurrence }) { throw "Unsupported: substitute (LOD) occurrence '$what'" }
-            Add-PackageGuardCheck $guards "occurrence_not_suppressed_adaptive_or_substitute"
-            $placedFile = Get-RequiredValue "document of '$what'" { $o.Definition.Document.FullFileName } -Kind string
-            $target = $documents[$placedFile.ToLowerInvariant()]
-            if (-not $target) { throw "Occurrence '$what' places a document that is not among the opened, bound documents" }
+            Add-PackageGuardCheck $guards "occurrence_not_adaptive_or_substitute"
+            $placedDocument = Get-RequiredValue "document of '$what'" { $o.Definition.Document.FullDocumentName } -Kind string
+            $target = $documents[$placedDocument.ToLowerInvariant()]
+            if (-not $target) { throw "Occurrence '$what' places a document that is not among the opened, bound documents: $(Relative $placedDocument)" }
             $placedType = Get-RequiredValue "DefinitionDocumentType of '$what'" { $o.DefinitionDocumentType } -Kind int
             $kind = $(if ($placedType -eq $kAssembly) { "assembly" } elseif ($placedType -eq $kPart) { "part" } else { "other" })
             if ($kind -ne $target.Kind) { throw "Occurrence '$what' is a $kind and its document is a $($target.Kind)" }
             Add-PackageGuardCheck $guards "occurrence_places_a_bound_document"
             $state = Get-RequiredValue "ActiveModelState of '$what'" { $o.ActiveModelState } -Kind string
-            if ($state -ne $target.ModelState) { throw "Unsupported: occurrence '$what' uses model state '$state' but its document's active state is '$($target.ModelState)'" }
-            Add-PackageGuardCheck $guards "primary_model_state"
+            if ($state -cne $target.ModelState) { throw "Refused: occurrence '$what' uses model state '$state' and the document it places is in model state '$($target.ModelState)'" }
+            Add-PackageGuardCheck $guards "occurrence_in_the_model_state_of_its_document"
             if ($kind -eq "assembly") {
                 if (Get-RequiredValue "IsiAssemblyFactory of '$what'" { $o.Definition.IsiAssemblyFactory }) { throw "Unsupported: nested iAssembly factory '$what'" }
                 $lod = Get-RequiredValue "ActiveLevelOfDetailRepresentation of '$what'" { $o.ActiveLevelOfDetailRepresentation } -Kind string
                 $pos = Get-RequiredValue "ActivePositionalRepresentation of '$what'" { $o.ActivePositionalRepresentation } -Kind string
-                if ($masterNames -notcontains $lod) { throw "Unsupported: assembly occurrence '$what' uses level of detail '$lod'" }
+                # a level of detail named after the occurrence's own model state is that state
+                if ($masterNames -notcontains $lod -and $lod -cne $state) { throw "Unsupported: assembly occurrence '$what' uses level of detail '$lod' and model state '$state'" }
                 if ($masterNames -notcontains $pos) { throw "Unsupported: assembly occurrence '$what' uses positional representation '$pos'" }
-                Add-PackageGuardCheck $guards "master_positional_representation_and_level_of_detail"
+                Add-PackageGuardCheck $guards "master_positional_representation_and_a_level_of_detail_that_is_a_model_state"
             } else {
                 if (Get-RequiredValue "IsiPartFactory of '$what'" { $o.Definition.IsiPartFactory }) { throw "Unsupported: iPart factory ('$what')" }
             }
             Add-PackageGuardCheck $guards "no_factory"
             return $target
+        }
+        function Get-SuppressedRecord($o, [string]$name) {
+            # A suppressed occurrence is not a child: Inventor loads no document for it. What is written of it is its
+            # name and, where they can be read without unsuppressing anything, the Vault file it would place. Nothing
+            # of this is required: an answer that is nothing, or a read that fails, leaves the name alone. It emits
+            # the record only.
+            $entry = [ordered]@{ name = $name }; $placedFile = $null
+            try {
+                $descriptor = $o.ReferencedDocumentDescriptor
+                if ($null -ne $descriptor) { $fileDescriptor = $descriptor.ReferencedFileDescriptor; if ($null -ne $fileDescriptor) { $answer = $fileDescriptor.FullFileName; if ($answer -is [string] -and $answer) { $placedFile = $answer } } }
+            } catch { $placedFile = $null }
+            if ($placedFile) {
+                $acquired = $acqByPath[$placedFile.ToLowerInvariant()]
+                if ($acquired) { $entry.master_id = [string]$acquired.master_id; $entry.path = [string]$acquired.vault_path; $suppressedMasters[[string]$acquired.master_id] = $true }
+            }
+            return $entry
         }
         function Get-Flags($o, $kind, $what) {
             # The BOM structure and the flags of an occurrence, each a required query.
@@ -393,35 +440,58 @@ try {
             $positional = Get-RequiredValue "positional representation of '$($record.What)'" { $definition.RepresentationsManager.ActivePositionalRepresentation.Name } -Kind string
             $detail = Get-RequiredValue "level of detail of '$($record.What)'" { $definition.RepresentationsManager.ActiveLevelOfDetailRepresentation.Name } -Kind string
             if ($masterNames -notcontains $positional) { throw "Unsupported: '$($record.What)' is in positional representation '$positional' (master required)" }
-            if ($masterNames -notcontains $detail) { throw "Unsupported: '$($record.What)' is in level of detail '$detail' (master required)" }
-            Add-PackageGuardCheck $guards "master_positional_representation_and_level_of_detail"
+            # The level of detail an assembly document reports is the model state its FILE was saved in, the same for
+            # every document of that file (seen 2026-11-17: the primary document of a file saved in another state
+            # reports that other state). So it must be the master or name a model state of the file; which state this
+            # document is in was read from the document itself.
+            $stateList = $definition.ModelStates
+            $fileStates = @(Get-RequiredItems "model states of '$($record.What)'" $stateList | ForEach-Object { $one = $_; Get-RequiredValue "name of a model state of '$($record.What)'" { $one.Name } -Kind string })
+            if ($fileStates -cnotcontains $record.ModelState) { throw "Refused: '$($record.What)' is in model state '$($record.ModelState)', which its file does not list ($($fileStates -join ', '))" }
+            if ($masterNames -notcontains $detail -and $fileStates -cnotcontains $detail) { throw "Unsupported: '$($record.What)' is in level of detail '$detail' (the master, or a model state of its file, required)" }
+            Add-PackageGuardCheck $guards "master_positional_representation_and_a_level_of_detail_that_is_a_model_state"
             $record | Add-Member -NotePropertyName Representations -NotePropertyValue ([ordered]@{ design_view_representation = (Get-OptionalValue { $definition.RepresentationsManager.ActiveDesignViewRepresentation.Name } "string"); positional_representation = $positional; level_of_detail = $detail })
             # the occurrences are a collection that must exist and must give as many items as it counts
             $occurrenceList = $definition.Occurrences
             $expected = Get-RequiredCount "occurrences of '$($record.What)'" $occurrenceList
-            $children = @()
+            $children = @(); $suppressed = @()
             foreach ($o in $occurrenceList) {
                 $name = Get-RequiredValue "name of an occurrence in '$($record.What)'" { $o.Name } -Kind string; $what = "$($record.Name) > $name"
-                if ($name.Contains("/") -or $record.ChildByName.ContainsKey($name)) { throw "Unsupported: occurrence name '$name' in $($record.What) is repeated or holds '/'" }
+                if ($name.Contains("/") -or $record.ChildByName.ContainsKey($name) -or $record.SuppressedByName.ContainsKey($name)) { throw "Unsupported: occurrence name '$name' in $($record.What) is repeated or holds '/'" }
+                if (Get-RequiredValue "Suppressed of '$what'" { $o.Suppressed }) {
+                    # not a child: this document, in its model state, does not have the occurrence
+                    $entry = Get-SuppressedRecord $o $name
+                    $record.SuppressedByName[$name] = $entry; $suppressed += $entry
+                    Add-PackageGuardCheck $guards "suppressed_occurrence_named_and_not_exported"
+                    continue
+                }
                 $target = Get-Target $o $what
                 $transform = Cells $o.Transformation; Assert-Rigid $transform "'$what'"
                 $child = [ordered]@{ name = $name; kind = $target.Kind; master_id = $target.Vault.master_id; model_state = $target.ModelState; transform = $transform }
                 $flags = Get-Flags $o $target.Kind $what; foreach ($flag in $flags.Keys) { $child[$flag] = $flags[$flag] }
                 $record.ChildByName[$name] = $child; $children += $child
             }
-            if ($children.Count -ne $expected) { throw "Refused: '$($record.What)' counts $expected occurrences and gave $($children.Count)" }
+            if (($children.Count + $suppressed.Count) -ne $expected) { throw "Refused: '$($record.What)' counts $expected occurrences and gave $($children.Count + $suppressed.Count)" }
             Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
-            $record.Children = $children
+            $record.Children = $children; $record.Suppressed = $suppressed
         }
+        $suppressedNamed = 0; foreach ($record in $documents.Values) { $suppressedNamed += @($record.Suppressed).Count }
+        if ($suppressedNamed -gt 0) { Log "Suppressed occurrences, named and not exported: $suppressedNamed in $(@($documents.Values | Where-Object { @($_.Suppressed).Count -gt 0 }).Count) assembly document(s)" }
         $timings.definitions_seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1); $clock.Restart()
         # ---- every occurrence in the context of the root ----
         function Walk($occurrences, $parentPath, $parentWorld, $parentRecord, $flexibleAbove) {
             # Called as a statement: files every occurrence in $script:context and goes into the sub-assemblies.
             $instance = $(if (@($parentPath).Count -gt 0) { "the instance '$($parentPath -join '/')'" } else { "the root" })
             $expected = Get-RequiredCount "occurrences of $instance of $($parentRecord.What)" $occurrences
-            $names = @()
+            $names = @(); $suppressedNames = @()
             foreach ($o in $occurrences) {
-                $name = Get-RequiredValue "name of an occurrence of $instance" { $o.Name } -Kind string; $path = @($parentPath) + $name; $id = $path -join "/"; $names += $name
+                $name = Get-RequiredValue "name of an occurrence of $instance" { $o.Name } -Kind string; $path = @($parentPath) + $name; $id = $path -join "/"
+                if (Get-RequiredValue "Suppressed of '$id'" { $o.Suppressed }) {
+                    # suppressed here: it must be one the instance's document names as suppressed, and it is not walked
+                    if (-not $parentRecord.SuppressedByName.ContainsKey($name)) { throw "Refused: '$id' is suppressed in the context of the root and not in its document $($parentRecord.What)" }
+                    $suppressedNames += $name; $script:suppressedInContext++
+                    continue
+                }
+                $names += $name
                 $definition = $parentRecord.ChildByName[$name]
                 if (-not $definition) { throw "Occurrence '$id' is not a child its document $($parentRecord.What) defines" }
                 $target = Get-Target $o $id
@@ -447,11 +517,14 @@ try {
                 $script:context += $entry; $target.Placed++
                 if ($target.Kind -eq "assembly") { $subOccurrences = $o.SubOccurrences; Walk $subOccurrences $path $world $target ($flexibleAbove -or $flags.flexible) }
             }
-            if ($names.Count -ne $expected) { throw "Refused: $instance of $($parentRecord.What) counts $expected occurrences and gave $($names.Count)" }
+            if (($names.Count + $suppressedNames.Count) -ne $expected) { throw "Refused: $instance of $($parentRecord.What) counts $expected occurrences and gave $($names.Count + $suppressedNames.Count)" }
             Add-PackageGuardCheck $guards "collection_gives_as_many_items_as_it_counts"
             $defined = @($parentRecord.Children | ForEach-Object { $_.name })
             if (($names -join "/") -cne ($defined -join "/")) { throw "Refused: $instance of $($parentRecord.What) does not have the children its document defines" }
             Add-PackageGuardCheck $guards "instance_has_its_documents_children"
+            $definedSuppressed = @($parentRecord.Suppressed | ForEach-Object { $_.name })
+            if (($suppressedNames -join "/") -cne ($definedSuppressed -join "/")) { throw "Refused: $instance of $($parentRecord.What) does not suppress the occurrences its document suppresses" }
+            Add-PackageGuardCheck $guards "suppression_in_context_is_the_documents"
         }
         $rootOccurrences = $rootDef.Occurrences
         Walk $rootOccurrences @() $Identity $rootRecord $false
@@ -533,6 +606,8 @@ try {
                 Write-PackageJsonFile (Join-Path $directory "assembly.json") $manifest
                 $native = [ordered]@{ length_unit = $record.LengthUnit; instances_in_export = $record.Placed; children = @($record.Children).Count }
                 foreach ($key in $record.Representations.Keys) { $native[$key] = $record.Representations[$key] }
+                # the occurrences this document suppresses: named, not children. The key is written only when there are some.
+                if (@($record.Suppressed).Count -gt 0) { $native.suppressed_occurrences = @($record.Suppressed) }
                 Write-PackageJsonFile (Join-Path $directory "source.json") ([ordered]@{ schema_version = $PackageLayoutSchemaVersion; kind = "assembly"; name = $record.Name; model_state = $record.ModelState; vault = $record.Vault
                         export = [ordered]@{}; properties = $properties; native = $native; materials = $null })
                 continue
@@ -617,9 +692,10 @@ try {
         else { $errors += "the mirror changed during the run: changed [$(@($mirror.changed) -join '; ')], added [$(@($mirror.added) -join '; ')], removed [$(@($mirror.removed) -join '; ')]" }
     }
     $placed = @($documents.Values | Where-Object { $_.Placed -gt 0 })
-    $notExported = @($documents.Values | Where-Object { $_.Placed -eq 0 } | ForEach-Object { [ordered]@{ master_id = $_.Vault.master_id; model_state = $_.ModelState; reason = "a referenced document that no occurrence places (for example the base of a derived part)" } })
+    $onlySuppressed = "a file that only suppressed occurrences place"
+    $notExported = @($documents.Values | Where-Object { $_.Placed -eq 0 } | ForEach-Object { [ordered]@{ master_id = $_.Vault.master_id; model_state = $_.ModelState; reason = $(if ($suppressedMasters.ContainsKey([string]$_.Vault.master_id)) { $onlySuppressed } else { "a referenced document that no occurrence places (for example the base of a derived part)" }) } })
     $openedVersions = @($inputs | ForEach-Object { [string]$_.version_id })
-    foreach ($listed in @($invJson.files | Where-Object { $openedVersions -notcontains [string]$_.version_id })) { $notExported += [ordered]@{ master_id = [string]$listed.master_id; model_state = $null; reason = "in the dependency inventory and not opened by Inventor with the root assembly" } }
+    foreach ($listed in @($invJson.files | Where-Object { $openedVersions -notcontains [string]$_.version_id })) { $notExported += [ordered]@{ master_id = [string]$listed.master_id; model_state = $null; reason = $(if ($suppressedMasters.ContainsKey([string]$listed.master_id)) { $onlySuppressed } else { "in the dependency inventory and not opened by Inventor with the root assembly" }) } }
     $forbidden = @(@($env:COMPUTERNAME, $env:USERNAME, $env:USERPROFILE, $WorkspaceRoot) + @($ForbiddenTerm) + @($headerNames) | Where-Object { $_ } | Sort-Object -Unique)
     if ($errors.Count -eq 0 -and $packageWritten -and $shutdown -and $shutdown.Succeeded) {
         $repository = Split-Path -Parent $PSScriptRoot; $commit = $null; $modified = $null
@@ -633,11 +709,12 @@ try {
             acquisition = [ordered]@{ captured_at = [string]$invJson.captured_at; acquired_at = [string]$acqJson.acquired_at; method = [string]$acqJson.method }
             counts = $null; not_exported = $notExported; translator_outputs = $rawOutputs; files = $null }
         $expectParts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; $expectAssemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; $expectOccurrences = @($script:context).Count
+        $expectSuppressed = 0; foreach ($held in $placed) { $expectSuppressed += @($held.Suppressed).Count }
         # The status is known here, before package.json is written: the watchdog has been stopped. A run in which it
         # dismissed a dialog writes no package.json at all, so that a run killed in between cannot leave one behind.
         $prospective = Resolve-RunStatus -Status "complete" -Dialogs $dialogs
         if (-not (Test-PackageRunStatus $prospective)) { $withheld = "the run ends '$prospective': the watchdog dismissed a dialog, and what it acknowledged is only in this receipt, which stays on the workstation; package.json is not written" }
-        $completion = Complete-Package -Directory $OutputDirectory -Manifest $manifest -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance -ExpectParts $expectParts -ExpectAssemblies $expectAssemblies -ExpectOccurrences $expectOccurrences -WithholdBecause "$withheld"
+        $completion = Complete-Package -Directory $OutputDirectory -Manifest $manifest -ForbiddenTerms $forbidden -RotationTolerance $rotationTolerance -LengthTolerance $lengthTolerance -ExpectParts $expectParts -ExpectAssemblies $expectAssemblies -ExpectOccurrences $expectOccurrences -ExpectSuppressed $expectSuppressed -WithholdBecause "$withheld"
         if ($completion.ok) {
             Add-PackageGuardCheck $guards "package_checked_before_package_json"
             $status = $prospective
@@ -671,6 +748,8 @@ try {
         guards = $guards
         tolerance = [ordered]@{ rotation_cell = $rotationTolerance; length_cm = $lengthTolerance }
         counts = [ordered]@{ documents = $documents.Count; exported_parts = @($placed | Where-Object { $_.Kind -eq "part" }).Count; exported_assemblies = @($placed | Where-Object { $_.Kind -eq "assembly" }).Count; not_exported = @($notExported).Count
+            files_opened = @($inputs).Count; files_in_more_than_one_model_state = @($documents.Values | Group-Object { $_.Vault.master_id } | Where-Object { $_.Count -gt 1 }).Count
+            suppressed_occurrences_named = $(if ($documents.Count) { ($documents.Values | ForEach-Object { @($_.Suppressed).Count } | Measure-Object -Sum).Sum } else { 0 }); suppressed_occurrences_in_context = $script:suppressedInContext
             occurrences = @($script:context).Count; occurrences_that_differ_from_definition = @($script:context | Where-Object { $_.differs_from_definition }).Count
             occurrences_whose_flags_differ_from_definition = @($script:context | Where-Object { @($_.flags_that_differ_from_definition).Count -gt 0 }).Count; feature_values_not_read = $script:PackageOptionalReadFailures }
         display_names_that_are_not_the_file_name = @($documents.Values | Where-Object { $_.DisplayName -and $_.DisplayName -ne $_.Name -and [IO.Path]::GetFileNameWithoutExtension($_.DisplayName) -ne $_.Name } | ForEach-Object { [ordered]@{ file = $_.What; display_name = $_.DisplayName } })
@@ -686,5 +765,5 @@ try {
     try { ConvertTo-Json -InputObject ([ordered]@{ schema_version = $PackageReceiptSchemaVersion; generated_at = (Utc); exporter = "windows/Export-Package.ps1"; status = "FAILED"; errors = @($errors) + @("the receipt could not be written in full: $problem"); package_complete = $false; package_json_present = $manifestPresent }) -Depth 4 | Set-Content -LiteralPath (Join-Path $WorkDirectory "export-package-receipt.json") -Encoding UTF8 } catch { }
     Write-Output "ERROR: the receipt could not be written in full: $problem"
 }
-try { Log "Package status: $status; package.json $(if ($packageComplete) { 'written' } else { 'not left' }) ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context)" } catch { }
+try { Log "Package status: $status; package.json $(if ($packageComplete) { 'written' } else { 'not left' }) ($(@($placed | Where-Object { $_.Kind -eq 'part' }).Count) parts, $(@($placed | Where-Object { $_.Kind -eq 'assembly' }).Count) assemblies, $(@($script:context).Count) occurrences in context, $($script:suppressedInContext) suppressed and left out)" } catch { }
 if (-not $packageComplete -or $status -cne "complete") { exit 1 }

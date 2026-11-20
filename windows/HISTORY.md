@@ -1,4 +1,4 @@
-# Windows side: results and handoffs, 2026-10-21 to 2026-11-17
+# Windows side: results and handoffs, 2026-10-21 to 2026-11-20
 
 The dated record of what was run on the Windows workstation, newest first,
 ending with the original handoff of 2026-10-21. It was the body of
@@ -7,6 +7,72 @@ results from 2026-11-10 on are added above the older ones.
 Statements such as "no upload adapter exists yet" describe the day they were
 written; the later entries supersede the earlier ones. How to work in this
 directory today is in [README.md](README.md).
+
+## Result — the live branch of the reference route rehearsed, model states in the exporter, a check-out taken at its last check-in (2026-11-20)
+
+Evidence: `vault-cad-exchange/evidence/2026-11-20-windows-rehearsal-sdk-read-model-states-01/` (report `REPORT.md`, which
+records the commits it ran from). Requested by `to-windows/20261118T140617Z-...`. Nothing was written to Vault and
+nothing was read from it: the one contact allowed, a sign-in through the SDK for one read of associations,
+failed and was not tried again. No REST request. `Publish-StepToVault.ps1` was not run, and no `-Live` of any
+script.
+
+- **The live branch of `Publish-ReferenceRoutePilot.ps1` was rehearsed whole, offline.** The script was never
+  called with `-Live`: its lines after the parameter block, taken from the syntax tree, ran in a process of
+  their own for every run, with a server name that cannot resolve and, in place of the client's directory,
+  stand-in assemblies under the SDK's names. The stand-in was first held against the installed client by
+  reflection: 20 types, 88 members, the same signatures. 16 scenarios in 27 runs, 36 checks: both adds
+  succeed; the first add throws (`ambiguous_wrapper`, the second not tried); the second throws
+  (`ambiguous_assembly`, the wrapper's ids kept); the folder answers with another id, with a file of either
+  new name, with the STEP file at another version, with nothing (each refused, the journal not moved, no add
+  sent); a second run after each. The script needed no seam.
+- **One line was wrong and is corrected.** A field of an association that the request leaves null was
+  assigned as null, and Windows PowerShell stores that in a text property as an empty text: a live run would
+  have sent three empty texts where it meant to send nothing (35 of 36 checks before, 36 of 36 after). A null
+  field is now not set at all (`Get-AssociationTexts`), and `-Prepare` takes the three texts of each
+  association as parameters. Three one-line mutations of the branch fail the rehearsal where they should (1,
+  10 and 12 checks).
+- **Seen by reflection and left as it ran:** the line that reads the user id for the connection asks the
+  credentials for a `SecurityHeader`, which they do not have (the id is under `Session.User`), so the
+  connection is made with the user id 0, as both adds of `Publish-StepToVault.ps1` were.
+- **What the Inventor add-in writes into `RefId`, `Source` and `ExpectedVaultPath` is still not known.** The
+  reader (an evidence tool) resolved its 19 members by reflection and passed its rehearsal against the
+  stand-in (11 checks). Its one sign-in failed at the web service manager with the message "0". The identity
+  service's own log shows the token asked for while its refresh was still running; the Vault client was not
+  open. Nothing was read, the request of 2026-11-17 stays `planned`, and no new request was prepared.
+- **`Export-Package.ps1` takes model states and suppressed occurrences** as decided in
+  `mechanical-cad/docs/exporter-package.md`: a document by its full document name, its state from the
+  document, two documents bound to one acquired file; a suppressed occurrence named under
+  `native.suppressed_occurrences` and not a child; `counts.suppressed_occurrences` in `package.json`. Two
+  things differ from the decision's wording and are said in the report: the field is written only when a
+  document has suppressed occurrences, so that the files of a project without them stay the bytes they were;
+  and a level of detail is accepted when it names any model state of the file, because the file's level of
+  detail says what the file was saved in, for the primary document too. The receipt is `schema_version` 4.
+  `Test-PackageFormat.ps1` has four cases more (P36 to P39).
+- **The second project's assembly now passes every guard of model states and suppression** (43 documents of
+  42 files, 7 suppressed occurrences named, 115 occurrences in context) **and stops later, at a part's STEP
+  file**: a part made by the gear generator marks a surface invisible that is also a member of a named group
+  (`APPLIED_GROUP_ASSIGNMENT`), a form `Get-StepInvisibility` does not understand. No guard was loosened and
+  there is no package. A read-only probe of all 38 parts (an evidence tool) shows that two parts stop for
+  that reason and no other part stops. **The part without a body does not stop the exporter**: its STEP file
+  holds two open shells and no solid, and its record would say no solid body, no surface body and a volume
+  of 0. The mirror was hashed before and after both Inventor runs: unchanged.
+- **The first project exports as before**: 90 files, 89 the same bytes as in its last package, and
+  `package.json` differs in `exported_at`, the exporter's version, `translator_outputs` and `counts`, which
+  gains `suppressed_occurrences: 0`. Its mirror is unchanged.
+- **A member at the place of a check-out is taken at its last version checked in**
+  (`Get-VaultDependencySnapshot.ps1`): the row before the place in `files/{master}/versions`, with that
+  version's own children in place of the place's. The inventory says so of the member
+  (`stands_for_check_out_place`), the receipt lists and counts such members, the status is `complete`. A
+  root at such a place stays refused. Two requests more for each such member. `Get-VaultFileFacts.ps1`
+  reads the latest version by the rule of `Vault-Version.ps1`: a check-out is reported as one (`checked_out`,
+  since when, the id of the place) and is not a change; its output is `schema_version` 2.
+  `Discover-VaultFolder.ps1` is not changed. Rehearsed whole against the stand-in server (38 checks); the
+  scripts as committed refuse the same snapshots and report three checked-out files as changed.
+- `docs/update-step-file-design.md` was read; the remarks are in the report, sections 6 and 8 above all.
+  Nothing of it is built and none of its SDK members was invoked.
+- Suites: ten offline suites (`Test-PackageFormat.ps1` now 39 cases, `Get-VaultDependencySnapshot.ps1
+  -SelfTest` 15, `Get-VaultFileFacts.ps1 -SelfTest` 10, `Publish-ReferenceRoutePilot.ps1 -SelfTest` 10); the
+  hygiene suite checks 34 scripts; 110 Python tests under Pixi.
 
 ## Result — check-out places told apart, a mirror of a second project, the reference route made ready (2026-11-17)
 

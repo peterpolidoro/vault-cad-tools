@@ -483,6 +483,60 @@ class PackageImportTests(unittest.TestCase):
         placed["model_state"] = "Another"
         self.refused("master id 300 in model state Another is not in the package", held, run="run-3")
 
+    def test_suppressed_occurrences_are_named_counted_and_never_children(self):
+        """What the exporter writes of them since 2026-11-20: native.suppressed_occurrences and a count in package.json."""
+        named = [{"name": "C:1", "master_id": "400", "path": "$/PROJECT/C.ipt"}, {"name": "D:1"}]
+
+        def held(change=None):
+            out = files()
+            out["sub"]["source"]["native"]["suppressed_occurrences"] = copy.deepcopy(named)
+            if change:
+                change(out)
+            return out
+
+        package = self.package(held())
+        self.assertEqual(json.loads((package / "package.json").read_text(encoding="utf-8-sig"))["counts"],
+                         {"parts": 2, "assemblies": 2, "suppressed_occurrences": 2})
+        result = import_package(package, self.dest, "run-1")
+        self.assertEqual((result["parts"], result["assemblies"]), (2, 2))
+        self.assertEqual(self.load("references/assemblies/sub/source.json")["native"]["suppressed_occurrences"], named)
+        self.assertEqual([c["name"] for c in self.load("references/assemblies/sub/assembly.json")["children"]], ["A:1", "B:1"])
+        # the count is held to the names: a wrong one and a missing one are refused
+        self.refused("counts .*'suppressed_occurrences': 3.*the package holds .*'suppressed_occurrences': 2", held(),
+                     edit_counts=lambda c: c.update(suppressed_occurrences=3))
+        self.refused("counts \\{'parts': 2, 'assemblies': 2\\}; the package holds .*'suppressed_occurrences': 2", held(),
+                     edit_counts=lambda c: c.pop("suppressed_occurrences"))
+        self.refused("counts .*'suppressed_occurrences': 1.*the package holds .*'suppressed_occurrences': 0",
+                     edit_counts=lambda c: c.update(suppressed_occurrences=1))
+        # a suppressed occurrence is not a child, by its flag or by its name
+        self.refused("300_primary/assembly.json A:1: a suppressed occurrence is not a child",
+                     held(lambda out: out["sub"]["assembly"]["children"][0].update(suppressed=True)))
+        self.refused("B:1: a suppressed occurrence is not a child",
+                     held(lambda out: out["sub"]["source"]["native"]["suppressed_occurrences"].append({"name": "B:1"})))
+        cases = (
+            (lambda out: out["sub"]["source"]["native"].update(suppressed_occurrences=[]), "written only when the document suppresses"),
+            (lambda out: out["sub"]["source"]["native"].update(suppressed_occurrences=[{"master_id": "400", "path": "$/X"}]),
+             "a suppressed occurrence has no name"),
+            (lambda out: out["sub"]["source"]["native"]["suppressed_occurrences"].append({"name": "D:1"}), "D:1 is named twice"),
+            (lambda out: out["sub"]["source"]["native"]["suppressed_occurrences"][1].update(transform=matrix(1)),
+             "D:1 has the unknown field transform"),
+            (lambda out: out["sub"]["source"]["native"]["suppressed_occurrences"][1].update(master_id="400"),
+             "D:1 names the file it would place by master id and path"),
+            (lambda out: out["a"]["source"]["native"].update(suppressed_occurrences=[{"name": "X:1"}]),
+             "only an assembly names suppressed occurrences"),
+        )
+        for change, message in cases:
+            self.refused(message, held(change))
+
+    def test_a_package_written_before_the_count_of_suppressed_occurrences_is_still_read(self):
+        package = self.package(edit_counts=lambda c: c.pop("suppressed_occurrences"))
+        self.assertEqual(json.loads((package / "package.json").read_text(encoding="utf-8-sig"))["counts"], {"parts": 2, "assemblies": 2})
+        result = import_package(package, self.dest, "run-1")
+        self.assertEqual((result["parts"], result["assemblies"]), (2, 2))
+        # and the same files with the count are the same project: nothing is written again
+        again = import_package(self.package(), self.dest, "run-2")
+        self.assertEqual((again["new"], again["updated"], again["rewritten"]), ([], [], []))
+
     def test_command_line(self):
         package = self.package()
         self.assertEqual(main(["import-snapshot", str(package), "--into", str(self.dest), "--run", "run-1"]), 0)

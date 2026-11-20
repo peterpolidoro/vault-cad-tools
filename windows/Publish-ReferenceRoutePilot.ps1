@@ -2,7 +2,8 @@
 .SYNOPSIS
 PILOT of the reference route (docs/native-checkin-adapter-design.md, 5.5): two adds to one Vault folder, the
 wrapper part and then the assembly, each with its association declared. -Prepare writes the request, -DryRun
-resolves it offline, -Live is the gated run. THE LIVE BRANCH HAS NOT BEEN RUN.
+resolves it offline, -Live is the gated run. THE LIVE BRANCH HAS NOT BEEN RUN AGAINST VAULT: its lines were
+rehearsed offline against a stand-in for the SDK types they touch (2026-11-20), never with -Live on a command line.
 
 .DESCRIPTION
 The three files lie in a scratch workspace where their Vault folder puts them (New-ReferenceRouteDocuments.ps1):
@@ -41,9 +42,13 @@ retried, and a second run is refused because the entry is no longer "planned". I
 add, the wrapper is in Vault with its Dependency on the STEP file, the assembly is not, and the journal holds the
 wrapper's ids.
 
-Not known from reflection, and left to the request: what the Inventor add-in writes into an association's RefId,
-Source and ExpectedVaultPath. The request carries them (null as prepared); a live run sends what the request says.
+The request carries an association's RefId, Source and ExpectedVaultPath; a live run sends what the request says.
+A field the request leaves empty is not set at all: assigned a nothing, a text property of the SDK would hold an
+empty text, which is not the same thing to send (found by the rehearsal of 2026-11-20). -Prepare takes the three
+for each association (-WrapperRefId and so on); without them they are empty.
 The BOM is null and the classification None; no visualization attachment is made by AddFile.
+The connection is made with the user id 0, as both adds of Publish-StepToVault.ps1 were: the line that reads the
+id asks the credentials for a SecurityHeader, which they do not have (reflection, 2026-11-20). Left as it ran.
 
     & .\windows\Publish-ReferenceRoutePilot.ps1 -SelfTest      # offline cases: the request, the gates, the folder listing, the journal
 #>
@@ -53,6 +58,7 @@ param(
     # -Prepare
     [string]$WorkspaceRoot, [string]$Folder, [string]$FolderId, [string]$StepName, [string]$StepMasterId, [string]$StepVersionId, [int]$StepVersionNumber,
     [string]$WrapperName, [string]$AssemblyName, [string]$Provenance,
+    [string]$WrapperRefId, [string]$WrapperSource, [string]$WrapperExpectedVaultPath, [string]$AssemblyRefId, [string]$AssemblySource, [string]$AssemblyExpectedVaultPath,
     # -Live: the gates
     [string]$RequestId, [string]$ExpectedFolder, [string]$ExpectedFolderId, [string]$ExpectedStepVersionId, [string]$ExpectedWrapperSha256, [string]$ExpectedAssemblySha256,
     [string]$Server = "svault5", [string]$VaultName = "IDF VAULT",
@@ -167,6 +173,17 @@ function Test-FolderListing($Req, $Files) {
         step_version_in_folder = $(if ($step.Count -eq 1) { [string]$step[0].Id } else { $null }); step_master_in_folder = $(if ($step.Count -eq 1) { [string]$step[0].MasterId } else { $null }); name_collisions = $taken }
 }
 
+function Get-AssociationTexts($Declared) {
+    # The text fields a FileAssocParam is to be given, from an association of the request: only those the request
+    # states. A field that is nothing is left out, and the SDK object keeps its own nothing for it.
+    $texts = [ordered]@{}
+    foreach ($pair in @(@("RefId", "ref_id"), @("Source", "source"), @("ExpectedVaultPath", "expected_vault_path"))) {
+        $value = $Declared.($pair[1])
+        if ($null -ne $value) { $texts[$pair[0]] = [string]$value }
+    }
+    return $texts
+}
+
 function Move-JournalEntry($Entry, [string]$To, $Details) {
     # One step of a request's journal entry. Refused: a step the table does not allow. Returns the entry, changed.
     if ($null -eq $Entry) { throw "The journal has no entry for the request" }
@@ -274,6 +291,21 @@ if ($SelfTest) {
         Assert ($taken.verdict -eq "refused_collision" -and $taken.name_collisions.Count -eq 1 -and $taken.name_collisions[0] -eq "MODEL-REFERENCE.IPT (master 60, version 61)") "taken: $($taken | ConvertTo-Json -Compress)"
         Assert ((Test-FolderListing $sample @((Listed "model.step" "41" "40"), (Listed "pilot.iam" "71" "70"))).verdict -eq "refused_collision") "an assembly of the name passed"
     }
+    Case "A1 an association is given only the texts the request states: a field that is nothing is not set, an empty text is an empty text" {
+        $sample = New-Sample
+        Assert ((Get-AssociationTexts $sample.adds[0].association).Count -eq 0) "a request with nothing in the three fields gives fields to set"
+        $sample.adds[0].association.ref_id = "an id"; $sample.adds[0].association.expected_vault_path = '$/A/TEST/model.step'
+        $texts = Get-AssociationTexts $sample.adds[0].association
+        Assert ((@($texts.Keys) -join ",") -ceq "RefId,ExpectedVaultPath" -and $texts["RefId"] -ceq "an id" -and $texts["ExpectedVaultPath"] -ceq '$/A/TEST/model.step' -and -not $texts.Contains("Source")) "texts: $($texts | ConvertTo-Json -Compress)"
+        $sample.adds[1].association.source = ""
+        $empty = Get-AssociationTexts $sample.adds[1].association
+        Assert ($empty.Count -eq 1 -and $empty["Source"] -ceq "" -and $empty["Source"] -is [string]) "an empty text in the request is not sent as one"
+        # what the rule guards against: a nothing assigned to a text property is an empty text in Windows PowerShell
+        $probe = New-Object System.Exception; Assert ($null -eq $probe.HelpLink) "the probe's text property does not start as nothing"
+        $probe.HelpLink = $null
+        Assert ($probe.HelpLink -ceq "" -and $null -ne $probe.HelpLink) "a nothing assigned to a text property stayed a nothing here; the rule would not be needed"
+        "three fields; and a nothing assigned to a text property of a .NET object is an empty text here"
+    }
     Case "J1 the journal moves along the two adds and nowhere else" {
         $entry = [ordered]@{ state = "planned"; fingerprint = "x"; history = @() }
         foreach ($to in "wrapper_uploading", "wrapper_uploaded", "assembly_uploading", "assembly_uploaded") { $entry = Move-JournalEntry $entry $to @{ note = $to } }
@@ -327,6 +359,12 @@ if ($Prepare) {
     }
     $new.adds[0].comment = "Reference-route pilot of vault-cad-tools, request $($new.request_id): wrapper part that holds $StepName (version id $StepVersionId) as a reference model. Made by New-ReferenceRouteDocuments.ps1; no authored geometry."
     $new.adds[1].comment = "Reference-route pilot of vault-cad-tools, request $($new.request_id): assembly that places only the wrapper part $WrapperName. Made by New-ReferenceRouteDocuments.ps1."
+    # the three texts of each association: stated only when given; an unbound text parameter is empty and states nothing
+    foreach ($pair in @(@($new.adds[0].association, "Wrapper"), @($new.adds[1].association, "Assembly"))) {
+        foreach ($field in @(@("ref_id", "RefId"), @("source", "Source"), @("expected_vault_path", "ExpectedVaultPath"))) {
+            if ($PSBoundParameters.ContainsKey($pair[1] + $field[1])) { $pair[0].($field[0]) = [string]$PSBoundParameters[$pair[1] + $field[1]] }
+        }
+    }
     $new.fingerprint = Get-RequestFingerprint $new
     $wrong = @(Test-Request $new); if ($wrong.Count) { throw "The request prepared is not one this script acts on: $($wrong -join '; ')" }
     $journalTable = Read-PilotJournal $Journal
@@ -451,7 +489,7 @@ if ($DryRun) {
 }
 
 # ======================================================================================================
-# LIVE: two gated adds. NOT RUN in the task that wrote this branch.
+# LIVE: two gated adds. NOT RUN against Vault. Rehearsed offline against a stand-in on 2026-11-20.
 # ======================================================================================================
 $run = [ordered]@{ generated_at = (Utc); script = "windows/Publish-ReferenceRoutePilot.ps1"; request = (Resolve-Path -LiteralPath $Request).Path; request_id = $req.request_id; mode = "live"; host = $env:COMPUTERNAME; status = "not_started"; gates = [ordered]@{}; notes = @() }
 function Finish($status, $exitCode) {
@@ -478,8 +516,9 @@ $adds = @($req.adds); $journalState = "planned"; $mgr = $null
 function New-Association([int64]$childFileId, $declared) {
     $param = New-Object Autodesk.Connectivity.WebServices.FileAssocParam
     $param.CldFileId = $childFileId; $param.Typ = [Autodesk.Connectivity.WebServices.AssociationType]::Dependency
-    $param.RefId = $(if ($null -ne $declared.ref_id) { [string]$declared.ref_id } else { $null }); $param.Source = $(if ($null -ne $declared.source) { [string]$declared.source } else { $null })
-    $param.ExpectedVaultPath = $(if ($null -ne $declared.expected_vault_path) { [string]$declared.expected_vault_path } else { $null })
+    # Only what the request states is set. A nothing assigned to a text property would be sent as an empty text.
+    $texts = Get-AssociationTexts $declared
+    foreach ($name in $texts.Keys) { $param.$name = $texts[$name] }
     return $param
 }
 [AppDomain]::CurrentDomain.add_AssemblyResolve($resolver)

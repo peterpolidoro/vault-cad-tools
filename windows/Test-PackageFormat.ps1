@@ -54,8 +54,24 @@ function New-Model {
         manifest = [ordered]@{ schema_version = 2; kind = "vault-cad-export-package"; exported_at = "2026-01-02T00:00:00Z"; exporter = [ordered]@{ name = "test"; version = $null; inventor = "test" }
             translator_options = [ordered]@{ IncludeSketches = $false; ApplicationProtocolType = 5; Author = ""; Organization = ""; Authorization = ""; Description = ""; export_fit_tolerance = 0.001; ExportUCS = $true }
             vault_id = "7"; root = [ordered]@{ master_id = "400"; version_id = "401"; model_state = "[Primary]" }; acquisition = [ordered]@{ captured_at = "2026-01-01T00:00:00Z"; method = "test" }
-            counts = [ordered]@{ parts = 2; assemblies = 2 }; not_exported = @(); files = $null }
+            counts = [ordered]@{ parts = 2; assemblies = 2; suppressed_occurrences = 0 }; not_exported = @(); files = $null }
     }
+}
+function New-TwoStateModel {
+    # The small package with its sub-assembly used in two model states: SUB:1 in the primary one, which has the pin,
+    # and SUB:2 in the state "Mirrored", which suppresses the pin and has nothing else. One file, two documents, two
+    # directories with the same vault block.
+    $model = New-Model
+    $model.sources["300_mirrored"] = [ordered]@{ schema_version = 1; kind = "assembly"; name = "SUB"; model_state = "Mirrored"; vault = (Get-Vault "300" "301"); export = [ordered]@{}; properties = (Get-Properties)
+        native = [ordered]@{ length_unit = "cm"; suppressed_occurrences = @([ordered]@{ name = "PIN:1"; master_id = "200"; path = '$/X/200' }) }; materials = $null }
+    $model.assemblies["300_mirrored"] = [ordered]@{ schema_version = 1; name = "SUB"; length_unit = "cm"; children = @() }
+    $second = Get-Child "SUB:2" "assembly" "300" (Get-Shift 20.0) $false; $second.model_state = "Mirrored"
+    $model.assemblies["400_primary"].children = @($model.assemblies["400_primary"].children) + @($second)
+    $placed = Get-Occurrence @("SUB:2") "assembly" "300" (Get-Shift 20.0) (Get-Shift 20.0) $false $false; $placed.model_state = "Mirrored"
+    $model.occurrences.occurrences = @($model.occurrences.occurrences) + @($placed)
+    $model.occurrences.counts = [ordered]@{ occurrences = 4; parts = 2; assemblies = 2; differ_from_definition = 1 }
+    $model.manifest.counts = [ordered]@{ parts = 2; assemblies = 3; suppressed_occurrences = 1 }
+    return $model
 }
 function Write-Model($model, [string]$name, [switch]$NoManifest) {
     # Writes the model as a package directory and returns its path.
@@ -536,12 +552,72 @@ try {
         $read = $exporter.IndexOf('Get-RequiredValue "dirty flag of '); $written = $exporter.IndexOf('$packageWritten = $true')
         Assert ($read -ge 0 -and $written -gt $read) "the dirty flags are not read before the package is said to be written (read at $read, written at $written)"
     }
-    Case "P35 the exporter's receipt names schema 3 wherever it is written, the receipt of a run that could not write it in full included" {
-        Assert ($PackageReceiptSchemaVersion -is [int] -and $PackageReceiptSchemaVersion -eq 3) "the schema of the receipt is '$PackageReceiptSchemaVersion'"
+    Case "P35 the exporter's receipt names schema 4 wherever it is written, the receipt of a run that could not write it in full included" {
+        Assert ($PackageReceiptSchemaVersion -is [int] -and $PackageReceiptSchemaVersion -eq 4) "the schema of the receipt is '$PackageReceiptSchemaVersion'"
         $sample = '$receipt = [ordered]@{ schema_version = 2; status = $status }; $manifest = [ordered]@{ schema_version = $PackageSchemaVersion; kind = $PackageKind }; $short = [ordered]@{ schema_version = $PackageReceiptSchemaVersion; status = "FAILED" }'
         Assert ((@(Get-ReceiptSchemas $sample) -join ",") -ceq '2,$PackageReceiptSchemaVersion') "the check does not find the receipts of a script: $(@(Get-ReceiptSchemas $sample) -join ',')"
         $written = @(Get-ReceiptSchemas ([IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1"))))
         Assert ($written.Count -eq 2 -and @($written | Where-Object { $_ -cne '$PackageReceiptSchemaVersion' }).Count -eq 0) "Export-Package.ps1 writes $($written.Count) receipt(s) and gives their schema as: $($written -join ', ')"
+    }
+    Case "P36 one file in two model states is two directories with one vault block; a child names the state it places; the suppressed occurrence is named and counted" {
+        $verdict = Test-PackageOutputs -Directory (Write-Model (New-TwoStateModel) "two-states")
+        Assert ($verdict.ok) "failures: $($verdict.failures -join ' | ')"
+        Assert ($verdict.summary.parts -eq 2 -and $verdict.summary.assemblies -eq 3 -and $verdict.summary.children -eq 4 -and $verdict.summary.occurrences -eq 4 -and $verdict.summary.suppressed_occurrences -eq 1 -and $verdict.summary.files -eq 12) "summary: $($verdict.summary | ConvertTo-Json -Compress)"
+        Assert ((Get-PackageDirectoryName "300" "Mirrored") -ceq "300_mirrored" -and (Get-PackageDirectoryName "300" "[Primary]") -ceq "300_primary") "the two directories of one master"
+        $model = New-TwoStateModel; $model.assemblies["400_primary"].children[2].model_state = "Another"
+        Assert ((Get-Failures $model "two-states-unknown") -match "SUB:2.*master id 300 in model state Another is not in the package") "a child that names a state the package does not have passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].model_state = "[Primary]"
+        Assert ((Get-Failures $model "two-states-directory") -match "the directory of master id 300 in model state \[Primary\] is 300_primary") "a directory that is not the one of its state passed"
+        $model = New-TwoStateModel; $model.occurrences.occurrences[3].model_state = "[Primary]"
+        Assert ((Get-Failures $model "two-states-context") -match "occurrences.json SUB:2.*it is not the component its definition names") "an occurrence in another state than its definition names passed"
+        "12 files; SUB twice"
+    }
+    Case "P37 a suppressed occurrence is not a child: a child that is suppressed, or named as suppressed, is refused; so is a name twice, a nameless one, another field, a master id without a path, an empty list, and one in a part" {
+        $entry = { param($name) [ordered]@{ name = $name; master_id = "200"; path = '$/X/200' } }
+        $model = New-TwoStateModel; $model.assemblies["300_primary"].children[0].suppressed = $true
+        Assert ((Get-Failures $model "suppressed-child") -match "PIN:1.*a suppressed occurrence is not a child") "a child with suppressed true passed"
+        $model = New-TwoStateModel; $model.sources["300_primary"].native.suppressed_occurrences = @((& $entry "PIN:1"))
+        Assert ((Get-Failures $model "suppressed-and-child") -match "PIN:1.*the document names it as suppressed") "an occurrence that is a child and named as suppressed passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @((& $entry "PIN:1"), (& $entry "PIN:1"))
+        Assert ((Get-Failures $model "suppressed-twice") -match "the suppressed occurrence PIN:1 is named twice") "a name twice passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @([ordered]@{ master_id = "200"; path = '$/X/200' })
+        Assert ((Get-Failures $model "suppressed-nameless") -match "a suppressed occurrence has no name") "a suppressed occurrence without a name passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @([ordered]@{ name = "PIN:1"; transform = (Get-Shift 0.0) })
+        Assert ((Get-Failures $model "suppressed-field") -match "the suppressed occurrence PIN:1 has other fields than name, master_id, path") "a suppressed occurrence with a placement passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @([ordered]@{ name = "PIN:1"; master_id = "200" })
+        Assert ((Get-Failures $model "suppressed-half") -match "has a master id without a path") "a master id without a path passed"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @([ordered]@{ name = "PIN:1" }); $model.manifest.counts.suppressed_occurrences = 1
+        Assert ((Test-PackageOutputs -Directory (Write-Model $model "suppressed-name-alone")).ok) "a suppressed occurrence of which only the name could be read does not pass"
+        $model = New-TwoStateModel; $model.sources["300_mirrored"].native.suppressed_occurrences = @()
+        Assert ((Get-Failures $model "suppressed-empty") -match "is written only when the document suppresses an occurrence") "an empty list passed"
+        $model = New-TwoStateModel; $model.sources["100_primary"].native.suppressed_occurrences = @((& $entry "X:1"))
+        Assert ((Get-Failures $model "suppressed-in-a-part") -match "only an assembly names suppressed occurrences") "a part that names a suppressed occurrence passed"
+    }
+    Case "P38 package.json counts the suppressed occurrences: a wrong count and a missing count are refused, and completing a package writes the count and checks it against what was met" {
+        $model = New-TwoStateModel; $model.manifest.counts.suppressed_occurrences = 2
+        Assert ((Get-Failures $model "suppressed-count-wrong") -match "package.json counts 2 suppressed occurrences; the assemblies name 1") "a wrong count passed"
+        $model = New-TwoStateModel; $model.manifest.counts = [ordered]@{ parts = 2; assemblies = 3 }
+        Assert ((Get-Failures $model "suppressed-count-missing") -match "package.json does not count the 1 suppressed occurrences the assemblies name") "a missing count passed"
+        $model = New-Model; $model.manifest.counts = [ordered]@{ parts = 2; assemblies = 2 }
+        Assert ((Test-PackageOutputs -Directory (Write-Model $model "no-count-nothing-suppressed")).ok) "a package of before, which names none and counts none, does not pass"
+        $model = New-TwoStateModel; $directory = Write-Model $model "complete-two-states" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 2 -ExpectAssemblies 3 -ExpectOccurrences 4 -ExpectSuppressed 1
+        Assert ($done.ok -and $done.stage -ceq "complete") "result: $($done | ConvertTo-Json -Compress -Depth 4)"
+        $written = Read-PackageJsonFile (Join-Path $directory "package.json")
+        Assert ((@($written.counts.PSObject.Properties.Name) -join ",") -ceq "parts,assemblies,suppressed_occurrences" -and $written.counts.suppressed_occurrences -eq 1 -and $written.counts.assemblies -eq 3) "counts: $($written.counts | ConvertTo-Json -Compress)"
+        $model = New-TwoStateModel; $directory = Write-Model $model "complete-two-states-other" -NoManifest
+        $done = Complete-Package -Directory $directory -Manifest (Get-OpenManifest $model) -ExpectParts 2 -ExpectAssemblies 3 -ExpectOccurrences 4 -ExpectSuppressed 2
+        Assert (-not $done.ok -and $done.stage -ceq "before package.json" -and ($done.failures -join ";") -match "1 suppressed occurrences named, 2 met" -and -not (Test-Path -LiteralPath (Join-Path $directory "package.json"))) "a package that names another number than was met: $($done | ConvertTo-Json -Compress -Depth 4)"
+    }
+    Case "P39 the exporter finds a document by its full document name and takes its model state from the document; it does not ask which state the file was saved in, and it refuses no suppressed occurrence" {
+        $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "Export-Package.ps1")); $tree = Get-ScriptTree $text
+        $members = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Member.Value })
+        Assert ($members -cnotcontains "ActiveModelState" -or @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and $args[0].Extent.Text -match 'ModelStates\.ActiveModelState' }, $true)).Count -eq 0) "the exporter asks for the model state the file was saved in"
+        Assert (@($members | Where-Object { $_ -ceq "ModelStateName" }).Count -ge 1 -and @($members | Where-Object { $_ -ceq "FullDocumentName" }).Count -ge 3) "ModelStateName read $(@($members | Where-Object { $_ -ceq 'ModelStateName' }).Count) time(s), FullDocumentName $(@($members | Where-Object { $_ -ceq 'FullDocumentName' }).Count)"
+        $throws = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) | ForEach-Object { $_.Extent.Text } | Where-Object { $_ -match 'suppressed occurrence' })
+        Assert ($throws.Count -eq 0) "the exporter still stops at a suppressed occurrence: $($throws -join ' | ')"
+        $keyed = @($tree.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and $args[0].Left.Extent.Text -match '^\$documents\[' }, $true) | ForEach-Object { $_.Left.Extent.Text })
+        Assert ($keyed.Count -eq 1 -and $keyed[0] -ceq '$documents[$documentKey]') "the documents are kept by: $($keyed -join ', ')"
     }
 } finally { Remove-Item -LiteralPath $work -Recurse -Force }
 $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count

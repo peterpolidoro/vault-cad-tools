@@ -80,6 +80,8 @@ Offline suites, none of which needs Inventor or Vault:
   of a live run. It invokes none of them: whether an Autodesk ID is signed in is asked
   by the live run, which refuses before the journal moves.
 - The reference route (design 5.5) is a pilot and its live branch has not been run.
+  The lines of that branch were rehearsed whole on 2026-11-20 against a stand-in
+  for the SDK types they touch, never against Vault.
   `New-ReferenceRouteDocuments.ps1` makes the wrapper part and the assembly in a
   scratch workspace laid out as the Vault folder is; `Publish-ReferenceRoutePilot.ps1
   -Prepare` writes the request and a journal entry of its own (not the publication
@@ -89,7 +91,10 @@ Offline suites, none of which needs Inventor or Vault:
   both hashes, the journal) and adds two files, the wrapper and then the assembly;
   it needs the folder owner's word for exactly that request. What the Inventor
   add-in writes into an association's `RefId`, `Source` and `ExpectedVaultPath` is
-  not known: the request carries them, null as prepared.
+  not known (the one read that would show it failed at its sign-in on 2026-11-20
+  and was not tried again): the request carries them, null as prepared, and
+  `-Prepare` takes them as parameters once they are known. A field that is null
+  in the request is not set on the association at all.
 - Git: the shared clones under `U:\Repositories\github\` are the only remote used on
   this machine (`shared`); Peter pushes to GitHub and fast-forwards them.
 
@@ -111,10 +116,18 @@ Offline suites, none of which needs Inventor or Vault:
   (`Vault-Version.ps1`). `Discover-VaultFolder.ps1` says of every file, parent,
   child and closure member what its row is (`version_is`), records no check-in
   date for such a row and counts them; a root is still a root.
-  `Get-VaultDependencySnapshot.ps1` refuses such a row as the root and as a
-  member: nothing is downloaded, `snapshot-receipt.json` has the status
-  `refused_check_out_place` and names the files, the exit code is 2. With
-  `-AsCheckedIn` a member is never such a row.
+  `Get-VaultDependencySnapshot.ps1` refuses such a row as the root: nothing is
+  downloaded, `snapshot-receipt.json` has the status `refused_check_out_place`
+  and names the file, the exit code is 2. A member that is such a row is taken
+  at its last version checked in, the row before it in `files/{master}/versions`,
+  and that version's own children are followed in place of the place's: what
+  "get latest" gives everyone but the person who has the file checked out. The
+  inventory says so of the member (`stands_for_check_out_place`, with the id of
+  the place), the receipt lists and counts such members, and the status is
+  `complete`. With `-AsCheckedIn` a member is never such a row.
+  `Get-VaultFileFacts.ps1` reads the latest version by the same rule, the last
+  row that is a version checked in: a check-out is reported as one
+  (`checked_out`, since when, the id of the place) and is not a change.
 - Every script that drives Inventor should start it through
   `Inventor-Session.ps1` (owned instance, project cleanup, dialog watchdog).
   `Measure-PartBodies.ps1`, `Audit-NativeBom.ps1`,
@@ -138,9 +151,33 @@ Offline suites, none of which needs Inventor or Vault:
   and no event trigger, so saving it runs none.
 - A sub-assembly used in two model states is two documents with one file name
   (`FullDocumentName` ends in `<state>` for the one that is not primary), and
-  each has its own suppressed occurrences. `Export-Package.ps1` refuses such an
-  assembly at the first document whose file's active model state is not the
-  primary one.
+  each has its own suppressed occurrences. `Export-Package.ps1` takes a document
+  by its full document name and its state from the document (`ModelStateName`),
+  and binds both documents to the one acquired file. The file's active model
+  state and its level of detail say what the file was saved in, the same for
+  both documents, and decide nothing: a level of detail is accepted when it is
+  the master or names a model state of the file. An occurrence must be in the
+  model state of the document it places. A part in a model state that is not
+  its primary one still stops the export.
+- A suppressed occurrence is not a child. The assembly's `source.json` names
+  each under `native.suppressed_occurrences` (the name, and the master id and
+  path of the file it would place where they can be read without unsuppressing
+  anything); the field is absent when the document has none, so the files of a
+  project without model states are the bytes they were. `package.json` counts
+  them (`counts.suppressed_occurrences`, always there). The package check
+  refuses a child that is suppressed or is named as suppressed, and a count
+  that is not the number named. A file of the acquisition that only suppressed
+  occurrences place is under `not_exported`.
+- A STEP file may mark an item invisible that is also a member of a named group
+  (`APPLIED_GROUP_ASSIGNMENT`); the parts of Inventor's gear generator do, for
+  the surface of the pitch diameter. `Get-StepInvisibility` does not understand
+  that form and the exporter stops at such a part. Nothing was loosened: what
+  the reader should do with it is for `mechanical-cad` to decide, since its
+  reader has the same rule.
+- A part without a body (a composite of surfaces and no solid) does not stop
+  the exporter: its STEP file holds open shells and no solid, and its record
+  has no solid body, no surface body and a volume of 0. Whether a package
+  should hold such a part is not decided.
 - A run that ends `complete_with_dialogs` had a dialog dismissed by the
   watchdog. Read the receipt's `dialogs` field before accepting it.
 - A package is complete only after a run that ended `complete`. When a run of
@@ -159,10 +196,13 @@ Offline suites, none of which needs Inventor or Vault:
   the last attempt to remove it (`Get-PackageOutcome`). A `package.json`
   that could not be removed is reported as present and fails the run: to
   whoever reads the directory it says "complete", whatever the receipt says.
-- The exporter's receipt, `export-package-receipt.json`, is `schema_version` 3
+- The exporter's receipt, `export-package-receipt.json`, is `schema_version` 4
   (`$PackageReceiptSchemaVersion` in `Package-Format.ps1`). Since 3 it says
   whether `package.json` is in the directory (`package_json_present`), and
-  `validation.stage` can be `withheld`. `Test-PackageFormat.ps1` (P35) holds
+  `validation.stage` can be `withheld`. Since 4 its guards are named for model
+  states and suppressed occurrences, and its counts say how many files were
+  opened, how many of them in more than one model state, and how many
+  suppressed occurrences were named. `Test-PackageFormat.ps1` (P35) holds
   both places where the exporter writes a receipt to that number.
 - Production documents are opened from the acquired mirror and never saved.
   Pilots that save anything work in a disposable copy of the mirror.
@@ -172,6 +212,21 @@ Offline suites, none of which needs Inventor or Vault:
   when its row count equals the server's `totalResults`. This server's paging
   cursor is id-based while rows are ordered by name; following it repeats and
   skips rows.
+- In Windows PowerShell 5.1 a null assigned to a text property of a .NET object
+  is stored as an empty text. What must stay unset is not assigned at all
+  (`Get-AssociationTexts` in `Publish-ReferenceRoutePilot.ps1`).
+- A live branch can be rehearsed whole without `-Live`: the lines after the
+  parameter block are taken from the script's syntax tree and run in a process
+  of their own, with stand-in assemblies under the SDK's names in place of the
+  client's directory. The stand-in is held against the installed client by
+  reflection (every type and member the branch touches, same signatures) before
+  its answers count for anything. The tools are with the evidence of 2026-11-20.
+- A sign-in through an Autodesk ID can fail when the token the identity service
+  holds has run out and its refresh has not finished. On 2026-11-20 the SDK
+  threw at the web service manager with the message "0", and the identity
+  service's own log shows the token asked for while the refresh was still
+  running. The Vault client was not open that day; open, it keeps the token
+  fresh. No script here tries a sign-in again.
 - The server names the children of an old version at their latest versions.
   `GET file-versions/{id}/uses` gives the children of exactly that version of
   the parent, which masters they are, but it gives every child at its latest

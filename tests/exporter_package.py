@@ -84,7 +84,7 @@ def occurrences_of(files, root):
 
 
 def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:00Z", not_exported=(),
-                  edit_occurrences=None, strip_overrides=True):
+                  edit_occurrences=None, strip_overrides=True, edit_counts=None):
     """files: a list of {"source": {...}, "step": bytes} or {"source": {...}, "assembly": {...}}.
 
     A file may name its "directory"; otherwise it is <master id>_<state>, as the exporter names it.
@@ -93,6 +93,8 @@ def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:
     The exporter writes no overrides: a child's "overrides" here become placements in occurrences.json and
     are left out of assembly.json (strip_overrides=False keeps them, for a package the import must refuse).
     edit_occurrences(data) may change occurrences.json before it is written; None returned leaves it out.
+    package.json counts the parts, the assemblies and the suppressed occurrences the assemblies name, as the
+    exporter does; edit_counts(counts) may change that (a package written before 2026-11-20 has no third count).
     """
     out = Path(out)
     listed = {}
@@ -123,15 +125,19 @@ def write_package(out, files, root, vault_id="7", exported_at="2026-01-02T00:00:
         stated = edit_occurrences(stated)
     if stated is not None:
         put("occurrences.json", powershell_json(stated))
+    counts = {"parts": sum(f["source"]["kind"] == "part" for f in files),
+              "assemblies": sum(f["source"]["kind"] == "assembly" for f in files),
+              "suppressed_occurrences": sum(len(named) for named in (
+                  (f["source"].get("native") or {}).get("suppressed_occurrences") for f in files) if isinstance(named, list))}
+    if edit_counts is not None:
+        edit_counts(counts)
     manifest = {
         "schema_version": 2, "kind": "vault-cad-export-package", "exported_at": exported_at,
         "exporter": {"name": "tests/exporter_package.py", "version": "test", "inventor": None},
         "translator_options": {"ApplicationProtocolType": 5}, "vault_id": vault_id,
         "root": {"master_id": root[0], "version_id": root_version, "model_state": root[1]},
         "acquisition": {"captured_at": "2026-01-01T00:00:00Z", "method": "test"},
-        "counts": {"parts": sum(f["source"]["kind"] == "part" for f in files),
-                   "assemblies": sum(f["source"]["kind"] == "assembly" for f in files)},
-        "not_exported": list(not_exported), "files": listed,
+        "counts": counts, "not_exported": list(not_exported), "files": listed,
     }
     (out / "package.json").write_bytes(powershell_json(manifest))
     return out

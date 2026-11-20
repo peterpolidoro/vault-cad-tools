@@ -9,7 +9,7 @@ The direction of the wider work is in the sibling `mechanical-cad` repository
 (`docs/direction.md`). Finished checkpoints, with their evidence runs, are in
 .agents/HISTORY.md and windows/HISTORY.md.
 
-## Start here (state of 2026-11-18)
+## Start here (state of 2026-11-20)
 
 The short version. The record is below, in .agents/HISTORY.md and in
 windows/HISTORY.md; where the wider work stands is in
@@ -20,38 +20,63 @@ windows/HISTORY.md; where the wider work stands is in
   and its import (`windows/Export-Package.ps1`, `import-snapshot`);
   `sync-status`; and the publication of a new STEP file, planned, run dry,
   run live behind gates, verified and imported, done twice.
-- **Stopped on real data**: the export of a second project, at a
-  sub-assembly used in two model states. What the package holds for that
-  is decided (`mechanical-cad/docs/exporter-package.md`, "Model states and
-  suppressed occurrences") and `import-snapshot` needed no change. The
-  exporter is not changed yet.
+- **Delivered by Windows on 2026-11-20 and reviewed on Linux** (56 checks,
+  none failed; nothing was written to Vault and nothing read: the one
+  sign-in allowed failed and was not tried again). Its patch is applied
+  here:
+  - the exporter takes a file in two model states and names suppressed
+    occurrences instead of stopping at them;
+  - a member that someone has checked out is taken at its last version
+    checked in, and `Get-VaultFileFacts.ps1` reads the latest version by
+    the same rule; rehearsed against a stand-in server, not run against
+    Vault;
+  - the live branch of the reference route was rehearsed whole against a
+    stand-in for the SDK, and one line was wrong: a live run would have
+    sent three empty texts in each association where the request says
+    null. Corrected.
+- **Corrected on Linux that day**: `import-snapshot` compared the counts of
+  `package.json` with the parts and the assemblies alone and would have
+  refused every package of the changed exporter, which also counts the
+  suppressed occurrences. It now holds that count to the names, refuses a
+  suppressed occurrence among the children, and still reads a package
+  written before.
+- **The second project has no package yet.** Its export passed every guard
+  of model states and stopped at the STEP file of a generated gear: a
+  hidden surface that is also in a named group. Decided that day in
+  `mechanical-cad` (`docs/exporter-package.md`, "A hidden item in a named
+  group", with `mechanical_cad/stepfile.py`): such an item may be in a
+  group, and the group is left as it is. Also decided there: a part
+  without a solid is kept, and says how many work surfaces it has. The
+  Windows reader and the exporter follow in the next task.
 - **Ready and not run**: the reference route, a wrapper part and an
   assembly that reference a published STEP file
   (`windows/New-ReferenceRouteDocuments.ps1`,
-  `windows/Publish-ReferenceRoutePilot.ps1`). Its live branch has never
-  run, not even against a stand-in.
+  `windows/Publish-ReferenceRoutePilot.ps1`). What Inventor's add-in writes
+  into the three texts of such a relation is still not known: the read
+  that would show it failed at its sign-in.
 - **Designed and not built**: a revision as a new version of the same file
-  (`docs/update-step-file-design.md`). Windows reads it before the Linux
-  half is built.
-- **Asked of Windows on 2026-11-18**, nothing written to Vault (next work
-  below has the parts): the rehearsal of the live branch, one read through
-  the SDK, the exporter with model states run on the mirror, a member at a
-  check-out place, and the design to read. Peter starts the agent, after
-  the shared clones are brought level at his word.
+  (`docs/update-step-file-design.md`). Windows read it on 2026-11-20; its
+  nine remarks are in the text. Before anything of it is built on
+  Windows, the user id of the connection is corrected: the publishing
+  scripts make their connection with user id 0, which an add did not
+  mind.
+- **Asked of Windows on 2026-11-20**, one sign-in through the SDK and one
+  read, nothing written to Vault (next work 5 has the parts): the reader
+  follows the invisibility rule; a part's work surfaces; the second
+  project exported; the read once more, with Peter's Vault client open;
+  the user id of the connection, as a patch of its own. Peter starts the
+  agent, after he has committed and pushed and the shared clones are
+  brought level at his word.
 - **Peter's**: his word for the live run of the reference route, which
   adds two files to his test folder; the payload of the revision's pilot;
   and whether server, vault and folder names stay in tracked files (open
   items).
 - Tests on Linux, from the `mechanical-cad` checkout:
   `guix shell --pure -m manifest.scm -- python3 -B -m pytest -q PATH/TO/vault-cad-tools/tests`.
-- Since 2026-11-19 a test compares the two derivations of the index: what
-  the import writes as `vault-lock.json` and what `mechanical-cad` derives
-  from the same directories (`tests/test_index_agreement.py`: a first
-  import, a new version with a new file, one file in two model states). The
-  two agree. It needs the `mechanical-cad` checkout, named by
-  `MECHANICAL_CAD`, beside this repository, or as the directory the tests
-  are run from, as in the command above, and is skipped without it; with
-  it, 113 tests pass.
+  115 pass. Three of them compare the two derivations of the index
+  (`tests/test_index_agreement.py`); they need the `mechanical-cad`
+  checkout, named by `MECHANICAL_CAD`, beside this repository, or as the
+  directory the tests are run from, and are skipped without it.
 
 ## Current state (2026-11-12)
 
@@ -757,16 +782,53 @@ Directives:
      move. The pilot ran dry; **its live branch has not been run and its
      SDK calls have not been rehearsed**. A live run adds two files to the
      test folder and nothing else; it waits for Peter's word.
-   **Asked of Windows on 2026-11-18**, nothing written to Vault
-   (`to-windows/20261118T140617Z-...`): a first step that stops unless
-   the shared clone holds the patch; (A) the live branch rehearsed against
-   a stand-in; (B) one sign-in through the SDK and one read of what the
-   Inventor add-in writes into `RefId`, `Source` and `ExpectedVaultPath`;
-   (C) the exporter with model states, run on the mirror; (D) a member at
-   a check-out place taken at its last version checked in, and
-   `Get-VaultFileFacts.ps1` with the same rule; (E)
-   `docs/update-step-file-design.md` read and corrected. The Windows
-   machine was off that day.
+   **Delivered on 2026-11-20** (asked on 2026-11-18,
+   `to-windows/20261118T140617Z-...`; evidence
+   `2026-11-20-windows-rehearsal-sdk-read-model-states-01`, reviewed in
+   `2026-11-20-linux-windows-rehearsal-sdk-read-model-states-01-review-01`,
+   56 checks). Nothing written to Vault and nothing read:
+   - A: the live branch of the pilot rehearsed whole against a stand-in
+     that was first held against the installed client by reflection (20
+     types, 88 members). 16 scenarios, 27 runs, 36 checks. One line was
+     wrong and is corrected: a null field of an association was sent as an
+     empty text. The connection is made with user id 0, as both adds were.
+   - B: the reader passed its rehearsal; its one sign-in failed (the token
+     of the identity service had run out and was being refreshed; the
+     Vault client was not open) and was not tried again. Nothing read.
+   - C: the exporter with model states and suppressed occurrences. The
+     second project passes those guards (43 documents of 42 files, 7
+     suppressed occurrences, 115 occurrences in context) and stops at a
+     gear's STEP file; no package. The first project exports as before,
+     89 of 90 files the same bytes. Three places where the exporter
+     differs from the decision's wording stand, and the wording follows
+     them (`mechanical-cad/docs/exporter-package.md`).
+   - D: a member at the place of a check-out taken at its last version
+     checked in; `Get-VaultFileFacts.ps1` by the same rule (output schema
+     2). Rehearsed against the stand-in server, 38 checks. Not run
+     against Vault; whether the real server names other children for the
+     place than for the last version is not known.
+   - E: the design read; nine remarks, all in
+     `docs/update-step-file-design.md` now.
+   - On Linux: the import held to the new count (see "Start here").
+
+   **Asked of Windows on 2026-11-20** (`to-windows/20261120T...`), one
+   sign-in through the SDK and one read, nothing written: a first step
+   that stops unless the shared clones hold the patch and the decisions;
+   (A) `Get-StepInvisibility` follows the rule of `stepfile.py`, held
+   against it on the two gears; (B) `native.bodies.work_surfaces` and a
+   warning in the receipt for a part without a solid; (C) the second
+   project exported from its mirror, the package into the evidence, and
+   the first project again; (D) the read of the associations once more,
+   with the Vault client open, the receipt saying more of a failure, and
+   the session's user id read; then what the pilot's associations should
+   carry, a new request if that is something, run dry; (E) the user id of
+   the connection read from the session in both publishing scripts, as a
+   patch of its own, rehearsed against the stand-in.
+
+   When it delivers, on Linux: the package imported into a scratch project
+   outside every repository (its paths name a lab), measured, validated
+   and built, and set beside the project made from the same assembly's
+   STEP file (`mechanical-cad`, ignored `tmp/dual-lever-from-step/`).
 
 ## Open items
 
@@ -792,10 +854,12 @@ Directives:
   session they were qualified in until they are moved.
 - The material and appearance claim per part and body
   (`docs/authoring-and-materials.md` 4.1) is not recorded by the exporter.
-- `Export-Package.ps1` stops on a suppressed occurrence: Inventor does not
-  load its document, and no project has one to test on. Its stops for a
-  document with a view and for an `INVISIBILITY` in another form have not
-  fired on real data. Not met on real data either: a flexible instance inside
+- `Export-Package.ps1` has written no package of a project with model
+  states or suppressed occurrences yet: the second project's run stopped
+  later, at an `INVISIBILITY` in another form (decided, not yet followed by
+  the Windows reader). Its stop for a document with a view has not fired on
+  real data. Not met on real data either: a part in a model state other
+  than its primary one, a flexible instance inside
   a flexible instance, two instances of one document flexed differently,
   thread features, patterns of holes other than a mirror.
 - Why the STEP translator sometimes names a second schema in `FILE_SCHEMA` is

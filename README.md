@@ -156,7 +156,14 @@ run on a machine with Inventor 2025 installed and Vault access:
    writes `dependency-inventory.json`, and downloads every version into
    `MIRROR\<Vault path without $/>` with `acquisition.json` (SHA-256 per file).
    The mirror root stands in for Vault's `$`, so Inventor resolves references
-   unchanged. Nothing is checked out. **Which versions of the children** (found
+   unchanged. Nothing is checked out. **A member that someone has checked
+   out** is named by the server at the place of its check-out, a row that is
+   not a version; since 2026-11-20 such a member is taken at its last version
+   checked in, with that version's own children, which is what "get latest"
+   gives everyone but the person who has the file. The inventory and the
+   receipt say so of each. A root at such a place is still refused. Rehearsed
+   against a stand-in server; not run against Vault. **Which versions of the
+   children** (found
    on 2026-11-16): the server names the children of a version at their latest
    versions, whatever option is set. For the latest version of a root that is
    what "get latest" gives a user, and it is what a mirror holds. For an earlier
@@ -379,7 +386,12 @@ Measurement and native authoring (added for the command-line pilot):
     (REST GET only) reports for every acquired master the latest version id and number,
     whether anything changed since the acquisition, revision, lifecycle definition and
     state, check-in date and check-out state beside the inventory's values, and the
-    property system names the server returns, without values.
+    property system names the server returns, without values. Since 2026-11-20 the
+    latest version is the last row that is a version checked in (`Vault-Version.ps1`):
+    a file that is checked out is reported as checked out, with the day, and not as
+    changed; a file whose rows cannot be placed is unknown, never unchanged. Its
+    output is `schema_version` 2. Rehearsed against a stand-in server; not run
+    against Vault since.
 23. `Get-PartFeatureDump.ps1 -Part REL[,REL] -WorkspaceRoot MIRROR -Acquisition acquisition.json -OutputDirectory NEW`
     dumps, without saving, what the Inventor API returns for parameters, hole features
     (tap, clearance, extent, placement, centres), thread features, patterns and sheet-metal
@@ -415,8 +427,13 @@ Measurement and native authoring (added for the command-line pilot):
     `package.json` is written). The translator's own files, the run's receipt and the logs
     go to WORK and stay on the workstation. Besides the exporter's refusals it stops when
     a document has a view, when a file marks items invisible in a form that is not
-    understood, on a suppressed occurrence, and when a placement differs from its
-    definition under no flexible occurrence. The translator sometimes names a second,
+    understood, when an occurrence is suppressed in the context of the root and not in
+    its document, and when a placement differs from its definition under no flexible
+    occurrence. Since 2026-11-20 a file used in two model states is two documents of
+    the package, and a suppressed occurrence no longer stops the export: it is not a
+    child, the assembly's `source.json` names it and `package.json` counts it
+    (`mechanical-cad/docs/exporter-package.md`, "Model states and suppressed
+    occurrences"). A part in a model state other than its primary one still stops it. The translator sometimes names a second,
     unrelated schema in a file's `FILE_SCHEMA`: such a file is neither delivered nor
     repaired, the part is exported again (three attempts at most, the same data section
     required each time) and every attempt is recorded. Every file of the mirror is hashed
@@ -432,8 +449,11 @@ Measurement and native authoring (added for the command-line pilot):
     Inventor returns as nothing. A document's dirty flag after the export is required:
     a read that fails stops the run, and so does a flag that Inventor returns as
     nothing, because the run says which documents were dirty. The receipt
-    is `schema_version` 3 since 2026-11-13; the reads of the dirty flag are not among
-    the guards it counts, since a dirty document is warned of and does not stop a run.
+    is `schema_version` 4 since 2026-11-20 (3 since 2026-11-13): its guards are named for
+    model states and suppressed occurrences, and it counts the files opened, the files in
+    more than one model state and the suppressed occurrences. The reads of the dirty flag
+    are not among the guards it counts, since a dirty document is warned of and does not
+    stop a run.
     Draft 3 of the specification follows the exporter
     in two things draft 2 had otherwise: the placements of flexible instances are not
     written as `overrides` (the import command derives them from `occurrences.json`),

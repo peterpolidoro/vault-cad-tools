@@ -8,13 +8,22 @@ what do revision, lifecycle and check-out state say today? REST GET only.
     & .\windows\Get-VaultFileFacts.ps1 -Acquisition acquisition.json -Inventory dependency-inventory.json `
         -OutputDirectory NEW -BaseUri http://SERVER/AutodeskDM/Services/api/vault/v2/ -VaultId ID
 
-For every master id in the acquisition record this issues GET files/{master}/versions (paged) and GET
+For every master id in the acquisition record this issues GET files/{master}/versions (one page) and GET
 file-versions/{id} for the latest version (and for the acquired version when it is no longer the latest). It
 records, per file: the acquired version id and number, the latest version id and number, whether anything
 changed since the acquisition, revision, lifecycle definition and state, check-in date and whether the file is
 checked out, each beside the value the dependency inventory recorded on the acquisition day. A value the server
 did not return is null, never a guess; a file whose versions cannot be read is "unknown", never "unchanged".
 It also lists the property system names the server returns for a file version, WITHOUT their values.
+
+THE LATEST VERSION IS THE LAST ROW THAT IS A VERSION CHECKED IN (Vault-Version.ps1). A file that is checked out
+is listed with one row more, the place of its check-out: a check-in date of year 1 and a number one above the
+last version checked in. That row is not a version and is not a change: the file is reported as checked out
+(checked_out, checked_out_since, check_out_place_version_id; no user is named), and changed_since_acquisition
+says only whether a newer version was CHECKED IN. versions_total counts the versions checked in and rows_listed
+the rows the server gave. is_checked_out stays the server's flag on the latest version; it is true on every row
+of a checked-out file and decides nothing here. Unknown, never "unchanged": a file with no row that is a version
+checked in, a row without a check-in date that can be read, and an acquired id that is the place of a check-out.
 
 Outputs: vault-file-facts.json, vault-file-facts.csv, property-system-names.json, vault-file-facts-receipt.json
 (status, counts, the GET count, failures) and raw\ (the responses as received; they contain property values).
@@ -31,6 +40,15 @@ param(
     [switch]$SelfTest
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Vault-Version.ps1")
+
+function Select-LatestCheckedIn {
+    # Pure. The row with the highest number among the rows that are versions checked in; $null when there is none.
+    param($Rows)
+    $checkedIn = @(@($Rows) | Where-Object { $null -ne $_ } | Where-Object { (Get-VaultVersionStanding $_.checkinDate) -eq "checked_in" } | Sort-Object { [int]$_.version })
+    if ($checkedIn.Count -eq 0) { return $null }
+    return $checkedIn[-1]
+}
 
 function Get-PropertyValue($Record, [string]$SystemName) {
     # Value of an inline property by its system name; $null when the record or the property is absent.
@@ -47,7 +65,8 @@ function Resolve-FileFact {
     $problems = @()
     $fact = [ordered]@{ master_id = [string]$AcquisitionRecord.master_id; name = ([string]$AcquisitionRecord.vault_path).Split('/')[-1]; vault_path = [string]$AcquisitionRecord.vault_path
         acquired_version_id = [string]$AcquisitionRecord.version_id; acquired_version_number = $null; acquired_native_sha256 = Get-Field $AcquisitionRecord "sha256"
-        latest_version_id = $null; latest_version_number = $null; versions_total = $null; changed_since_acquisition = $null
+        latest_version_id = $null; latest_version_number = $null; versions_total = $null; rows_listed = $null; changed_since_acquisition = $null
+        checked_out = $null; checked_out_since = $null; check_out_place_version_id = $null
         revision = $null; lifecycle_definition = $null; lifecycle_state = $null; checkin_date = $null; is_checked_out = $null; is_hidden = $null; category = $null
         acquired_version = $null; inventory = $null; differs_from_inventory = @(); problems = @() }
     if ($InventoryRecord) {
@@ -60,19 +79,36 @@ function Resolve-FileFact {
         $problems += "versions of master $($fact.master_id) could not be read"
         $fact.problems = $problems; return $fact
     }
-    $fact.versions_total = $list.Count
-    $latest = $list | Sort-Object { [int]$_.version } | Select-Object -Last 1
+    # What each row is (Vault-Version.ps1): a version checked in, the place of a check-out, or a row without a date.
+    $checkedIn = @($list | Where-Object { (Get-VaultVersionStanding $_.checkinDate) -eq "checked_in" })
+    $places = @($list | Where-Object { (Get-VaultVersionStanding $_.checkinDate) -eq "check_out_place" })
+    $undated = @($list | Where-Object { (Get-VaultVersionStanding $_.checkinDate) -eq "no_check_in_date" })
+    $fact.rows_listed = $list.Count; $fact.versions_total = $checkedIn.Count
+    $fact.checked_out = ($places.Count -gt 0)
+    if ($places.Count -ge 1) { $fact.checked_out_since = Get-Field $places[0] "checkoutDate"; $fact.check_out_place_version_id = [string]$places[0].id }
+    if ($places.Count -gt 1) { $problems += "$($places.Count) rows of master $($fact.master_id) are the place of a check-out; one is expected" }
+    if ($undated.Count -gt 0) { $problems += "$($undated.Count) row(s) of master $($fact.master_id) have no check-in date that can be read: what the latest version is, is not known" }
+    $latest = Select-LatestCheckedIn $list
+    if ($null -eq $latest) {
+        $problems += "no row of master $($fact.master_id) is a version checked in"
+        $fact.problems = $problems; return $fact
+    }
     $fact.latest_version_id = [string]$latest.id; $fact.latest_version_number = [int]$latest.version
-    $acquired = @($list | Where-Object { [string]$_.id -eq $fact.acquired_version_id })
-    if ($acquired.Count -eq 1) { $fact.acquired_version_number = [int]$acquired[0].version } else { $problems += "the acquired version id $($fact.acquired_version_id) is not among the versions of master $($fact.master_id)" }
-    $fact.changed_since_acquisition = ($fact.latest_version_id -ne $fact.acquired_version_id)
+    if ($places.Count -eq 1 -and [int]$places[0].version -le [int]$latest.version) { $problems += "the place of the check-out has the number $($places[0].version), not above the last version checked in ($($latest.version))" }
+    $acquired = @($checkedIn | Where-Object { [string]$_.id -eq $fact.acquired_version_id })
+    $acquiredIsAPlace = (@($places | Where-Object { [string]$_.id -eq $fact.acquired_version_id }).Count -gt 0)
+    if ($acquired.Count -eq 1) { $fact.acquired_version_number = [int]$acquired[0].version }
+    elseif ($acquiredIsAPlace) { $problems += "the acquired version id $($fact.acquired_version_id) is the place of a check-out, not a version checked in" }
+    else { $problems += "the acquired version id $($fact.acquired_version_id) is not among the versions of master $($fact.master_id)" }
+    # A change is a newer version CHECKED IN. Unknown when a row cannot be placed, or the acquired id was never a version.
+    $fact.changed_since_acquisition = $(if ($undated.Count -gt 0 -or $acquiredIsAPlace) { $null } else { $fact.latest_version_id -ne $fact.acquired_version_id })
     $record = $(if ($LatestRecord) { $LatestRecord } else { $latest })
     if (-not $LatestRecord) { $problems += "latest version record $($fact.latest_version_id) could not be read; values come from the version list" }
     elseif ([string]$LatestRecord.id -ne $fact.latest_version_id) { $problems += "latest version record has id $($LatestRecord.id), expected $($fact.latest_version_id)"; $record = $latest }
     $fact.revision = Get-Field $record "revision"; $fact.lifecycle_state = Get-Field $record "state"; $fact.checkin_date = Get-Field $record "checkinDate"
     $fact.is_checked_out = Get-Field $record "isCheckedOut"; $fact.is_hidden = Get-Field $record "isHidden"; $fact.category = Get-Field $record "category"
     $fact.lifecycle_definition = Get-PropertyValue $record "LifeCycleDefinition"
-    if ($fact.changed_since_acquisition) {
+    if ($fact.changed_since_acquisition -eq $true) {
         $old = $(if ($AcquiredRecord) { $AcquiredRecord } elseif ($acquired.Count -eq 1) { $acquired[0] } else { $null })
         if ($old) { $fact.acquired_version = [ordered]@{ revision = Get-Field $old "revision"; lifecycle_state = Get-Field $old "state"; checkin_date = Get-Field $old "checkinDate"; lifecycle_definition = Get-PropertyValue $old "LifeCycleDefinition" } }
     }
@@ -138,6 +174,39 @@ if ($SelfTest) {
         $f = Resolve-FileFact $acq $inv @($bare) $bare $null
         Assert ($null -eq $f.lifecycle_definition -and $null -eq $f.is_hidden -and ($f | ConvertTo-Json -Compress -Depth 4) -notmatch 'secret') "state: $($f | ConvertTo-Json -Compress -Depth 4)"
     }
+    # ---- a check-out as the server lists it: one row more, with a check-in date of year 1 ----
+    function Place($id, $number, $since) { [pscustomobject]@{ id = "$id"; version = $number; state = "Work in Progress"; revision = "0"; checkinDate = "0001-01-01T00:00:00Z"; checkoutDate = $since; isCheckedOut = $true; isHidden = $false; category = "MCAD Files"
+        checkoutUserName = "SOMEBODY ELSE"; properties = @() } }
+    $v1Out = Version 101 1 "Work in Progress" "0" "2026-08-01T00:00:00Z" $true
+    $v2Out = Version 105 2 "Work in Progress" "0" "2026-09-10T19:50:08.360Z" $true
+    Case "F8 a file that is checked out: the place of the check-out is not the latest version and not a change" {
+        $f = Resolve-FileFact $acq $inv @((Place 120 3 "2026-11-17T15:00:00Z"), $v1Out, $v2Out) $v2Out $null
+        Assert ($f.changed_since_acquisition -eq $false -and $f.latest_version_id -eq "105" -and $f.latest_version_number -eq 2 -and $f.versions_total -eq 2 -and $f.rows_listed -eq 3) "latest: $($f | ConvertTo-Json -Compress -Depth 4)"
+        Assert ($f.checked_out -eq $true -and $f.checked_out_since -eq "2026-11-17T15:00:00Z" -and $f.check_out_place_version_id -eq "120" -and $f.is_checked_out -eq $true) "check-out: $($f | ConvertTo-Json -Compress -Depth 4)"
+        Assert ((@($f.differs_from_inventory) -join ',') -eq "is_checked_out" -and @($f.problems).Count -eq 0 -and ($f | ConvertTo-Json -Compress -Depth 4) -notmatch 'SOMEBODY ELSE') "differs, problems or a user's name: $($f | ConvertTo-Json -Compress -Depth 4)"
+        Assert ((Select-LatestCheckedIn @((Place 120 3 "2026-11-17T15:00:00Z"), $v1Out, $v2Out)).id -eq "105" -and $null -eq (Select-LatestCheckedIn @((Place 120 3 $null))) -and $null -eq (Select-LatestCheckedIn @())) "the row to read as the latest"
+        "version 2 of 2 for three rows; checked out since 2026-11-17"
+    }
+    Case "F9 a newer version checked in and a check-out on top of it: changed, and checked out" {
+        $v3Out = Version 110 3 "Released" "A" "2026-11-01T00:00:00Z" $true
+        $f = Resolve-FileFact $acq $inv @($v1Out, $v2Out, $v3Out, (Place 121 4 "2026-11-18T09:00:00Z")) $v3Out $v2Out
+        Assert ($f.changed_since_acquisition -eq $true -and $f.latest_version_id -eq "110" -and $f.latest_version_number -eq 3 -and $f.versions_total -eq 3 -and $f.rows_listed -eq 4 -and $f.checked_out -eq $true -and $f.check_out_place_version_id -eq "121") "state: $($f | ConvertTo-Json -Compress -Depth 4)"
+        Assert ($f.acquired_version.revision -eq "0" -and @($f.problems).Count -eq 0) "the acquired version's values: $($f | ConvertTo-Json -Compress -Depth 4)"
+    }
+    Case "F10 a file that is not checked out says so; nothing but the place of a check-out, a row without a date, and an acquired id that is the place are unknown, never unchanged" {
+        $f = Resolve-FileFact $acq $inv @($v1, $v2) $v2 $null
+        Assert ($f.checked_out -eq $false -and $null -eq $f.checked_out_since -and $null -eq $f.check_out_place_version_id) "not checked out: $($f | ConvertTo-Json -Compress -Depth 4)"
+        $f = Resolve-FileFact $acq $inv @((Place 105 1 "2026-11-17T15:00:00Z")) $null $null
+        Assert ($null -eq $f.changed_since_acquisition -and $null -eq $f.latest_version_id -and $f.versions_total -eq 0 -and $f.rows_listed -eq 1 -and $f.checked_out -eq $true -and (@($f.problems) -join ';') -match 'no row of master 100 is a version checked in') "never checked in: $($f | ConvertTo-Json -Compress -Depth 4)"
+        $undated = [pscustomobject]@{ id = "130"; version = 3; state = "Work in Progress"; revision = "0"; isCheckedOut = $false }
+        $f = Resolve-FileFact $acq $inv @($v1, $v2, $undated) $v2 $null
+        Assert ($null -eq $f.changed_since_acquisition -and $f.latest_version_id -eq "105" -and (@($f.problems) -join ';') -match 'no check-in date that can be read') "a row without a date: $($f | ConvertTo-Json -Compress -Depth 4)"
+        $atPlace = [pscustomobject]@{ master_id = "100"; version_id = "120"; vault_path = '$/A/B/PLATE.ipt'; sha256 = "ab" }
+        $f = Resolve-FileFact $atPlace $null @($v1Out, $v2Out, (Place 120 3 "2026-11-17T15:00:00Z")) $v2Out $null
+        Assert ($null -eq $f.changed_since_acquisition -and $null -eq $f.acquired_version_number -and (@($f.problems) -join ';') -match 'the acquired version id 120 is the place of a check-out') "acquired at a place: $($f | ConvertTo-Json -Compress -Depth 4)"
+        $f = Resolve-FileFact $acq $inv @($v1Out, $v2Out, (Place 120 2 "2026-11-17T15:00:00Z")) $v2Out $null
+        Assert ((@($f.problems) -join ';') -match 'not above the last version checked in') "a place that is not above the versions: $($f | ConvertTo-Json -Compress -Depth 4)"
+    }
     $passed = @($results | Where-Object passed).Count; $failed = @($results | Where-Object { -not $_.passed }).Count
     Write-Output "$passed passed, $failed failed"
     if ($failed -gt 0) { exit 1 }
@@ -183,8 +252,10 @@ foreach ($entry in $acquisitionJson.files) {
     $versions = Get-Pages "files/$master/versions"
     if ($null -ne $versions) { ConvertTo-Json -InputObject @($versions) -Depth 8 | Set-Content -LiteralPath (Join-Path $rawDir "files-$master-versions.json") -Encoding UTF8 }
     $latestRecord = $null; $acquiredRecord = $null
-    if ($null -ne $versions -and @($versions).Count -gt 0) {
-        $latestId = [string](@($versions) | Sort-Object { [int]$_.version } | Select-Object -Last 1).id
+    # the latest version is the last row that is a version checked in, never the place of a check-out
+    $latestRow = $(if ($null -ne $versions) { Select-LatestCheckedIn $versions } else { $null })
+    if ($null -ne $latestRow) {
+        $latestId = [string]$latestRow.id
         $latestRecord = Get-Json "file-versions/$latestId" $null
         if ($latestRecord) { ConvertTo-Json -InputObject $latestRecord -Depth 8 | Set-Content -LiteralPath (Join-Path $rawDir "file-version-$latestId.json") -Encoding UTF8 }
         if ($latestId -ne [string]$entry.version_id) {
@@ -199,29 +270,29 @@ foreach ($entry in $acquisitionJson.files) {
         if (-not $namesByKind.ContainsKey($kind)) { $namesByKind[$kind] = @{} }
         foreach ($property in @($latestRecord.properties)) { $systemName = [string]$property.definition.systemName; if ($systemName) { $systemNames[$systemName] = [string]$property.definition.displayName; $namesByKind[$kind][$systemName] = $true } }
     }
-    Write-Output ("{0,-70} acquired {1} (v{2}) latest {3} (v{4}) changed={5} rev={6} state={7} checkedOut={8}" -f $fact.name, $fact.acquired_version_id, $fact.acquired_version_number, $fact.latest_version_id, $fact.latest_version_number, $fact.changed_since_acquisition, $fact.revision, $fact.lifecycle_state, $fact.is_checked_out)
+    Write-Output ("{0,-70} acquired {1} (v{2}) latest {3} (v{4}) changed={5} rev={6} state={7} checkedOut={8}{9}" -f $fact.name, $fact.acquired_version_id, $fact.acquired_version_number, $fact.latest_version_id, $fact.latest_version_number, $fact.changed_since_acquisition, $fact.revision, $fact.lifecycle_state, $fact.checked_out, $(if ($fact.checked_out) { " since $($fact.checked_out_since) (place $($fact.check_out_place_version_id))" }))
 }
 $changed = @($facts | Where-Object { $_.changed_since_acquisition -eq $true })
 $unknown = @($facts | Where-Object { $null -eq $_.changed_since_acquisition })
 $differing = @($facts | Where-Object { @($_.differs_from_inventory).Count -gt 0 })
 $withProblems = @($facts | Where-Object { @($_.problems).Count -gt 0 })
-$checkedOut = @($facts | Where-Object { $_.is_checked_out -eq $true })
+$checkedOut = @($facts | Where-Object { $_.checked_out -eq $true })
 $summary = [ordered]@{ files = $facts.Count; unchanged = @($facts | Where-Object { $_.changed_since_acquisition -eq $false }).Count; changed = $changed.Count; unknown = $unknown.Count
-    checked_out = $checkedOut.Count; differing_from_inventory = $differing.Count; with_problems = $withProblems.Count
+    checked_out = $checkedOut.Count; checked_out_files = @($checkedOut | ForEach-Object { $_.name }); differing_from_inventory = $differing.Count; with_problems = $withProblems.Count
     lifecycle_states = @($facts | Group-Object { [string]$_.lifecycle_state } | ForEach-Object { "$($_.Name)=$($_.Count)" }); lifecycle_definitions = @($facts | Group-Object { [string]$_.lifecycle_definition } | ForEach-Object { "$($_.Name)=$($_.Count)" })
     revisions = @($facts | Group-Object { [string]$_.revision } | ForEach-Object { "$($_.Name)=$($_.Count)" })
     acquisition_date = $acquisitionJson.acquired_at; inventory_date = $inventoryJson.captured_at
-    statement = $(if ($unknown.Count -gt 0 -or $withProblems.Count -gt 0) { "UNKNOWN for some files: $($unknown.Count) file(s) could not be compared and $($withProblems.Count) carry problems; see the facts" } elseif ($changed.Count -eq 0 -and $differing.Count -eq 0) { "Nothing has changed in Vault for these $($facts.Count) files since the acquisition: every acquired version id is still the latest, and revision, lifecycle state, check-in date and check-out state equal the inventory" } else { "CHANGED: $($changed.Count) file(s) have a newer version and $($differing.Count) differ from the inventory in some field; see the facts" }) }
-ConvertTo-Json -InputObject ([ordered]@{ schema_version = 1; generated_at = (Utc); vault_id = $VaultId; acquisition = $Acquisition; inventory = $Inventory; summary = $summary; files = $facts }) -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory "vault-file-facts.json") -Encoding UTF8
+    statement = $(if ($unknown.Count -gt 0 -or $withProblems.Count -gt 0) { "UNKNOWN for some files: $($unknown.Count) file(s) could not be compared and $($withProblems.Count) carry problems; see the facts" } elseif ($changed.Count -eq 0 -and $differing.Count -eq 0) { "Nothing has changed in Vault for these $($facts.Count) files since the acquisition: every acquired version id is still the latest version checked in, and revision, lifecycle state, check-in date and check-out state equal the inventory" } else { "CHANGED: $($changed.Count) file(s) have a newer version checked in, $($checkedOut.Count) are checked out, and $($differing.Count) differ from the inventory in some field; see the facts" }) }
+ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; generated_at = (Utc); vault_id = $VaultId; acquisition = $Acquisition; inventory = $Inventory; summary = $summary; files = $facts }) -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory "vault-file-facts.json") -Encoding UTF8
 $facts | ForEach-Object { [pscustomobject]@{ master_id = $_.master_id; name = $_.name; acquired_version_id = $_.acquired_version_id; acquired_version_number = $_.acquired_version_number; latest_version_id = $_.latest_version_id; latest_version_number = $_.latest_version_number
-        versions_total = $_.versions_total; changed_since_acquisition = $_.changed_since_acquisition; revision = $_.revision; lifecycle_definition = $_.lifecycle_definition; lifecycle_state = $_.lifecycle_state; checkin_date = $_.checkin_date; is_checked_out = $_.is_checked_out
+        versions_total = $_.versions_total; rows_listed = $_.rows_listed; changed_since_acquisition = $_.changed_since_acquisition; checked_out = $_.checked_out; checked_out_since = $_.checked_out_since; check_out_place_version_id = $_.check_out_place_version_id; revision = $_.revision; lifecycle_definition = $_.lifecycle_definition; lifecycle_state = $_.lifecycle_state; checkin_date = $_.checkin_date; is_checked_out = $_.is_checked_out
         differs_from_inventory = (@($_.differs_from_inventory) -join ';'); problems = (@($_.problems) -join ';'); vault_path = $_.vault_path } } | Export-Csv -LiteralPath (Join-Path $OutputDirectory "vault-file-facts.csv") -NoTypeInformation -Encoding UTF8
 $kinds = [ordered]@{}; foreach ($kind in ($namesByKind.Keys | Sort-Object)) { $kinds[$kind] = @($namesByKind[$kind].Keys | Sort-Object) }
 $displayNames = [ordered]@{}; foreach ($key in ($systemNames.Keys | Sort-Object)) { $displayNames[$key] = $systemNames[$key] }
 ConvertTo-Json -InputObject ([ordered]@{ schema_version = 1; generated_at = (Utc); note = "system names (and display names) of the properties returned inline by GET file-versions/{id}; values deliberately not recorded here"
         count = $systemNames.Count; system_names = @($systemNames.Keys | Sort-Object); display_names = $displayNames; by_file_kind = $kinds }) -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory "property-system-names.json") -Encoding UTF8
 $status = $(if ($script:failures.Count -eq 0 -and $unknown.Count -eq 0 -and $withProblems.Count -eq 0) { "complete" } else { "FAILED" })
-ConvertTo-Json -InputObject ([ordered]@{ schema_version = 1; script = "windows/Get-VaultFileFacts.ps1"; status = $status; started_at = $started; finished_at = (Utc); host = $env:COMPUTERNAME
+ConvertTo-Json -InputObject ([ordered]@{ schema_version = 2; script = "windows/Get-VaultFileFacts.ps1"; status = $status; started_at = $started; finished_at = (Utc); host = $env:COMPUTERNAME
         method = "REST GET only (files/{master}/versions, file-versions/{id}); the session token was obtained beforehand by Set-VaultCadToken.ps1 (one POST sessions/win-auth) and is not recorded"
         get_requests = $script:gets; failures = @($script:failures); summary = $summary }) -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory "vault-file-facts-receipt.json") -Encoding UTF8
 Write-Output "GET requests: $($script:gets); failures: $($script:failures.Count)"

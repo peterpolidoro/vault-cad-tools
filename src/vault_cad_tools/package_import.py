@@ -156,8 +156,9 @@ def _read_package(package):
             raise ExchangeError(f"{where}/source.json: export must be an object without a run; the import names the run")
         if identity in files:
             raise ExchangeError(f"{where}: master id {identity[0]} in model state {identity[1]} is in the package twice")
-        entry = {"where": where, "kind": kind, "source": source, "identity": identity}
-        if set(held) != {"source.json", "part.step" if kind == "part" else "assembly.json"}:
+        entry = {"where": where, "kind": kind, "source": source, "identity": identity,
+                 "suppressed": _suppressed_names(where, kind, source)}
+        if set(held) !={"source.json", "part.step" if kind == "part" else "assembly.json"}:
             raise ExchangeError(f"{where}: a {kind} has source.json and "
                                 + ("part.step" if kind == "part" else "assembly.json") + ", and nothing else")
         if kind == "part":
@@ -186,10 +187,50 @@ def _read_package(package):
     counts = manifest.get("counts")
     have = {"parts": sum(e["kind"] == "part" for e in files.values()),
             "assemblies": sum(e["kind"] == "assembly" for e in files.values())}
+    # The exporter counts the suppressed occurrences its assemblies name since 2026-11-20. A package written
+    # before that names none and counts none; one that names some must count them.
+    suppressed = sum(len(e["suppressed"]) for e in files.values())
+    if suppressed or (isinstance(counts, dict) and "suppressed_occurrences" in counts):
+        have["suppressed_occurrences"] = suppressed
     if counts != have:
         raise ExchangeError(f"package.json counts {counts}; the package holds {have}")
     overrides = _read_occurrences(package, files, root_identity)
     return manifest, files, root_identity, overrides
+
+
+def _suppressed_names(where, kind, source):
+    """The occurrences an assembly's source.json names as suppressed (native.suppressed_occurrences).
+
+    A suppressed occurrence is not a child: in its model state the document does not have it. The exporter
+    writes the key only when the document suppresses one, with the occurrence's name and, where it could read
+    them, the master id and Vault path of the file the occurrence would place.
+    """
+    native = source.get("native")
+    if not isinstance(native, dict) or "suppressed_occurrences" not in native:
+        return []
+    at = f"{where}/source.json"
+    if kind != "assembly":
+        raise ExchangeError(f"{at}: only an assembly names suppressed occurrences")
+    named = native["suppressed_occurrences"]
+    if not isinstance(named, list) or not named:
+        raise ExchangeError(f"{at}: native.suppressed_occurrences is a list, written only when the document "
+                            "suppresses an occurrence")
+    names = []
+    for item in named:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"]:
+            raise ExchangeError(f"{at}: a suppressed occurrence has no name")
+        name = item["name"]
+        if name in names or "/" in name:
+            raise ExchangeError(f"{at}: the suppressed occurrence {name} is named twice or holds '/'")
+        unknown = sorted(set(item) - {"name", "master_id", "path"})
+        if unknown:
+            raise ExchangeError(f"{at}: the suppressed occurrence {name} has the unknown field {unknown[0]}")
+        if ("master_id" in item) != ("path" in item) or any(
+                field in item and (not isinstance(item[field], str) or not item[field]) for field in ("master_id", "path")):
+            raise ExchangeError(f"{at}: the suppressed occurrence {name} names the file it would place by master id "
+                                "and path, both non-empty strings, or not at all")
+        names.append(name)
+    return names
 
 
 def _check_assembly(entry, files, not_exported):
@@ -230,6 +271,9 @@ def _check_assembly(entry, files, not_exported):
             raise ExchangeError(f"{at}: an exported child states its BOM structure and all five flags")
         if "overrides" in child:
             raise ExchangeError(f"{at}: the exporter writes no overrides; {OCCURRENCES} states the placements in context")
+        if child["suppressed"] or child["name"] in entry["suppressed"]:
+            raise ExchangeError(f"{at}: a suppressed occurrence is not a child; the assembly's source.json names it "
+                                "under native.suppressed_occurrences")
 
 
 def _multiply(a, b):

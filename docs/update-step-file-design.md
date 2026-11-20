@@ -5,6 +5,12 @@ in it is built, and no check-out or check-in has ever been sent to Vault from th
 the row `update_step_file` of `native-checkin-adapter-design.md`, section 6, and keeps to the rules of
 `exchange-protocol.md`. Where it says "not known", the pilot of section 8 is what finds out.
 
+Read from the Windows side on 2026-11-20, against the installed client by reflection and with no member
+invoked: nine remarks, all taken, each marked "(Windows, 2026-11-20)" where it changed the text. Two of
+them change the design: a check-out that is refused need not throw (section 6, after step 4), and
+"checked out to this account" cannot be read the obvious way while the connection is made with user
+id 0 (section 6, steps 1 and 5).
+
 ## 1. What it is for, and what it is not
 
 A part written in a repository changes, and its STEP file in Vault should follow: a new version of the
@@ -25,8 +31,32 @@ a native file, and never a STEP file that was exported from a native.
   are `NoAction`, `Download`, `Checkout`); `CheckinFile(FileIteration, comment, keepCheckedOut,
   lastWrite, associations, bom, copyBom, newFileName, classification, hidden, Stream)`; and
   `UndoCheckoutFile(FileIteration, Stream)`.
-- A file that is checked out shows through REST as a latest version with `isCheckedOut` true, a
-  check-out date, and a check-in date of year 1 (seen on another project's file on 2026-11-17).
+- Read the same way on 2026-11-20 (Windows, none invoked):
+  - `AcquireFiles` returns `AcquireFilesResults` (`IsCancelled`, `FileResults`). Each
+    `FileAcquisitionResult` has a `Status` (`NotExecuted`, `Success`, `Skipped`,
+    `FileNeedsSyncOnRemoteSite`, `Exception`, `Restriction`), an `Exception` and `Restrictions` beside
+    it, and `NewFileIteration`.
+  - `AcquireFilesSettings` is made from a connection and a Boolean whose meaning reflection does not
+    give. It has `LocalPath`, `CheckoutComment`, `CreateMetaDataFile`, `DefaultAcquisitionOption` and
+    options for gathering relationships.
+  - `UndoCheckoutFile` takes the iteration and a `Stream`, or a path. What the stream is for is not
+    known; it may receive the file's content as it was.
+  - `FileIteration` has `IsCheckedOutToCurrentUser` and `CheckedOutUserId`; `Connection` has `UserID`.
+    `DocumentService.GetLatestFilesByFolderId`, which the reference-route pilot resolves and has
+    rehearsed, gives `File` with `CheckedOut`, `CkOutUserId`, `Locked`, `Hidden` and
+    `ControlledByChangeOrder`.
+- **The connection is made with user id 0 today**, and both adds ran that way: the line that reads the
+  id asks the credentials for a `SecurityHeader`, which they do not have; the id is under the
+  credentials' `Session.User`. An add did not need it. Whether a check-out or a check-in through such
+  a connection works at all is not known. It is corrected, with a review of its own, before anything
+  of this design is built on Windows.
+- In Windows PowerShell a null given to a text parameter or property of a .NET member arrives as an
+  empty text (found by the rehearsal of the reference route on 2026-11-20). Where a null is meant it
+  is sent as `[NullString]::Value`, or the property is not set.
+- A file that is checked out shows through REST with one row more than its versions: the place of the
+  check-out, listed with the next number, a check-out date and a check-in date of year 1 (seen on
+  another project's file on 2026-11-17). `isCheckedOut` is true on every row of such a file and tells
+  nothing of one row. `windows/Vault-Version.ps1` is the rule that says what a row is.
 - Both published files are in the state "Work in Progress", revision 0. Whether this account may check
   such a file out is not known; whether a released file can be checked out is not known either.
 - Version ids do not change once made. Vault's checksum of a file is CRC32.
@@ -60,9 +90,11 @@ hold, and nothing is touched:
 2. `file-versions/{expected_version_id}` exists, belongs to `master_id`, has the destination's name and
    lies in the destination's folder. A file that was renamed or moved in Vault is somebody's doing that
    the repository does not know of.
-3. It is the latest version of the master (`files/{master_id}/versions`): none has a higher number, and
-   none is the place of a check-out.
-4. It is not checked out and not hidden.
+3. It is the latest version of the master (`files/{master_id}/versions`), by the rule of
+   `windows/Vault-Version.ps1`: the last row that is a version checked in. No version checked in has a
+   higher number.
+4. It is not checked out, which is to say that no row of the master is the place of a check-out (the
+   flag `isCheckedOut` is not what is asked), and it is not hidden.
 5. Its bytes, downloaded, have `expected_sha256`: what is replaced is what was published.
 
 The plan records the lifecycle state, the revision and the number of versions it saw, and lists the SDK
@@ -92,9 +124,11 @@ Transitions:
     uploaded     -> verified | failed
     ambiguous    -> planned | checked_out | uploaded | refused      (reconcile only)
 
-`checking_out -> planned` is taken only when the server answered the check-out with an error and a read
-afterwards shows the file not checked out and its latest version the expected one: a clean refusal,
-by a lifecycle rule for one. Everything else that goes wrong after a write was sent is `ambiguous`.
+`checking_out -> planned` is taken only when the check-out did not happen, whether the SDK threw or
+returned a status that is not `Success`, and a read afterwards shows the file not checked out and its
+latest version the expected one: a clean refusal, by a lifecycle rule for one. The status and the
+restrictions the SDK gave are recorded with it. Everything else that goes wrong after a write was sent
+is `ambiguous`. (Windows, 2026-11-20: a refused check-out need not throw.)
 
 `reconcile-publish` reads the server and settles an ambiguous update without writing:
 
@@ -114,22 +148,37 @@ Gates, all before the sign-in: the request id, the expected folder and its id, t
 payload, the expected master id and version id, and a journal entry `planned` with the plan's
 fingerprint. Then:
 
-1. Sign in as for an add.
-2. Read through the SDK: the latest version of the master is the expected one; it is not checked out
+1. Sign in as for an add, and read this account's user id from the session (the credentials'
+   `Session.User`). An id of 0 is refused: the run would not know its own check-out from another
+   user's. The sign-in can fail for a token of the Autodesk identity service that has run out, which
+   `IsLoginValid` does not foresee (2026-11-20); that is before the journal moves and costs nothing,
+   and the operator has the Vault client open when the executor runs. (Windows, 2026-11-20)
+2. Read through the SDK, with `DocumentService.GetLatestFilesByFolderId`, the read the reference-route
+   pilot already resolves: the latest version of the master is the expected one; it is not checked out
    and not locked; its folder id and name are the expected ones. Otherwise `refused`.
 3. Journal `checking_out`.
-4. Check the file out: `AcquireFiles` with `Checkout` and without a download.
-5. Read: the file is checked out to this account. Journal `checked_out`, with what the server says.
+4. Check the file out: `AcquireFiles` with the option `Checkout` for the file and without a download.
+   `LocalPath` is a scratch directory outside every checkout and mirror, `CreateMetaDataFile` is
+   false, and the directory is listed afterwards: whether the client writes anything to disk for a
+   check-out without a download is for the pilot. (Windows, 2026-11-20)
+5. Read the server, whatever step 4 returned or threw, and let the read decide. `Success`, and the file
+   checked out to this account: journal `checked_out`, with what the server says. No `Success`, the
+   file not checked out and its latest version the expected one: `planned`, with the status and the
+   restrictions recorded. Everything else: `ambiguous`. "To this account" is the file's `CkOutUserId`
+   compared with the id read at step 1 by the executor itself, not `IsCheckedOutToCurrentUser`, which
+   compares inside the SDK with whatever id the connection was made with. (Windows, 2026-11-20)
 6. Journal `checking_in`.
-7. `CheckinFile` with the payload as the stream, the same file name, `keepCheckedOut` false, the
-   comment an add sends, no BOM, classification `None`, not hidden. A STEP file has no children, so it
-   declares no associations.
+7. `CheckinFile` with the iteration the check-out returned (`FileAcquisitionResult.NewFileIteration`),
+   not the one read at step 2; the payload as the stream; the file's own name as the new file name,
+   on purpose, so that no null has to be sent for it; `keepCheckedOut` false, the comment an add
+   sends, no BOM, classification `None`, not hidden. A STEP file has no children, so it declares no
+   associations. (Windows, 2026-11-20)
 8. Journal `uploaded` with the ids, the version number, the size and the checksum the server returned.
 
-If step 4 throws: read, and take `planned` or `ambiguous` as section 5 says. If a read at step 5 does
-not show what it should: `ambiguous`. If step 7 throws: `ambiguous`, always, and **no undo**: the check-in
-may have happened, and an undo after a check-in that happened would be a write to a file in a state
-nobody looked at. The undo (`UndoCheckoutFile`) is sent only from `checked_out`, when the run decides
+If the read at step 5 cannot be made: `ambiguous`. If step 7 throws: `ambiguous`, always, and **no
+undo**: the check-in may have happened, and an undo after a check-in that happened would be a write to
+a file in a state nobody looked at. The undo (`UndoCheckoutFile`, with the iteration the check-out
+returned; what its stream is for is not known) is sent only from `checked_out`, when the run decides
 before step 6 not to go on, or later by the operator's command. The session is signed out in `finally`.
 
 `-DryRun` verifies the payload and resolves every member by reflection without a connection, as now.
@@ -158,21 +207,34 @@ not the version of the part's last publication.
 All in Peter's test folder, on the test copy published there on 2026-11-17 (master 998335, version
 998336), and only when he allows each write. In this order:
 
+0. **Read only, before any write** (Windows, 2026-11-20): sign in, read this account's user id from
+   the session and see that it is not 0, and read the file through the SDK as step 2 of section 6
+   does.
 1. **A check-out and its undo, and nothing else.** Does `AcquireFiles` with `Checkout` and no download
-   need a local path, and what does the server record of it? May this account check out a file in
-   "Work in Progress"? After the undo: is the latest version the old one, and is the list of versions
-   what it was? Two writes, and Vault ends as it began.
+   need a local path, what is the Boolean of its settings, and what is written to the local path?
+   What does the server record of the check-out, and what does REST show while it lasts (expected:
+   the row of the place)? May this account check out a file in "Work in Progress"? What is the undo's
+   stream for? After the undo: is the row of the place gone, is the latest version the old one, and
+   is the list of versions what it was? Two writes, and Vault ends as it began.
 2. **The update**, with the payload section 10 settles. What does the server do with the properties it
    filled in at the add, and with the comment? Is the version number 2?
 3. **What the assembly of the reference route shows afterwards**, once that pilot's wrapper part and
    assembly are in the folder: which version of the STEP file the wrapper's `uses` names in Vault, and
-   the wrapper's health in Inventor after the newer file is fetched and the part opened.
+   the wrapper's health in Inventor after the newer file is fetched and the part opened. It needs
+   the reference route run live, which waits for Peter's word.
+
+Before any of it runs live, the executor's branch is rehearsed whole against a stand-in for the SDK
+types it touches, as the pilot's live branch was on 2026-11-20. The stand-in needs these types added
+and held against the installed client by reflection first; the tools for both are in the evidence of
+that day.
 
 ## 9. Order of building
 
 1. On Linux: the request, the plan, the journal's states and transitions, reconcile, record and import
    for this operation, with tests against a static catalog. No PowerShell.
-2. On Windows: this design read and corrected; the executor's branch with its dry run.
+2. On Windows: this design read and corrected (done, 2026-11-20). Then the user id of the connection
+   corrected in the two publishing scripts, as a change of its own with its own review and rehearsal;
+   then the executor's branch with its dry run, rehearsed against the stand-in.
 3. The pilot of section 8.
 
 ## 10. For Peter

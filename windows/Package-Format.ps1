@@ -49,7 +49,12 @@ $PackageLayoutSchemaVersion = 1
 $PackageOccurrencesSchemaVersion = 1
 # The exporter's receipt (export-package-receipt.json), which stays on the workstation. 3: it says whether package.json
 # is in the directory (package_json_present) and why a package was withheld, and validation.stage can be "withheld".
-$PackageReceiptSchemaVersion = 3
+# 4: the guards are named for model states and suppressed occurrences (a document names its model state, an occurrence
+# is in the model state of its document, a suppressed occurrence is named and not exported), and the counts say how
+# many files were opened, how many are in more than one model state and how many occurrences are suppressed.
+$PackageReceiptSchemaVersion = 4
+# What may be written of an occurrence that a document suppresses (source.json of the assembly, native.suppressed_occurrences).
+$PackageSuppressedFields = @("name", "master_id", "path")
 $PackageVaultFields = @("vault_id", "master_id", "version_id", "version_number", "revision", "lifecycle_state", "checkin_date", "path", "native_sha256")
 $PackageStepFields = @("sha256", "data_sha256", "bytes", "protocol", "length_unit", "header_normalised", "received_sha256")
 $PackagePropertyNames = @("category", "description", "manufacturer", "material", "part_number", "stock_number", "title", "vendor")
@@ -282,7 +287,7 @@ function Test-PackageOutputs {
        -AllowMissingManifest the files are checked before package.json exists (the exporter writes it last). #>
     param([Parameter(Mandatory = $true)][string]$Directory, [string[]]$ForbiddenTerms = @(), [switch]$AllowMissingManifest, [double]$RotationTolerance = 1e-9, [double]$LengthTolerance = 1e-7)
     $failures = New-Object 'System.Collections.Generic.List[string]'
-    $summary = [ordered]@{ parts = 0; assemblies = 0; children = 0; occurrences = 0; occurrences_that_differ_from_definition = 0; files = 0 }
+    $summary = [ordered]@{ parts = 0; assemblies = 0; children = 0; occurrences = 0; occurrences_that_differ_from_definition = 0; files = 0; suppressed_occurrences = 0 }
     $present = Get-PackageFileMap $Directory
     # ---- the manifest ----
     $manifest = $null
@@ -343,7 +348,24 @@ function Test-PackageOutputs {
         if ($expected -and $expected -ne $folder) { $failures.Add("${where}: the directory of master id $($vault.master_id) in model state $($source.model_state) is $expected") }
         $identity = "$($vault.master_id)|$($source.model_state)"
         if ($documents.ContainsKey($identity)) { $failures.Add("${where}: master id $($vault.master_id) in model state $($source.model_state) is in the package twice"); continue }
-        $record = [pscustomobject]@{ where = $where; kind = $source.kind; source = $source; assembly = $null; childByName = @{} }
+        $record = [pscustomobject]@{ where = $where; kind = $source.kind; source = $source; assembly = $null; childByName = @{}; suppressedNames = @{} }
+        # The occurrences a document suppresses are named in the assembly's source.json and are not children. The key
+        # is there only when the document suppresses one; a part suppresses none.
+        if ((Test-PackageHas $source "native") -and (Test-PackageHas $source.native "suppressed_occurrences")) {
+            $named = @($source.native.suppressed_occurrences | Where-Object { $null -ne $_ })
+            if ($source.kind -ne "assembly") { $failures.Add("$where/source.json: only an assembly names suppressed occurrences") }
+            elseif ($named.Count -eq 0) { $failures.Add("$where/source.json: native.suppressed_occurrences is written only when the document suppresses an occurrence") }
+            foreach ($entry in $named) {
+                if ($entry.GetType().Name -ne "PSCustomObject" -or $entry.name -isnot [string] -or -not $entry.name) { $failures.Add("$where/source.json: a suppressed occurrence has no name"); continue }
+                $summary.suppressed_occurrences++
+                if ($record.suppressedNames.ContainsKey($entry.name) -or $entry.name.Contains("/")) { $failures.Add("$where/source.json: the suppressed occurrence $($entry.name) is named twice or holds '/'") }
+                $record.suppressedNames[$entry.name] = $true
+                $fields = @($entry.PSObject.Properties.Name)
+                if (@($fields | Where-Object { $PackageSuppressedFields -notcontains $_ }).Count -gt 0) { $failures.Add("$where/source.json: the suppressed occurrence $($entry.name) has other fields than $($PackageSuppressedFields -join ', ')") }
+                if (($fields -contains "master_id") -ne ($fields -contains "path")) { $failures.Add("$where/source.json: the suppressed occurrence $($entry.name) has a master id without a path, or a path without a master id") }
+                foreach ($field in @("master_id", "path")) { if (($fields -contains $field) -and ($entry.$field -isnot [string] -or -not $entry.$field)) { $failures.Add("$where/source.json: $field of the suppressed occurrence $($entry.name) must be a non-empty string, or not be there") } }
+            }
+        }
         $documents[$identity] = $record
         $held = @($present.Keys | Where-Object { $_.StartsWith("$where/") } | ForEach-Object { ($_ -split '/')[2] } | Sort-Object)
         $wanted = @("source.json", $(if ($source.kind -eq "part") { "part.step" } else { "assembly.json" })) | Sort-Object
@@ -388,6 +410,8 @@ function Test-PackageOutputs {
             $at = "$where $($child.name)"
             if ($record.childByName.ContainsKey($child.name) -or $child.name.Contains("/")) { $failures.Add("$at`: occurrence names are unique in an assembly and hold no '/'"); continue }
             $record.childByName[$child.name] = $child
+            if ($record.suppressedNames.ContainsKey($child.name)) { $failures.Add("$at`: the document names it as suppressed, and a suppressed occurrence is not a child") }
+            if ($child.suppressed -eq $true) { $failures.Add("$at`: a suppressed occurrence is not a child; the assembly's source.json names it under native.suppressed_occurrences") }
             if (Test-PackageHas $child "component") { $failures.Add("$at`: the exporter names a component by master id and model state, not by key") }
             if (Test-PackageHas $child "overrides") { $failures.Add("$at`: this package holds the occurrences in context in occurrences.json, not overrides") }
             $target = $documents["$($child.master_id)|$($child.model_state)"]
@@ -407,6 +431,11 @@ function Test-PackageOutputs {
         if (-not $rootRecord -or $rootRecord.kind -ne "assembly") { $failures.Add("the root assembly named in package.json is not an assembly of the package"); $rootRecord = $null }
         elseif ($rootRecord.source.vault.version_id -ne $manifest.root.version_id) { $failures.Add("package.json and the root assembly's source.json name different versions") }
         if ((Test-PackageHas $manifest "counts") -and ($manifest.counts.parts -ne $summary.parts -or $manifest.counts.assemblies -ne $summary.assemblies)) { $failures.Add("package.json counts $($manifest.counts.parts) parts and $($manifest.counts.assemblies) assemblies; the package holds $($summary.parts) and $($summary.assemblies)") }
+    }
+    if ($manifest -and (Test-PackageHas $manifest "counts") -and $null -ne $manifest.counts) {
+        # package.json counts the suppressed occurrences the assemblies name; a package that names some must count them
+        if (Test-PackageHas $manifest.counts "suppressed_occurrences") { if ($manifest.counts.suppressed_occurrences -ne $summary.suppressed_occurrences) { $failures.Add("package.json counts $($manifest.counts.suppressed_occurrences) suppressed occurrences; the assemblies name $($summary.suppressed_occurrences)") } }
+        elseif ($summary.suppressed_occurrences -gt 0) { $failures.Add("package.json does not count the $($summary.suppressed_occurrences) suppressed occurrences the assemblies name") }
     }
     # ---- the occurrences in context ----
     if (-not $present.Contains("occurrences.json")) { $failures.Add("occurrences.json is missing") }
@@ -630,7 +659,7 @@ function Complete-Package {
        manifest_present is what the file system says when the function returns; when package.json could not be
        removed again, that is a failure of its own. -Remove replaces the removal (for tests). #>
     param([Parameter(Mandatory = $true)][string]$Directory, [Parameter(Mandatory = $true)]$Manifest, [string[]]$ForbiddenTerms = @(), [double]$RotationTolerance = 1e-9, [double]$LengthTolerance = 1e-7,
-        [int]$ExpectParts = -1, [int]$ExpectAssemblies = -1, [int]$ExpectOccurrences = -1, [scriptblock]$Check = $null, [string]$WithholdBecause = "", [scriptblock]$Remove = $null)
+        [int]$ExpectParts = -1, [int]$ExpectAssemblies = -1, [int]$ExpectOccurrences = -1, [int]$ExpectSuppressed = -1, [scriptblock]$Check = $null, [string]$WithholdBecause = "", [scriptblock]$Remove = $null)
     $manifestPath = Join-Path $Directory "package.json"
     if (Test-Path -LiteralPath $manifestPath) { throw "package.json already exists in $Directory" }
     foreach ($key in @("counts", "files")) { if (-not $Manifest.Contains($key)) { throw "The manifest must have the key '$key' (null until it is filled here)" } }
@@ -642,9 +671,10 @@ function Complete-Package {
     if ($ExpectParts -ge 0 -and $before.summary.parts -ne $ExpectParts) { $unexpected += "$($before.summary.parts) parts, $ExpectParts exported" }
     if ($ExpectAssemblies -ge 0 -and $before.summary.assemblies -ne $ExpectAssemblies) { $unexpected += "$($before.summary.assemblies) assemblies, $ExpectAssemblies exported" }
     if ($ExpectOccurrences -ge 0 -and $before.summary.occurrences -ne $ExpectOccurrences) { $unexpected += "$($before.summary.occurrences) occurrences, $ExpectOccurrences read" }
+    if ($ExpectSuppressed -ge 0 -and $before.summary.suppressed_occurrences -ne $ExpectSuppressed) { $unexpected += "$($before.summary.suppressed_occurrences) suppressed occurrences named, $ExpectSuppressed met" }
     if ($unexpected.Count -gt 0) { return [pscustomobject]@{ ok = $false; stage = "before package.json"; failures = @("the package does not hold what was exported: $($unexpected -join '; ')"); summary = $before.summary; manifest_written = $false; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $false } }
     if ($WithholdBecause) { return [pscustomobject]@{ ok = $true; stage = "withheld"; failures = @(); summary = $before.summary; manifest_written = $false; manifest_present = (Test-Path -LiteralPath $manifestPath); withheld = $true } }
-    $Manifest["counts"] = [ordered]@{ parts = $before.summary.parts; assemblies = $before.summary.assemblies }
+    $Manifest["counts"] = [ordered]@{ parts = $before.summary.parts; assemblies = $before.summary.assemblies; suppressed_occurrences = $before.summary.suppressed_occurrences }
     $Manifest["files"] = Get-PackageDirectoryHashes $Directory
     try {
         Write-PackageJsonFile $manifestPath $Manifest
